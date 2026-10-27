@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-// import Script from "next/script";
+import ConfigureAmplify from "@/components/ConfigureAmplify";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Wayfind | Grok Bot Templates for Web3",
+  title: "Wayfind Cloud — Hire a proactive AI teammate",
   description:
-    "Download Wayfind Bot templates for Grok to analyze risk, manage portfolios, rebalance positions, and trade tokenized stocks on Solana.",
+    "Give a Finder bot a job — inbox, leads, research or code — and wake up to finished work. It works in its own gated sandbox, asks before anything irreversible, and reports back every morning. Free in early access.",
 };
 
 export default function RootLayout({
@@ -18,7 +18,7 @@ export default function RootLayout({
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Zen+Tokyo+Zoo&display=swap" rel="stylesheet" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Zen+Tokyo+Zoo&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
        {/* <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-51VBWDT3P2"
           strategy="afterInteractive"
@@ -33,7 +33,7 @@ export default function RootLayout({
         </Script>*/}
       </head>
       <body className="font-sans">
-        {children}
+        <ConfigureAmplify>{children}</ConfigureAmplify>
       </body>
     </html>
   );

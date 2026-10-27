@@ -7,34 +7,40 @@ html {
 }
 
 body {
-  background-color: #0B0B0F;
-  color: white;
+  background-color: #FAF7F1;
+  color: #131316;
   font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
+::selection {
+  background: rgba(108, 92, 231, 0.25);
+}
+
 @keyframes scroll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
 }
 
 @layer utilities {
-  .glow {
-    box-shadow: 0 0 60px -20px rgba(108, 92, 231, 0.3);
-  }
-
-  .glow-blue {
-    box-shadow: 0 0 80px -20px rgba(59, 130, 246, 0.25);
-  }
+  .animate-floaty { animation: floaty 5s ease-in-out infinite; }
 
   .grid-bg {
     background-image:
-      linear-gradient(rgba(108, 92, 231, 0.07) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(108, 92, 231, 0.07) 1px, transparent 1px);
+      linear-gradient(rgba(19, 19, 22, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(19, 19, 22, 0.05) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .grid-bg-dark {
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
     background-size: 48px 48px;
   }
 
@@ -42,9 +48,7 @@ body {
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
 
   .btn-gradient {
     background: linear-gradient(90deg, #6C5CE7, #00D2A0, #3B82F6, #6C5CE7);
@@ -56,27 +60,9 @@ body {
     transform: scale(1.03);
     box-shadow: 0 0 16px rgba(108, 92, 231, 0.4);
   }
-  .btn-gradient:disabled {
-    opacity: 0.8;
-    cursor: wait;
-  }
-
-  .loading-dots::after {
-    content: '';
-    display: inline-block;
-    width: 12px;
-    text-align: left;
-    animation: dots 1.4s infinite;
-  }
 }
 
 @keyframes gradient-shift {
   0% { background-position: 0% 50%; }
   100% { background-position: 300% 50%; }
-}
-
-@keyframes dots {
-  0%, 20% { content: '.'; }
-  40% { content: '..'; }
-  60%, 100% { content: '...'; }
 }
