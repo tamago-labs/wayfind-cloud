@@ -21,8 +21,6 @@ const schema = a.schema({
     })
     .authorization((allow) => [
       allow.owner().to(["read", "update"]),
-      allow.resource(wayfindApiFunction).to(["read", "create", "update"]),
-      allow.resource(gatekeeper).to(["read"]),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("profileByOwnerId")]),
 
@@ -42,7 +40,6 @@ const schema = a.schema({
     })
     .authorization((allow) => [
       allow.owner(),
-      allow.resource(wayfindApiFunction).to(["read", "create", "update"]),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("botsByOwnerId")]),
 
@@ -68,8 +65,6 @@ const schema = a.schema({
     })
     .authorization((allow) => [
       allow.owner().to(["read"]),
-      allow.resource(wayfindApiFunction).to(["read", "create", "update"]),
-      allow.resource(gatekeeper).to(["read", "update"]),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("computerByOwnerId")]),
 
@@ -86,7 +81,6 @@ const schema = a.schema({
     })
     .authorization((allow) => [
       allow.owner(),
-      allow.resource(wayfindApiFunction).to(["read", "create", "update"]),
     ])
     .secondaryIndexes((index) => [
       index("ownerId").queryField("conversationsByOwnerId"),
@@ -105,7 +99,6 @@ const schema = a.schema({
     })
     .authorization((allow) => [
       allow.owner(),
-      allow.resource(wayfindApiFunction).to(["read", "create"]),
     ])
     .secondaryIndexes((index) => [
       index("conversationId").queryField("messagesByConversationId"),
@@ -121,10 +114,12 @@ const schema = a.schema({
     })
     .authorization((allow) => [
       allow.owner().to(["read"]),
-      allow.resource(wayfindApiFunction).to(["read", "create"]),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("ledgerByOwnerId")]),
-});
+}).authorization((allow) => [
+  allow.resource(wayfindApiFunction),
+  allow.resource(gatekeeper),
+]);
 
 export type Schema = ClientSchema<typeof schema>;
 
