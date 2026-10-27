@@ -28,12 +28,23 @@ module.exports = {
         fmoss: '#5FBF3F',
         flagoon: '#2EC4D6',
         fash: '#9AA0A6',
+        // Option-E hero palette (wayfind-hero-design.html)
+        herobg: '#DDE9F7',
+        navy: '#0E1B2C',
+        cta: '#2F7BFF',
+        ctahover: '#1F63DA',
+        heroslate: '#38506B',
+        bamber: '#F5A524',
+        bmoss: '#7BA05B',
+        blagoon: '#2BB3B1',
+        bash: '#9AA3AE',
       },
       fontFamily: {
         display: ['Space Grotesk', 'sans-serif'],
         brand: ['Zen Tokyo Zoo', 'sans-serif'],
         sans: ['Inter', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
+        brico: ['"Bricolage Grotesque"', 'sans-serif'],
       },
       boxShadow: {
         card: '0 1px 2px rgba(19,19,22,0.05), 0 12px 32px -16px rgba(19,19,22,0.18)',

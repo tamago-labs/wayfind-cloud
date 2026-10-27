@@ -1,6 +1,6 @@
 {
-  "name": "wayfind-amplify",
-  "version": "0.1.6",
+  "name": "wayfind-cloud-amplify",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,11 +11,6 @@
   "dependencies": {
     "@aws-amplify/ui-react": "^6.11.2",
     "@openai/agents": "^0.18.0",
-    "@solana-program/system": "^0.14.1",
-    "@solana/kit": "^8.3.0",
-    "@solana/kit-plugin-rpc": "^0.19.0",
-    "@solana/kit-plugin-wallet": "^0.20.0",
-    "@solana/react": "^8.3.0",
     "@aws-sdk/client-lambda": "^3.0.0",
     "@tailwindcss/typography": "^0.5.20",
     "aws-amplify": "^6.6.6",
