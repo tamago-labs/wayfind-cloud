@@ -1,77 +1,91 @@
-'use client';
-
 import Link from 'next/link';
-import Section from './Section';
 
-const tiers = [
+const plans = [
   {
     name: 'Starter',
     price: '$5',
-    highlight: false,
-    features: ['1 Bot on your shared computer', 'Chat + approvals in chat', '1 routine (morning brief included)', 'Capped computer minutes + model credits'],
+    features: ['1 Bot', '1 routine, daily brief included', 'Capped computer minutes and model credits'],
+    featured: false,
   },
   {
     name: 'Operator',
     price: '$10',
-    highlight: true,
-    features: ['Up to 5 Bots', 'Group chats + Bot handoffs', 'All beta connect apps', 'Scheduled + event routines · BYOK (later)'],
+    features: [
+      'Up to 5 Bots and group chats',
+      'Scheduled and event routines',
+      'All beta connectors',
+      'Bring your own key (coming later)',
+    ],
+    featured: true,
   },
   {
     name: 'Studio',
     price: '$20',
-    highlight: false,
-    features: ['Up to 15 Bots', 'Roster sections per project/client', 'Shared team Bots', 'Priority computer capacity'],
+    features: [
+      'Up to 15 Bots',
+      'Sections for projects and clients',
+      'Shared team-style Bots',
+      'Priority capacity',
+    ],
+    featured: false,
   },
 ];
 
 export default function Pricing() {
   return (
-    <section id="pricing" className="py-20 md:py-24 scroll-mt-16">
-      <div className="max-w-[1100px] mx-auto px-5 md:px-8">
-        <Section>
-          <p className="font-mono text-[12px] text-accent text-center mb-4">pricing</p>
-          <h2 className="font-display text-3xl md:text-[40px] font-bold text-center tracking-tight text-ink">
-            Hire outcomes, not chat
+    <section id="pricing" className="scroll-mt-16 bg-ice px-6 py-24 font-brico text-navy">
+      <div className="mx-auto max-w-6xl">
+        <div className="text-center">
+          <p className="text-sm font-bold uppercase tracking-wider text-cta">Pricing</p>
+          <h2 className="mt-3 text-4xl font-extrabold tracking-tight sm:text-5xl">
+            Free in early access. Simple after.
           </h2>
-          <p className="text-[15px] text-inksoft leading-relaxed text-center max-w-xl mx-auto mt-4">
-            Grok Bot comes bundled with a Cursor or SuperGrok subscription. Wayfind is the
-            standalone version: free in early access, then from $5 — and you pay for active
-            Bot work and computer minutes, never for an idle machine.
+          <p className="mx-auto mt-4 max-w-xl text-lg text-heroslate">
+            No card needed today. These are the planned plans, and idle time is never charged.
           </p>
-        </Section>
-
-        <div className="grid md:grid-cols-3 gap-5 mt-12">
-          {tiers.map((tier) => (
-            <Section key={tier.name}>
-              <div className={`relative rounded-3xl border p-7 h-full flex flex-col ${tier.highlight ? 'border-accent bg-accent/[0.04] shadow-card' : 'border-line bg-cream shadow-card'}`}>
-                {tier.highlight && (
-                  <span className="absolute -top-3 left-6 px-3 py-1 bg-accent rounded-full font-mono text-[10.5px] font-medium text-white">most operators</span>
+        </div>
+        <div className="mt-12 grid gap-5 lg:grid-cols-3">
+          {plans.map((p) => (
+            <div
+              key={p.name}
+              className={`flex flex-col rounded-3xl p-8 ${
+                p.featured
+                  ? 'bg-navy text-white shadow-xl shadow-navy/25 lg:-mt-4 lg:pb-12'
+                  : 'bg-white shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold">{p.name}</h3>
+                {p.featured && (
+                  <span className="rounded-full bg-bamber px-3 py-1 text-xs font-bold text-navy">
+                    Most popular
+                  </span>
                 )}
-                <h3 className="font-display text-lg font-semibold text-ink">{tier.name}</h3>
-                <p className="mt-3">
-                  <span className="font-display text-4xl font-bold text-ink">{tier.price}</span>
-                  <span className="text-inksoft text-sm"> /mo planned</span>
-                </p>
-                <ul className="mt-5 space-y-2.5 flex-1">
-                  {tier.features.map((f) => (
-                    <li key={f} className="text-[13.5px] text-inksoft flex gap-2">
-                      <span className="text-accent2 mt-0.5">✓</span>{f}
-                    </li>
-                  ))}
-                </ul>
-                <Link href="/#create" className={`mt-7 text-center text-[13.5px] font-display font-medium px-4 py-2.5 rounded-lg transition-colors ${tier.highlight ? 'bg-accent text-white hover:bg-accent/85' : 'bg-ink text-white hover:bg-accent'}`}>
-                  Start free
-                </Link>
               </div>
-            </Section>
+              <p className="mt-3 text-5xl font-extrabold">
+                {p.price}
+                <span className={`text-lg font-semibold ${p.featured ? 'text-white/60' : 'text-heroslate'}`}>
+                  /mo
+                </span>
+              </p>
+              <ul className={`mt-6 flex-1 space-y-2.5 ${p.featured ? 'text-white/80' : 'text-heroslate'}`}>
+                {p.features.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+              <Link
+                href="/app"
+                className={`mt-8 rounded-full px-6 py-3 text-center font-semibold transition-colors ${
+                  p.featured
+                    ? 'bg-cta text-white hover:bg-ctahover'
+                    : 'border-2 border-navy text-navy hover:bg-navy hover:text-white'
+                }`}
+              >
+                Join early access
+              </Link>
+            </div>
           ))}
         </div>
-
-        <Section>
-          <p className="mt-8 font-mono text-[11px] text-inksoft text-center">
-            not on sale yet · existing free users are notified before any billing ever starts
-          </p>
-        </Section>
       </div>
     </section>
   );

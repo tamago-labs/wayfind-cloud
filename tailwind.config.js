@@ -30,6 +30,7 @@ module.exports = {
         fash: '#9AA0A6',
         // Option-E hero palette (wayfind-hero-design.html)
         herobg: '#DDE9F7',
+        ice: '#E9F1FA',
         navy: '#0E1B2C',
         cta: '#2F7BFF',
         ctahover: '#1F63DA',

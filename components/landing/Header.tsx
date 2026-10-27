@@ -6,13 +6,14 @@ import { Menu, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Mascot from '@/components/Mascot';
 
-// Option E (wayfind-hero-design.html): Bots / Routines / Pricing / Docs.
-// Routines -> #how (step 04 "Chat. Approve. Routinise."); Docs -> #faq until real docs exist.
+// Nav anchors follow wayfind-sections.html: #problem #how #bots #trust #pricing #faq.
 const navLinks = [
+  { href: '/#problem', label: 'Problem' },
+  { href: '/#how', label: 'How' },
   { href: '/#bots', label: 'Bots' },
-  { href: '/#how', label: 'Routines' },
+  { href: '/#trust', label: 'Trust' },
   { href: '/#pricing', label: 'Pricing' },
-  { href: '/#faq', label: 'Docs' },
+  { href: '/#faq', label: 'FAQ' },
 ];
 
 export function Logo() {

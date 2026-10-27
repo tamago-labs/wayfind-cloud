@@ -1,11 +1,10 @@
 export { default as Header } from './Header';
 export { default as Hero } from './Hero';
-export { default as Background } from './Background';
-export { default as HowItWorks } from './HowItWorks';
-export { default as CTA } from './CTA';
-export { default as Footer } from './Footer';
-export { default as CompatibleWith } from './CompatibleWith';
-export { default as BotCapabilities } from './BotCapabilities';
+export { default as Problem } from './Problem';
+export { default as HowSection } from './HowSection';
+export { default as Bots } from './Bots';
+export { default as Trust } from './Trust';
 export { default as Pricing } from './Pricing';
-export { default as FAQ } from './FAQ';
-export * from './finders';
+export { default as Faq } from './Faq';
+export { default as FinalCta } from './FinalCta';
+export { default as Footer } from './Footer';

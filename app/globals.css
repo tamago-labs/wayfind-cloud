@@ -55,6 +55,16 @@ body {
   75% { transform: rotate(8deg); }
 }
 
+@keyframes awake-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(43, 179, 177, 0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(43, 179, 177, 0); }
+}
+
+/* Native details accordions (Faq) */
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details[open] .plus { transform: rotate(45deg); }
+
 @layer utilities {
   .animate-floaty { animation: floaty 5s ease-in-out infinite; }
 
@@ -66,13 +76,15 @@ body {
   .animate-mascot-blink-slow { animation: mascot-blink-slow 7.5s ease-in-out infinite; }
   .animate-mascot-bob { animation: mascot-bob 7s ease-in-out infinite; }
   .animate-mascot-wiggle { animation: mascot-wiggle 0.45s ease-in-out; }
+  .animate-awake { animation: awake-pulse 2.4s ease-in-out infinite; }
 
   @media (prefers-reduced-motion: reduce) {
     .animate-rise { animation: none; opacity: 0.8; }
     .animate-mascot-blink,
     .animate-mascot-blink-slow,
     .animate-mascot-bob,
-    .animate-mascot-wiggle { animation: none; }
+    .animate-mascot-wiggle,
+    .animate-awake { animation: none; }
   }
 
   .grid-bg {

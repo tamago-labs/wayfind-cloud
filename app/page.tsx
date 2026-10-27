@@ -2,29 +2,27 @@
 
 import Header from '@/components/landing/Header';
 import Hero from '@/components/landing/Hero';
-import CompatibleWith from '@/components/landing/CompatibleWith';
-import BotCapabilities from '@/components/landing/BotCapabilities';
-import HowItWorks from '@/components/landing/HowItWorks';
-import HeroChatMockup from '@/components/landing/HeroChatMockup';
-import Background from '@/components/landing/Background';
+import Problem from '@/components/landing/Problem';
+import HowSection from '@/components/landing/HowSection';
+import Bots from '@/components/landing/Bots';
+import Trust from '@/components/landing/Trust';
 import Pricing from '@/components/landing/Pricing';
-import FAQ from '@/components/landing/FAQ';
-import CTA from '@/components/landing/CTA';
+import Faq from '@/components/landing/Faq';
+import FinalCta from '@/components/landing/FinalCta';
 import Footer from '@/components/landing/Footer';
 
 export default function Home() {
   return (
-    <main className="relative overflow-x-hidden bg-paper text-ink min-h-screen">
+    <main className="relative overflow-x-hidden bg-white text-navy min-h-screen">
       <Header />
       <Hero />
-      <CompatibleWith />
-      <BotCapabilities />
-      <HowItWorks />
-      <HeroChatMockup />
-      <Background />
+      <Problem />
+      <HowSection />
+      <Bots />
+      <Trust />
       <Pricing />
-      <FAQ />
-      <CTA />
+      <Faq />
+      <FinalCta />
       <Footer />
     </main>
   );
