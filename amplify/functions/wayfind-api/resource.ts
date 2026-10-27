@@ -2,13 +2,10 @@
 
 export const wayfindApiFunction = defineFunction({
   name: "wayfind-api",
-  timeoutSeconds: 90,
-  memoryMB: 512,
-  environment: {
-    WAYFIN_API: "true",
-    OKX_API_KEY: process.env.OKX_API_KEY ?? "",
-    OKX_SECRET_KEY: process.env.OKX_SECRET_KEY ?? "",
-    OKX_PASSPHRASE: process.env.OKX_PASSPHRASE ?? "",
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
-  },
+  timeoutSeconds: 300,
+  memoryMB: 1024,
+  // Secrets (provider API keys) are added via Amplify secrets in Phase 4,
+  // never as env literals. USER_POOL_ID / GATEKEEPER_FUNCTION_NAME are
+  // injected in amplify/backend.ts where the resources exist.
+  environment: {},
 });
