@@ -1,7 +1,7 @@
 const faqs = [
   {
     q: 'Can I use any AI model?',
-    a: 'You choose the model each Bot runs on from the models we offer. Bringing your own API key is planned for the Operator plan, and isn\u2019t available yet.',
+    a: 'You choose the model each Bot runs on from the models we offer. Bringing your own API key is planned for the Premium plan, and isn\u2019t available yet.',
   },
   {
     q: 'What is a MicroVM?',

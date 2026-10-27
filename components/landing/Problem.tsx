@@ -1,20 +1,23 @@
-import Mascot, { type MascotColor } from '@/components/Mascot';
+import Mascot, { type MascotColor, type MascotShape } from '@/components/Mascot';
 
-const cards: { color: MascotColor; title: string; body: string }[] = [
+const cards: { color: MascotColor; shape: MascotShape; title: string; body: string }[] = [
   {
     color: 'amber',
+    shape: 'squircle',
     title: 'Bundled into big plans',
-    body: 'The best background agents come inside subscriptions that run from $20 to $300 a month, even if you only need one assistant.',
+    body: 'Grok Bot, OpenAI Dots and Claude Duet come with subscriptions costing $20–$300 a month.',
   },
   {
     color: 'lagoon',
-    title: 'Launched in a few regions',
-    body: 'Many start in the US. If you\u2019re an indie operator in Southeast Asia, you wait, or work around it.',
+    shape: 'circle',
+    title: 'Not available everywhere',
+    body: 'Many AI agents launch in limited regions. Outside those markets, access can be a barrier before you start.',
   },
   {
     color: 'moss',
-    title: 'Paying for idle time',
-    body: 'A computer that\u2019s on all day costs money all day, even while your Bot is waiting for you to reply.',
+    shape: 'pebble',
+    title: 'Locked into one vendor',
+    body: 'Your workflow should not depend on one vendor. Choose the AI that fits each task, and switch anytime.',
   },
 ];
 
@@ -27,9 +30,9 @@ export default function Problem() {
           Always-on agents shouldn&rsquo;t need an enterprise budget.
         </h2>
         <div className="mt-12 grid gap-5 md:grid-cols-3">
-          {cards.map((c) => (
+          {cards.map((c, i) => (
             <div key={c.title} className="rounded-3xl bg-white p-7 shadow-sm">
-              <Mascot color={c.color} size="md" motion="none" />
+              <Mascot color={c.color} shape={c.shape} size="md" motion="none" blinkDelay={`-${i * 1.4}s`} />
               <h3 className="mt-5 text-xl font-bold">{c.title}</h3>
               <p className="mt-2 text-heroslate">{c.body}</p>
             </div>

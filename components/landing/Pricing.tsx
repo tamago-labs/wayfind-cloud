@@ -4,30 +4,24 @@ const plans = [
   {
     name: 'Starter',
     price: '$5',
-    features: ['1 Bot', '1 routine, daily brief included', 'Capped computer minutes and model credits'],
+    features: [
+      'Up to 10 Bots with persistent memory',
+      'Muse Glimmer credits included + BYOK',
+      '1 routine, daily brief included',
+      'Limited cloud computer minutes',
+    ],
     featured: false,
   },
   {
-    name: 'Operator',
-    price: '$10',
+    name: 'Premium',
+    price: '$30',
     features: [
-      'Up to 5 Bots and group chats',
-      'Scheduled and event routines',
-      'All beta connectors',
-      'Bring your own key (coming later)',
+      'Unlimited Bots and group chats',
+      'Glimmer, Wonder + supported premium models',
+       'Unlimited scheduled + event routines',
+      'Higher cloud computer minutes', 
     ],
     featured: true,
-  },
-  {
-    name: 'Studio',
-    price: '$20',
-    features: [
-      'Up to 15 Bots',
-      'Sections for projects and clients',
-      'Shared team-style Bots',
-      'Priority capacity',
-    ],
-    featured: false,
   },
 ];
 
@@ -41,10 +35,10 @@ export default function Pricing() {
             Free in early access. Simple after.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-heroslate">
-            No card needed today. These are the planned plans, and idle time is never charged.
+            No card needed today. Bring your own AI key on any plan, or use ours. Idle time is never charged.
           </p>
         </div>
-        <div className="mt-12 grid gap-5 lg:grid-cols-3">
+        <div className="mt-12 grid gap-5 md:grid-cols-2 mx-auto max-w-4xl">
           {plans.map((p) => (
             <div
               key={p.name}

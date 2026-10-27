@@ -38,7 +38,7 @@ export default function Hero() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="relative mx-auto max-w-5xl px-6 pb-40 pt-20 text-center"
+        className="relative mx-auto max-w-4xl px-6 pb-40 pt-20 text-center"
       >
         <div className="mx-auto mb-6 flex justify-center -space-x-3">
           {mascots.map((color, i) => (
@@ -55,10 +55,10 @@ export default function Hero() {
         </div>
 
         <h1 className="font-brico text-5xl font-extrabold leading-[1.05] tracking-tight sm:text-7xl">
-          The always-on agent, without the enterprise price.
+          Meet your new AI teammates
         </h1>
         <p className="mx-auto mt-6 max-w-lg text-lg text-heroslate">
-          Name a Bot, give it a job, and let it work in the background on the model you choose. From $5/month.
+          Create named AI Bots that remember, use cloud computers, and work in the background. Start from $5/month.
         </p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
           <Link href="/app" className="rounded-full bg-cta px-8 py-4 font-semibold text-white hover:bg-ctahover transition-colors">

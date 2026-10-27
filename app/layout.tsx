@@ -1,11 +1,12 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import ConfigureAmplify from "@/components/ConfigureAmplify";
+// import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Wayfind Cloud — Hire a proactive AI teammate",
+  title: "Wayfind Cloud — Always-On AI Agents From $5/Month",
   description:
-    "Give a Finder bot a job — inbox, leads, research or code — and wake up to finished work. It works in its own gated sandbox, asks before anything irreversible, and reports back every morning. Free in early access.",
+    "Hire AI Bots for research, coding, leads, and everyday operations. Each Bot remembers its context and works in the cloud, without an expensive bundled subscription. Free during early access.",
 };
 
 export default function RootLayout({

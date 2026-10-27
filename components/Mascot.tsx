@@ -1,10 +1,11 @@
 'use client';
 
-export type MascotColor = 'amber' | 'moss' | 'lagoon' | 'ash' | 'white';
+export type MascotColor = 'amber' | 'moss' | 'lagoon' | 'ash' | 'white' | 'blue';
 export type MascotSize = 'xs' | 'sm' | 'md' | 'lg';
 export type MascotMood = 'open' | 'happy' | 'sleepy';
 export type MascotBlink = 'calm' | 'sleepy' | 'off';
 export type MascotMotion = 'bob' | 'float' | 'none';
+export type MascotShape = 'blob' | 'circle' | 'squircle' | 'pebble';
 
 export interface MascotProps {
   color?: MascotColor;
@@ -12,6 +13,8 @@ export interface MascotProps {
   mood?: MascotMood;
   blink?: MascotBlink;
   motion?: MascotMotion;
+  /** Blob silhouette: blob (default), circle, tilted squircle, tilted pebble. */
+  shape?: MascotShape;
   /** Wiggle the blob once on hover. */
   wiggleOnHover?: boolean;
   /** Stagger loops when several mascots share a row, e.g. `-${i * 1.4}s`. */
@@ -27,6 +30,7 @@ const colorMap: Record<MascotColor, string> = {
   lagoon: 'bg-blagoon',
   ash: 'bg-bash',
   white: 'bg-white',
+  blue: 'bg-cta',
 };
 
 const sizeMap: Record<MascotSize, string> = {
@@ -40,6 +44,13 @@ const motionMap: Record<MascotMotion, string> = {
   bob: 'animate-mascot-bob',
   float: 'animate-floaty',
   none: '',
+};
+
+const shapeMap: Record<MascotShape, string> = {
+  blob: 'rounded-[46%_46%_36%_36%]',
+  circle: 'rounded-full',
+  squircle: 'rounded-[30%] -rotate-[8deg]',
+  pebble: 'rounded-[40%_60%_50%_50%] rotate-6',
 };
 
 const blinkMap: Record<MascotBlink, string> = {
@@ -58,6 +69,7 @@ export default function Mascot({
   mood = 'open',
   blink = 'calm',
   motion = 'none',
+  shape = 'blob',
   wiggleOnHover = false,
   blinkDelay = '0s',
   className = '',
@@ -97,7 +109,7 @@ export default function Mascot({
       aria-label={label}
     >
       <span
-        className={`relative block ${sizeMap[size]} rounded-[46%_46%_36%_36%] ${colorMap[color]} ${
+        className={`relative block ${sizeMap[size]} ${shapeMap[shape]} ${colorMap[color]} ${
           wiggleOnHover ? 'group-hover:animate-mascot-wiggle' : ''
         } ${className}`}
       >
