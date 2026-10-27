@@ -1,0 +1,34 @@
+[
+  {
+    "symbol": "SOL",
+    "name": "Solana",
+    "decimals": 9,
+    "addresses": {
+      "solana": "11111111111111111111111111111111"
+    }
+  },
+  {
+    "symbol": "USDC",
+    "name": "USD Coin",
+    "decimals": 6,
+    "addresses": {
+      "solana": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    }
+  },
+  {
+    "symbol": "USDT",
+    "name": "Tether USD",
+    "decimals": 6,
+    "addresses": {
+      "solana": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+    }
+  },
+  {
+    "symbol": "USDG",
+    "name": "Global Dollar",
+    "decimals": 6,
+    "addresses": {
+      "solana": "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH"
+    }
+  }
+]

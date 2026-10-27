@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #0B0B0F;
+  color: white;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@layer utilities {
+  .glow {
+    box-shadow: 0 0 60px -20px rgba(108, 92, 231, 0.3);
+  }
+
+  .glow-blue {
+    box-shadow: 0 0 80px -20px rgba(59, 130, 246, 0.25);
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(108, 92, 231, 0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(108, 92, 231, 0.07) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .btn-gradient {
+    background: linear-gradient(90deg, #6C5CE7, #00D2A0, #3B82F6, #6C5CE7);
+    background-size: 300% 100%;
+    animation: gradient-shift 3s linear infinite;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .btn-gradient:hover {
+    transform: scale(1.03);
+    box-shadow: 0 0 16px rgba(108, 92, 231, 0.4);
+  }
+  .btn-gradient:disabled {
+    opacity: 0.8;
+    cursor: wait;
+  }
+
+  .loading-dots::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    text-align: left;
+    animation: dots 1.4s infinite;
+  }
+}
+
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+
+@keyframes dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
