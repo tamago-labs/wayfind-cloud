@@ -66,7 +66,7 @@ const schema = a.schema({
       decidedAt: a.datetime(),
     })
     .authorization((allow) => [
-      allow.owner().to(["read"]),
+      allow.owner(),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("computerByOwnerId")]),
 

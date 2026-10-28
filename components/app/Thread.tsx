@@ -50,6 +50,11 @@ export default function Thread({ bot, onApprove }: ThreadProps) {
   return (
     <div ref={scrollRef} className="thread-scroll flex-1 overflow-y-auto px-4 py-6">
       <div className="mx-auto flex max-w-2xl flex-col gap-3 text-[15px]">
+        {bot.msgs.length === 0 && (
+          <div className="msg-in max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 text-navy shadow-sm">
+            Hi, I&rsquo;m {bot.name}! Give me my job in your first message: what to do, what never to do, and what to remember.
+          </div>
+        )}
         {bot.msgs.map((m, i) => {
           if (m.t === 'u') {
             return (

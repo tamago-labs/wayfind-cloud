@@ -1,31 +1,78 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Menu } from 'lucide-react';
-import Mascot from '@/components/Mascot';
+import { Menu, PanelRight } from 'lucide-react';
+import { useAuthenticator } from '@aws-amplify/ui-react';
+import { generateClient } from 'aws-amplify/data';
+import type { Schema } from '@/amplify/data/resource';
+import Mascot, { type MascotColor, type MascotShape } from '@/components/Mascot';
 import Roster from './Roster';
+import NewBotModal from './Roster/NewBotModal';
+import BotPanel, { type BotEdits } from './BotPanel';
 import Thread from './Thread';
 import Composer from './Composer';
-import { newBotColors, newBotShapes, seedBots, type Msg, type SeedBot } from './seed';
+import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
+
+const dataClient = generateClient<Schema>();
 
 const FOLLOW_UP_NO = 'Okay, I’ve held it. Tell me what to change.';
 const SIMULATED_REPLY = 'On it. I’ll message you here when it’s done, and ask before anything irreversible.';
 
+const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
+const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
+const GREETING: Msg = { t: 'b', x: 'Hi! Give me my job in your first message: what to do, what never to do, and what to remember.' };
+
+type ViewBot = SeedBot & { id: string | null };
+
 export default function AppShell() {
-  const [bots, setBots] = useState<SeedBot[]>(seedBots);
+  const { user } = useAuthenticator();
+  const [bots, setBots] = useState<ViewBot[]>([]);
   const [cur, setCur] = useState(0);
   const [query, setQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [sideOpen, setSideOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const [botModalOpen, setBotModalOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
   const timers = useRef<number[]>([]);
   const newCount = useRef(0);
 
   useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
 
+  // Roster comes from the database; seed.ts stays as shape reference only.
+  useEffect(() => {
+    const ownerId = user?.userId;
+    if (!ownerId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { data } = await dataClient.models.Bot.botsByOwnerId({ ownerId });
+        if (!alive) return;
+        setBots(
+          (data ?? []).map((b) => ({
+            id: b.id,
+            name: b.name,
+            role: b.role,
+            color: validColors.includes(b.color as MascotColor) ? (b.color as MascotColor) : 'amber',
+            shape: validShapes.includes(b.shape as MascotShape) ? (b.shape as MascotShape) : 'blob',
+            busy: false,
+            msgs: [],
+          })),
+        );
+        setCur(0);
+      } catch (err) {
+        // roster stays empty; user can create the first Bot
+        console.error('[AppShell] bots fetch failed:', err);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [user?.userId]);
+
   const bot = bots[cur] ?? bots[0];
 
-  const patchBot = (index: number, fn: (b: SeedBot) => SeedBot) =>
+  const patchBot = (index: number, fn: (b: ViewBot) => ViewBot) =>
     setBots((prev) => prev.map((b, i) => (i === index ? fn(b) : b)));
 
   const send = () => {
@@ -62,25 +109,94 @@ export default function AppShell() {
     });
   };
 
-  const newBot = () => {
+  // Returns an error message on failure, null on success.
+  const saveBotEdits = async (edits: BotEdits): Promise<string | null> => {
+    const target = bots[cur];
+    if (!target) return 'No Bot selected.';
+    if (!target.id) {
+      patchBot(cur, (b) => ({ ...b, ...edits }));
+      return null;
+    }
+    try {
+      const { errors } = await dataClient.models.Bot.update({ id: target.id, ...edits });
+      if (errors?.length) {
+        const msg = errors.map((e) => e.message).join('; ');
+        console.error('[AppShell] bot update failed:', msg);
+        return msg;
+      }
+      patchBot(cur, (b) => ({ ...b, ...edits }));
+      return null;
+    } catch (err) {
+      console.error('[AppShell] bot update failed:', err);
+      return err instanceof Error ? err.message : 'Save failed. Check your connection and try again.';
+    }
+  };
+
+  // Returns an error message on failure, null on success.
+  const createBot = async (name: string): Promise<string | null> => {
     const n = newCount.current++;
-    const fresh: SeedBot = {
-      name: 'New Bot',
-      role: 'No job yet',
-      color: newBotColors[n % newBotColors.length],
-      shape: newBotShapes[n % newBotShapes.length],
-      busy: false,
-      msgs: [{ t: 'b', x: 'Hi! Give me my job in your first message: what to do, what never to do, and what to remember.' }],
-    };
-    setBots((prev) => [fresh, ...prev]);
-    setCur(0);
-    setSideOpen(false);
+    const color = newBotColors[n % newBotColors.length];
+    const shape = newBotShapes[n % newBotShapes.length];
+    try {
+      const { data, errors } = await dataClient.models.Bot.create({
+        name,
+        role: 'No job yet',
+        color,
+        shape,
+        status: 'active',
+      });
+      if (errors?.length || !data) {
+        const msg = errors?.map((e) => e.message).join('; ') || 'Create failed with no error detail.';
+        console.error('[AppShell] bot create failed:', msg);
+        return msg;
+      }
+      console.log('[AppShell] bot created:', data.id);
+      setBots((prev) => [{ id: data.id, name, role: 'No job yet', color, shape, busy: false, msgs: [] }, ...prev]);
+      setCur(0);
+      setSideOpen(false);
+      return null;
+    } catch (err) {
+      console.error('[AppShell] bot create failed:', err);
+      return err instanceof Error ? err.message : 'Create failed. Check your connection and try again.';
+    }
   };
 
   const q = query.toLowerCase();
   const items = bots
     .map((b, index) => ({ bot: b, index }))
     .filter(({ bot }) => !q || `${bot.name}${bot.role}`.toLowerCase().includes(q));
+
+  if (!bot) {
+    return (
+      <div className="flex h-screen overflow-hidden bg-ice font-brico text-navy">
+        <Roster
+          items={[]}
+          cur={0}
+          onSelect={() => {}}
+          query={query}
+          onQuery={setQuery}
+          showSearch={showSearch}
+          onToggleSearch={() => setShowSearch((s) => !s)}
+          onNew={() => setBotModalOpen(true)}
+          open={sideOpen}
+          onClose={() => setSideOpen(false)}
+        />
+        <main className="grid min-w-0 flex-1 place-items-center bg-thread">
+          <div className="text-center">
+            <p className="text-xl font-bold">No Bots yet</p>
+            <p className="mt-1 text-sm text-heroslate">Name your first Bot to get started.</p>
+            <button
+              onClick={() => setBotModalOpen(true)}
+              className="mt-4 rounded-full bg-cta px-6 py-2.5 text-sm font-bold text-white hover:bg-ctahover"
+            >
+              Create your first Bot
+            </button>
+          </div>
+        </main>
+        <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-ice font-brico text-navy">
@@ -95,7 +211,7 @@ export default function AppShell() {
         onQuery={setQuery}
         showSearch={showSearch}
         onToggleSearch={() => setShowSearch((s) => !s)}
-        onNew={newBot}
+        onNew={() => setBotModalOpen(true)}
         open={sideOpen}
         onClose={() => setSideOpen(false)}
       />
@@ -115,12 +231,33 @@ export default function AppShell() {
             <span>{bot.name}</span>
             <span className="hidden text-sm font-medium text-heroslate sm:inline">· {bot.role}</span>
           </div>
+          <button
+            onClick={() => setPanelOpen((o) => !o)}
+            aria-label="Bot settings"
+            aria-expanded={panelOpen}
+            className="grid h-9 w-9 place-items-center rounded-full bg-white text-navy shadow-sm hover:bg-slate-50"
+          >
+            <PanelRight className="h-4 w-4" strokeWidth={2.2} />
+          </button>
 
         </header>
 
         <Thread bot={bot} onApprove={approve} />
         <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} />
       </main>
+
+      <BotPanel
+        key={bot.id ?? `local-${cur}`}
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        name={bot.name}
+        role={bot.role}
+        color={bot.color}
+        shape={bot.shape}
+        synced={bot.id !== null}
+        onSave={saveBotEdits}
+      />
+      <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} />
     </div>
   );
 }
