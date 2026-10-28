@@ -8,6 +8,7 @@ export const auth = defineAuth({
   loginWith: {
     email: true,
     externalProviders: {
+      // Scopes intentionally omitted: Cognito defaults (email, profile, openid) apply.
       google: {
         clientId: secret('GOOGLE_CLIENT_ID'),
         clientSecret: secret('GOOGLE_CLIENT_SECRET'),
