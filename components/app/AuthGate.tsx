@@ -64,7 +64,7 @@ function AuthHeader() {
   return (
     <View textAlign="center" padding={tokens.space.large}>
       <Link href="/" aria-label="Back to Wayfind Cloud home">
-      <View display="flex" alignItems="center" justifyContent="center" gap={tokens.space.small}>
+      <View display="flex" style={{ alignItems: 'center', justifyContent: 'center' }} gap={tokens.space.small}>
         <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#0E1B2C]">
           <Mascot color="white" size="xs" motion="none" label="Wayfind Cloud mascot" />
         </span>
