@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import AuthGate from '@/components/app/AuthGate';
 
 export const metadata: Metadata = {
   title: 'Wayfind Cloud — Your Bots',
@@ -6,5 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  return children;
+  return <AuthGate>{children}</AuthGate>;
 }
