@@ -56,7 +56,7 @@ export default function AppShell() {
       if (!target || target.t !== 'ask' || target.done !== undefined) return b;
       const follow: Msg = { t: 'b', x: ok ? target.after : FOLLOW_UP_NO };
       const msgs = b.msgs.map((m, j) =>
-        j === msgIndex && m.t === 'ask' ? { ...m, done: (ok ? 'ok' : 'no') as const } : m,
+        j === msgIndex && m.t === 'ask' ? { ...m, done: ok ? ('ok' as const) : ('no' as const) } : m,
       );
       return { ...b, msgs: [...msgs, follow] };
     });
