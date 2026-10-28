@@ -14,8 +14,9 @@ const schema = a.schema({
     .model({
       ownerId: a.string().required(), // Cognito sub
       email: a.string().required(),
+      displayName: a.string(), // profile name the user sets; Bots address them by this
       region: a.string(),
-      plan: a.enum(["free", "starter", "operator", "studio"]),
+      plan: a.enum(["free", "starter", "premium", "enterprise"]),
       bots: a.hasMany("Bot", "userProfileId"),
       computer: a.hasOne("Computer", "userProfileId"),
     })
@@ -30,10 +31,11 @@ const schema = a.schema({
       userProfileId: a.id(),
       userProfile: a.belongsTo("UserProfile", "userProfileId"),
       name: a.string().required(),
-      finder: a.enum(["inbox", "leads", "research", "repo", "custom"]),
-      job: a.string().required(),
+      role: a.string().required(),
       description: a.string(), // the durable "your job is…" brief
-      status: a.enum(["template", "active", "paused", "hidden"]),
+      color: a.string(),
+      shape: a.string(),
+      status: a.enum(["active", "paused"]),
       pinned: a.boolean(),
       section: a.string(),
       conversations: a.hasMany("Conversation", "botId"),

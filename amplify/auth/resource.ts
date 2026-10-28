@@ -11,6 +11,10 @@ export const auth = defineAuth({
       google: {
         clientId: secret('GOOGLE_CLIENT_ID'),
         clientSecret: secret('GOOGLE_CLIENT_SECRET'),
+        scopes: ['EMAIL', 'PROFILE', 'OPENID'],
+        attributeMapping: {
+          email: 'email',
+        },
       },
       // Production URLs (e.g. https://<domain>/app) get added once the domain is known.
       callbackUrls: ['http://localhost:3000/app'],

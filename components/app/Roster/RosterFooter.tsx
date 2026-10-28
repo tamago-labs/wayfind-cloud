@@ -4,9 +4,29 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { LogOut, Pencil, Settings } from 'lucide-react';
-import { signOut } from 'aws-amplify/auth';
+import { useAuthenticator } from '@aws-amplify/ui-react';
+import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
 
 export default function RosterFooter() {
+  const { user } = useAuthenticator();
+  const [email, setEmail] = useState('');
+  useEffect(() => {
+    let alive = true;
+    fetchUserAttributes()
+      .then((attrs) => {
+        if (!alive) return;
+        setEmail(
+          attrs.find((a) => a.key === 'email')?.value ?? user?.signInDetails?.loginId ?? '',
+        );
+      })
+      .catch(() => {
+        if (alive) setEmail(user?.signInDetails?.loginId ?? '');
+      });
+    return () => {
+      alive = false;
+    };
+  }, [user?.userId]);
+  const initial = email.charAt(0).toUpperCase() || 'P';
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -79,9 +99,10 @@ export default function RosterFooter() {
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             aria-label="Profile menu"
+            title={email || 'Profile menu'}
             className="grid h-10 w-10 place-items-center rounded-full bg-white font-bold text-navy shadow-sm hover:bg-slate-50"
           >
-            P
+            {initial}
           </button>
         </span>
         <button className="flex flex-1 items-center justify-center gap-2.5 rounded-full bg-white py-2.5 font-semibold text-navy shadow-sm hover:bg-slate-50">
