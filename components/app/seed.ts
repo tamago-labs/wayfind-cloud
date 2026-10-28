@@ -95,6 +95,6 @@ export const newBotShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebbl
 
 export function lastPreview(b: SeedBot): string {
   const m = [...b.msgs].reverse().find((m) => m.t === 'b' || m.t === 'u' || m.t === 'ask');
-  if (!m || m.t === 'typing') return 'New Bot';
+  if (!m) return 'New Bot';
   return m.x;
 }

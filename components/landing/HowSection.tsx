@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 const TAB_MS = 10000; // time each tab stays on screen
 const TICK_MS = 1100; // time between cursor moves (keep close to the cursor's 1000ms transition)
 const LAST = 9; // last animation step of every screen
-const clamp = (n, a, b) => Math.min(Math.max(n, a), b);
+const clamp = (n: number, a: number, b: number) => Math.min(Math.max(n, a), b);
 
 const tabs = [
   {
@@ -29,8 +29,8 @@ const tabs = [
 
 /* ---------- shared pieces ---------- */
 
-function Mascot({ c, s = 28 }) {
-  const eye = { position: 'absolute', top: '40%', width: '11%', height: '14%', borderRadius: '50%', background: '#1b2330' };
+function Mascot({ c, s = 28 }: { c: string; s?: number }) {
+  const eye = { position: 'absolute', top: '40%', width: '11%', height: '14%', borderRadius: '50%', background: '#1b2330' } as const;
   return (
     <span className="relative inline-block shrink-0" style={{ width: s * 0.9, height: s, background: c, borderRadius: '46% 46% 36% 36%' }}>
       <i style={{ ...eye, left: '30%' }} />
@@ -39,7 +39,7 @@ function Mascot({ c, s = 28 }) {
   );
 }
 
-function Cursor({ x, y, color = '#fff', label, ping }) {
+function Cursor({ x, y, color = '#fff', label, ping }: { x: number | null; y: number | null; color?: string; label?: string; ping?: number | null }) {
   return (
     <div
       aria-hidden="true"
@@ -62,7 +62,9 @@ function Cursor({ x, y, color = '#fff', label, ping }) {
 const tones = { rec: 'bg-red-500/20 text-red-300', on: 'bg-blagoon/20 text-blagoon', off: 'bg-white/10 text-white/50' };
 const dots = { rec: 'animate-pulse bg-red-500', on: 'animate-awake bg-blagoon', off: 'bg-white/40' };
 
-function Frame({ badge, tone = 'on', cursor, ping, children }) {
+import type { ReactNode } from 'react';
+
+function Frame({ badge, tone = 'on', cursor, ping, children }: { badge: string; tone?: keyof typeof tones; cursor?: number[] | null; ping?: number | null; children: ReactNode }) {
   return (
     <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl border border-white/10 bg-[#0b1626] shadow-2xl shadow-black/30">
       <div className="flex items-center gap-2 border-b border-white/10 bg-white/5 px-4 py-2.5">
@@ -87,7 +89,7 @@ function Frame({ badge, tone = 'on', cursor, ping, children }) {
 
 const shoeSteps = ['Search \u201crunning shoes\u201d', 'Open the product', 'Choose size 42', 'Add to cart'];
 
-function TeachScreen({ tick }) {
+function TeachScreen({ tick }: { tick: number }) {
   const pts = [[24, 15], [24, 15], [30, 44], [24, 53], [42, 72], [56, 15]];
   const rec = tick <= 5;
   const done = tick >= 6;
@@ -163,7 +165,7 @@ function TeachScreen({ tick }) {
 
 /* ---------- 2. Browser sign-in with Google (Vault + user approval) ---------- */
 
-function SignInScreen({ tick }) {
+function SignInScreen({ tick }: { tick: number }) {
   const pts = [[50, 28], [50, 58], [50, 58], [50, 50], [50, 62], null, [22, 32], [22, 48], [62, 62], [62, 62]];
   const phase = tick < 2 ? 'form' : tick < 4 ? 'pick' : tick === 4 ? 'vault' : tick === 5 ? 'approve' : 'app';
   const url = { form: 'app.acme.io/login', pick: 'accounts.google.com', vault: 'accounts.google.com', approve: 'accounts.google.com', app: 'app.acme.io/dashboard' }[phase];
@@ -248,7 +250,7 @@ const crew = [
   { n: 'Lagoon', c: '#2BB3B1', path: [[10, 70], [30, 70], [50, 70], [70, 70], [90, 70], [90, 90], [70, 90], [50, 90], [30, 90], [10, 90]] },
 ];
 
-function FilesScreen({ tick }) {
+function FilesScreen({ tick }: { tick: number }) {
   const t = clamp(tick, 0, 9);
   // tick each cell first appears under a cursor — derived from the crew trails above
   const visit = [
@@ -257,7 +259,7 @@ function FilesScreen({ tick }) {
     [0, 1, 2, 3, 4],
     [9, 8, 7, 6, 5],
   ];
-  const filled = (r, c) => t >= visit[r - 1][c];
+  const filled = (r: number, c: number) => t >= visit[r - 1][c];
   return (
     <Frame badge="Live" tone="on">
       <div className="absolute inset-x-[4%] top-[6%] bottom-[18%] rounded-lg border border-white/10 bg-white/[0.05]">
@@ -285,7 +287,7 @@ function FilesScreen({ tick }) {
   );
 }
 
-const screens = { teach: TeachScreen, signin: SignInScreen, files: FilesScreen };
+const screens: Record<string, ({ tick }: { tick: number }) => JSX.Element> = { teach: TeachScreen, signin: SignInScreen, files: FilesScreen };
 
 /* ---------- section ---------- */
 
