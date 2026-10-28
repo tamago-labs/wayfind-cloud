@@ -6,10 +6,10 @@ import { Menu, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Mascot from '@/components/Mascot';
 
-// Nav anchors follow wayfind-sections.html: #problem #how #bots #trust #pricing #faq.
+// Nav anchors: #how #models #trust #pricing #faq (plus #problem section, unlinked).
 const navLinks = [
   { href: '/#how', label: 'How' },
-  { href: '/#bots', label: 'Bots' },
+  { href: '/#models', label: 'Models' },
   { href: '/#trust', label: 'Trust' },
   { href: '/#pricing', label: 'Pricing' },
   { href: '/#faq', label: 'FAQ' },

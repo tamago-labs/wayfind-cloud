@@ -2,7 +2,7 @@ export { default as Header } from './Header';
 export { default as Hero } from './Hero';
 export { default as Problem } from './Problem';
 export { default as HowSection } from './HowSection';
-export { default as Bots } from './Bots';
+export { default as Models } from './Models';
 export { default as Trust } from './Trust';
 export { default as Pricing } from './Pricing';
 export { default as Faq } from './Faq';

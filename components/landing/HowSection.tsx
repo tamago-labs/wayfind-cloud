@@ -169,7 +169,7 @@ function SignInScreen({ tick }) {
   const url = { form: 'app.acme.io/login', pick: 'accounts.google.com', vault: 'accounts.google.com', approve: 'accounts.google.com', app: 'app.acme.io/dashboard' }[phase];
   const card = 'absolute left-1/2 top-1/2 w-[58%] -translate-x-1/2 -translate-y-1/2 rounded-xl p-4 text-center text-xs';
   return (
-    <Frame badge={phase === 'app' ? 'Signed in' : 'Amber signing in'} tone="on" cursor={pts[tick]} ping={[1, 3].includes(tick) ? tick : null}>
+    <Frame badge={phase === 'app' ? 'Signed in' : 'Signing in'} tone="on" cursor={pts[tick]} ping={[1, 3].includes(tick) ? tick : null}>
       <div className="absolute inset-[3%] overflow-hidden rounded-lg border border-white/10 bg-white/[0.05]">
         <div className="flex items-center gap-2 border-b border-white/10 px-3 py-1.5 text-[11px] text-white/60">
           <span aria-hidden="true">🔒</span>
@@ -232,7 +232,7 @@ function SignInScreen({ tick }) {
   );
 }
 
-/* ---------- 3. Five Bots working in the same file ---------- */
+/* ---------- 3. Three Bots working in the same file ---------- */
 
 const cols = ['Vendor', 'Amount', 'Category', 'Receipt', 'Status'];
 const rows = [
@@ -259,7 +259,7 @@ function FilesScreen({ tick }) {
   ];
   const filled = (r, c) => t >= visit[r - 1][c];
   return (
-    <Frame badge="Live · 3 Bots reconciling" tone="on">
+    <Frame badge="Live" tone="on">
       <div className="absolute inset-x-[4%] top-[6%] bottom-[18%] rounded-lg border border-white/10 bg-white/[0.05]">
         <div className="grid h-full grid-cols-5 grid-rows-5 text-[10px] sm:text-[11px]">
           {Array.from({ length: 25 }).map((_, k) => {
