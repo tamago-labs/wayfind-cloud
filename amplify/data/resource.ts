@@ -21,7 +21,7 @@ const schema = a.schema({
       computer: a.hasOne("Computer", "userProfileId"),
     })
     .authorization((allow) => [
-      allow.owner().to(["read", "update"]),
+      allow.owner().to(["create", "read", "update"]),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("profileByOwnerId")]),
 

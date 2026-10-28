@@ -6,10 +6,18 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { LogOut, Pencil, Settings } from 'lucide-react';
 import { useAuthenticator } from '@aws-amplify/ui-react';
 import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
+import { generateClient } from 'aws-amplify/data';
+import type { Schema } from '@/amplify/data/resource';
+import ProfileModal from './ProfileModal';
+
+const dataClient = generateClient<Schema>();
 
 export default function RosterFooter() {
   const { user } = useAuthenticator();
   const [email, setEmail] = useState('');
+  const [profileId, setProfileId] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState('');
+  const [nameOpen, setNameOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     fetchUserAttributes()
@@ -24,7 +32,38 @@ export default function RosterFooter() {
       alive = false;
     };
   }, [user?.userId]);
-  const initial = email.charAt(0).toUpperCase() || 'P';
+
+  // Lazy get-or-create the UserProfile, mirroring the wallet app pattern.
+  useEffect(() => {
+    const ownerId = user?.userId;
+    if (!ownerId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { data } = await dataClient.models.UserProfile.profileByOwnerId({ ownerId });
+        if (!alive) return;
+        if (data && data.length > 0) {
+          setProfileId(data[0].id);
+          setDisplayName(data[0].displayName ?? '');
+        } else {
+          const { data: created } = await dataClient.models.UserProfile.create({
+            ownerId,
+            email,
+            plan: 'free',
+          });
+          if (alive && created) setProfileId(created.id);
+        }
+      } catch {
+        // profile stays unavailable; avatar falls back to email
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [user?.userId, email]);
+
+
+  const initial = (displayName || email).charAt(0).toUpperCase() || 'P';
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -54,7 +93,10 @@ export default function RosterFooter() {
   return (
     <div className="relative border-t border-navy/10 p-4" ref={menuRef}>
       <p className="mb-2 flex items-center gap-1.5 text-sm text-heroslate">
-        Enter your name <Pencil className="h-3 w-3" strokeWidth={2} />
+        {displayName || 'Enter your name'}
+        <button onClick={() => setNameOpen(true)} aria-label="Set profile name" className="hover:text-navy">
+          <Pencil className="h-3 w-3" strokeWidth={2} />
+        </button>
       </p>
       <div className="flex items-center gap-2.5">
         <span className="relative shrink-0">
@@ -69,6 +111,20 @@ export default function RosterFooter() {
                 transition={{ duration: 0.15 }}
                 className="absolute bottom-full left-0 mb-1 w-52 overflow-hidden rounded-2xl border border-navy/10 bg-white py-1.5 shadow-xl shadow-navy/10"
               >
+                <div className="flex items-center gap-2.5 px-4 pb-2 pt-1.5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-ice font-bold text-navy">
+                    {initial}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-bold text-navy">
+                      {displayName || email || 'Your profile'}
+                    </span>
+                    {displayName && email ? (
+                      <span className="block truncate text-xs text-heroslate">{email}</span>
+                    ) : null}
+                  </span>
+                </div>
+                <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />
                 <button
                   role="menuitem"
                   disabled
@@ -110,8 +166,15 @@ export default function RosterFooter() {
             <i className="grid h-5 w-5 place-items-center rounded bg-navy text-[10px] font-bold not-italic text-white ring-2 ring-white">N</i>
             <i className="grid h-5 w-5 place-items-center rounded bg-blagoon text-[10px] font-bold not-italic text-white ring-2 ring-white">D</i>
           </span>
-        </button>
-      </div>
+          </button>
+        </div>
+      <ProfileModal
+        open={nameOpen}
+        onClose={() => setNameOpen(false)}
+        profileId={profileId}
+        initialName={displayName}
+        onSaved={setDisplayName}
+      />
     </div>
   );
 }
