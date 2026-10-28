@@ -15,6 +15,7 @@ export const auth = defineAuth({
         attributeMapping: {
           email: 'email',
         },
+        scopes: ['profile', 'email']
       },
       // Production URLs (e.g. https://<domain>/app) get added once the domain is known.
       callbackUrls: ['http://localhost:3000/app'],
