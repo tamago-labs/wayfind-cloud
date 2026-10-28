@@ -8,7 +8,6 @@ import Mascot from '@/components/Mascot';
 
 // Nav anchors follow wayfind-sections.html: #problem #how #bots #trust #pricing #faq.
 const navLinks = [
-  { href: '/#problem', label: 'Problem' },
   { href: '/#how', label: 'How' },
   { href: '/#bots', label: 'Bots' },
   { href: '/#trust', label: 'Trust' },
