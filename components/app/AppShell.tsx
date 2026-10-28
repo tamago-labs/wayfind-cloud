@@ -134,11 +134,14 @@ export default function AppShell() {
 
   // Returns an error message on failure, null on success.
   const createBot = async (name: string): Promise<string | null> => {
+    const ownerId = user?.userId;
+    if (!ownerId) return 'Not signed in. Please sign in again.';
     const n = newCount.current++;
     const color = newBotColors[n % newBotColors.length];
     const shape = newBotShapes[n % newBotShapes.length];
     try {
       const { data, errors } = await dataClient.models.Bot.create({
+        ownerId,
         name,
         role: 'No job yet',
         color,
