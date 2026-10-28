@@ -15,9 +15,7 @@ export default function RosterFooter() {
     fetchUserAttributes()
       .then((attrs) => {
         if (!alive) return;
-        setEmail(
-          attrs.find((a) => a.key === 'email')?.value ?? user?.signInDetails?.loginId ?? '',
-        );
+        setEmail(attrs?.email ?? user?.signInDetails?.loginId ?? '');
       })
       .catch(() => {
         if (alive) setEmail(user?.signInDetails?.loginId ?? '');

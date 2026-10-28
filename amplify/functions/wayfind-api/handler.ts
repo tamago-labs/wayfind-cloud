@@ -87,13 +87,6 @@ const json = (statusCode: number, body: unknown): APIGatewayProxyStructuredResul
   body: JSON.stringify(body),
 });
 
-function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
-  try {
-    return event.body ? JSON.parse(event.body) : {};
-  } catch {
-    return {};
-  }
-}
 
 async function ensureProfile(claims: Claims) {
   const { data: existing } = await dataClient.models.UserProfile.profileByOwnerId({
@@ -134,42 +127,7 @@ export const handler = async (
   const ownerId = claims.sub;
 
   try {
-    // GET /me ó return (creating on first call) the caller's profile
-    if (path.endsWith("/me") && method === "GET") {
-      const profile = await ensureProfile(claims);
-      return json(200, { data: profile });
-    }
-
-    // POST /bots ó create a Bot (name + Finder face + job)
-    if (path.endsWith("/bots") && method === "POST") {
-      const profile = await ensureProfile(claims);
-      const body = parseBody(event);
-      const name = String(body.name ?? "").trim();
-      const job = String(body.job ?? "").trim();
-      if (!name || !job) return json(400, { error: "name and job are required" });
-      const finder = (["inbox", "leads", "research", "repo", "custom"].includes(String(body.finder))
-        ? String(body.finder)
-        : "custom") as "inbox" | "leads" | "research" | "repo" | "custom";
-      const { data: bot, errors } = await dataClient.models.Bot.create({
-        ownerId,
-        userProfileId: profile.id,
-        name,
-        finder,
-        job,
-        description: body.description ? String(body.description) : undefined,
-        status: "active",
-      });
-      if (errors || !bot) return json(500, { error: `bot create failed: ${JSON.stringify(errors)}` });
-      return json(201, { data: bot });
-    }
-
-    // GET /bots ó the caller's roster
-    if (path.endsWith("/bots") && method === "GET") {
-      const { data: bots } = await dataClient.models.Bot.botsByOwnerId({ ownerId });
-      return json(200, { data: bots ?? [] });
-    }
-
-    // POST /computer/request ó create (or return) the Computer request, then gatekeep
+    // POST /computer/request √¢‚Ç¨‚Äù create (or return) the Computer request, then gatekeep
     if (path.endsWith("/computer/request") && method === "POST") {
       const profile = await ensureProfile(claims);
       const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
@@ -208,7 +166,7 @@ export const handler = async (
       return json(200, { data: computer });
     }
 
-    // POST /chat/message ó Phase 4 (chat + model runtime). Honest stub.
+    // POST /chat/message √¢‚Ç¨‚Äù Phase 4 (chat + model runtime). Honest stub.
     if (path.endsWith("/chat/message")) {
       return json(501, {
         error: "chat runtime arrives in Phase 4 (chat + model). Your Bots, account and Computer request are real; no work was run.",
