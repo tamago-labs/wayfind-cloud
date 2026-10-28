@@ -101,7 +101,7 @@ export default function AppShell() {
       />
 
       <main className="flex min-w-0 flex-1 flex-col bg-thread">
-        <header className="relative flex items-center justify-between px-4 py-3.5">
+        <header className="relative flex items-center px-4 py-3.5">
           <button
             onClick={() => setSideOpen(true)}
             aria-label="Open Bots"
@@ -110,15 +110,12 @@ export default function AppShell() {
             <Menu className="h-4 w-4" strokeWidth={2.2} />
           </button>
           <span className="hidden w-40 md:block" />
-          <div className="flex items-center gap-2.5 rounded-full bg-white py-2 pl-3 pr-5 font-bold text-navy shadow-md shadow-navy/5">
+          <div className="mx-auto flex items-center gap-2.5 rounded-full bg-white py-2 pl-3 pr-5 font-bold text-navy shadow-md shadow-navy/5">
             <Mascot color={bot.color} shape={bot.shape} size="xs" motion="none" />
             <span>{bot.name}</span>
             <span className="hidden text-sm font-medium text-heroslate sm:inline">· {bot.role}</span>
           </div>
-          <span className="flex w-40 items-center justify-end gap-2 text-xs font-semibold text-heroslate">
-            <i className="animate-awake h-2.5 w-2.5 rounded-full bg-blagoon" />
-            <span className="hidden sm:inline">Computer awake</span>
-          </span>
+
         </header>
 
         <Thread bot={bot} onApprove={approve} />

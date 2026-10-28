@@ -8,7 +8,7 @@ import Mascot from '@/components/Mascot';
 
 // Nav anchors: #how #models #trust #pricing #faq (plus #problem section, unlinked).
 const navLinks = [
-  { href: '/#how', label: 'How' },
+  { href: '/#how', label: 'How it works' },
   { href: '/#models', label: 'Models' },
   { href: '/#trust', label: 'Trust' },
   { href: '/#pricing', label: 'Pricing' },
