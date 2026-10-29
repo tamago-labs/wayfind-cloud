@@ -11,12 +11,12 @@ import NewBotModal from './Roster/NewBotModal';
 import BotPanel, { type BotEdits } from './BotPanel';
 import Thread from './Thread';
 import Composer from './Composer';
+import { getHistory, postTask, streamRun } from '@/lib/agent';
 import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
 
 const FOLLOW_UP_NO = 'Okay, I’ve held it. Tell me what to change.';
-const SIMULATED_REPLY = 'On it. I’ll message you here when it’s done, and ask before anything irreversible.';
 
 const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
 const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
@@ -34,10 +34,7 @@ export default function AppShell() {
   const [draft, setDraft] = useState('');
   const [botModalOpen, setBotModalOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
-  const timers = useRef<number[]>([]);
   const newCount = useRef(0);
-
-  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), []);
 
   // Roster comes from the database; seed.ts stays as shape reference only.
   useEffect(() => {
@@ -70,6 +67,34 @@ export default function AppShell() {
     };
   }, [user?.userId]);
 
+  // Hydrate per-bot history from the agent server (each Bot id is its conversation).
+  useEffect(() => {
+    const b = bots[cur];
+    if (!b?.id || b.msgs.length > 0) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const history = await getHistory(b.id as string);
+        if (!alive || history.length === 0) return;
+        patchBot(cur, (prev) =>
+          prev.msgs.length > 0
+            ? prev
+            : {
+                ...prev,
+                msgs: history.map((m) => ({ t: m.role === 'assistant' ? ('b' as const) : ('u' as const), x: m.text })),
+              },
+        );
+      } catch (err) {
+        // history stays empty; the thread shows the greeting
+        console.error('[AppShell] history fetch failed:', err);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cur, bots[cur]?.id, bots[cur]?.msgs.length]);
+
   const bot = bots[cur] ?? bots[0];
 
   const patchBot = (index: number, fn: (b: ViewBot) => ViewBot) =>
@@ -77,24 +102,46 @@ export default function AppShell() {
 
   const send = () => {
     const v = draft.trim();
-    if (!v) return;
+    if (!v || !bot || bot.busy) return;
+    const targetIndex = cur;
+    const targetId = bot.id;
+    const targetName = bot.name;
+    const targetRole = bot.role;
     setDraft('');
-    patchBot(cur, (b) => ({ ...b, busy: true, msgs: [...b.msgs, { t: 'u', x: v }, { t: 'typing' }] }));
-    timers.current.push(
-      window.setTimeout(() => {
-        patchBot(cur, (b) => ({
+    patchBot(targetIndex, (b) => ({ ...b, busy: true, msgs: [...b.msgs, { t: 'u', x: v }, { t: 'typing' }] }));
+    void (async () => {
+      const finish = (fn: (b: ViewBot) => ViewBot) => patchBot(targetIndex, (b) => ({ ...fn(b), busy: false }));
+      try {
+        const system = targetId ? `You are "${targetName}". Role: ${targetRole}.` : undefined;
+        const runId = await postTask(v, targetId ?? undefined, system);
+        await streamRun(runId, {
+          onChunk: (delta) =>
+            patchBot(targetIndex, (b) => {
+              const msgs = b.msgs.filter((m) => m.t !== 'typing');
+              const last = msgs[msgs.length - 1];
+              if (last && last.t === 'b') msgs[msgs.length - 1] = { t: 'b', x: last.x + delta };
+              else msgs.push({ t: 'b', x: delta });
+              return { ...b, msgs };
+            }),
+          onAgent: (name) =>
+            patchBot(targetIndex, (b) => {
+              const msgs = b.msgs.filter((m) => m.t !== 'typing');
+              const row: Msg = { t: 'tool', x: `Using the computer · ${name}` };
+              const last = msgs[msgs.length - 1];
+              if (last && last.t === 'tool') msgs[msgs.length - 1] = row;
+              else msgs.push(row);
+              return { ...b, msgs };
+            }),
+        });
+        patchBot(targetIndex, (b) => ({ ...b, busy: false }));
+      } catch (err) {
+        console.error('[AppShell] agent send failed:', err);
+        finish((b) => ({
           ...b,
-          msgs: [...b.msgs.filter((m) => m.t !== 'typing'), { t: 'tool', x: 'Using the computer · browser' }],
+          msgs: [...b.msgs.filter((m) => m.t !== 'typing'), { t: 'b', x: 'Hmm, that run failed. Is the computer server running? Try again.' }],
         }));
-      }, 900),
-      window.setTimeout(() => {
-        patchBot(cur, (b) => ({
-          ...b,
-          busy: false,
-          msgs: [...b.msgs, { t: 'b', x: SIMULATED_REPLY }],
-        }));
-      }, 2000),
-    );
+      }
+    })();
   };
 
   const approve = (msgIndex: number, ok: boolean) => {
@@ -274,7 +321,7 @@ export default function AppShell() {
         </header>
 
         <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
-          Demo chat — replies are simulated, nothing is saved or run yet. Real model chat is the next build.
+          Local dev — replies come from your computer server. Make sure it’s running on :8080.
         </div>
         <Thread bot={bot} onApprove={approve} />
         <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} />

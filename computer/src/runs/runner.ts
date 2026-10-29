@@ -73,31 +73,84 @@ function releaseChildSlot(): void {
 
 const convoPath = () => join(WORKSPACE_DIR, 'conversations.jsonl');
 
-function appendTranscript(runId: string, role: string, text: string, parentId?: string): void {
+function appendTranscript(
+  runId: string,
+  role: string,
+  text: string,
+  parentId?: string,
+  conversationId?: string,
+): void {
   mkdirSync(WORKSPACE_DIR, { recursive: true });
   appendFileSync(
     convoPath(),
-    JSON.stringify({ runId, parentId, role, text, at: new Date().toISOString() }) + '\n',
+    JSON.stringify({ runId, parentId, conversationId, role, text, at: new Date().toISOString() }) + '\n',
   );
 }
 
-function loadHistory(limit = 20): unknown[] {
+interface HistoryLine {
+  role: string;
+  text: string;
+  at: string;
+}
+
+/** Transcript lines for one conversation (user/assistant only). */
+export function getHistory(conversationId: string): HistoryLine[] {
+  let raw: string;
+  try {
+    raw = readFileSync(convoPath(), 'utf8');
+  } catch {
+    return [];
+  }
+  const out: HistoryLine[] = [];
+  for (const line of raw.trim().split('\n')) {
+    if (!line) continue;
+    try {
+      const m = JSON.parse(line) as {
+        role?: string;
+        text?: string;
+        at?: string;
+        conversationId?: string;
+      };
+      if (m.conversationId !== conversationId) continue;
+      if ((m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string') {
+        out.push({ role: m.role, text: m.text, at: m.at ?? '' });
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return out;
+}
+
+function loadHistory(conversationId?: string, limit = 20): unknown[] {
   if (!existsSync(convoPath())) return [];
   const lines = readFileSync(convoPath(), 'utf8').trim().split('\n').filter(Boolean);
   return lines
-    .slice(-limit)
     .map((l) => {
       try {
-        return JSON.parse(l) as { role: string; text: string };
+        return JSON.parse(l) as { role?: string; text?: string; conversationId?: string };
       } catch {
         return null;
       }
     })
-    .filter((m): m is { role: string; text: string } => !!m && (m.role === 'user' || m.role === 'assistant'))
+    .filter((m): m is { role: string; text: string; conversationId?: string } => {
+      if (!m || typeof m.text !== 'string') return false;
+      // Scoped reads see only their conversation; unscoped reads (tests/CLI)
+      // see only legacy lines without a conversation.
+      if (conversationId) {
+        return (
+          m.role !== undefined &&
+          m.conversationId === conversationId &&
+          ['user', 'assistant', 'system'].includes(m.role)
+        );
+      }
+      return !m.conversationId && (m.role === 'user' || m.role === 'assistant');
+    })
+    .slice(-limit)
     .map((m) => ({
       type: 'message',
       role: m.role,
-      content: [{ type: m.role === 'user' ? 'input_text' : 'output_text', text: m.text }],
+      content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.text }],
     }));
 }
 
@@ -134,6 +187,10 @@ export interface StartRunOpts {
   parentId?: string;
   /** Nesting depth of `task` delegation; top-level runs are 0. */
   depth?: number;
+  /** Conversation scope (frontend Bot id). Isolates transcript history per bot. */
+  conversationId?: string;
+  /** System brief for a fresh conversation (bot role/job). Sent once. */
+  system?: string;
   onApproval?: (approval: PendingApproval) => void;
   approvalTimeoutMs?: number;
 }
@@ -189,12 +246,20 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
       return runToCompletion(childText, { ...opts, parentId: runState.id, depth: depth + 1 });
     };
     const agent = await createTriageAgent(guardOpts, { provider: opts.provider, model: opts.model }, runChild);
-    // History isolation: children get ONLY their prompt. Inheriting the shared
-    // transcript made descendants obey the parent's delegation instructions
-    // (exponential spawn + semaphore deadlock). Top-level runs keep history.
-    const input = (runState.parentId
-      ? [userMessage(text)]
-      : [...loadHistory(), userMessage(text)]) as never;
+    // History isolation: children get ONLY their prompt. Top-level runs load
+    // their conversation's history; a `system` brief is prepended once for
+    // fresh conversations and persisted so later turns keep it.
+    const history = runState.parentId ? [] : loadHistory(opts.conversationId);
+    if (!runState.parentId && opts.system && history.length === 0) {
+      const sys = {
+        type: 'message',
+        role: 'system',
+        content: [{ type: 'input_text', text: opts.system }],
+      } as never;
+      history.unshift(sys);
+      appendTranscript(runState.id, 'system', opts.system, undefined, opts.conversationId);
+    }
+    const input = (runState.parentId ? [userMessage(text)] : [...history, userMessage(text)]) as never;
     const stream = await runWithContext(runState.id, () => run(agent, input, { stream: true, maxTurns: 20 }));
     const seenTypes = process.env.WAYFIND_DEBUG_EVENTS === '1' ? new Set<string>() : null;
     for await (const event of stream as unknown as Iterable<{
@@ -216,7 +281,7 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     runState.output = textOut;
     runState.toolCalls = toolCallCount(runState.id);
     runState.events.push({ type: 'done', output: textOut, toolCalls: runState.toolCalls });
-    appendTranscript(runState.id, 'assistant', textOut, runState.parentId);
+    appendTranscript(runState.id, 'assistant', textOut, runState.parentId, opts.conversationId);
     if (seenTypes) console.log(`[debug] stream event types: ${[...seenTypes].join(', ')}`);
     await reportUsage({
       runId: runState.id,
@@ -232,7 +297,7 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     runState.events.push({ type: 'error', error: msg });
-    appendTranscript(runState.id, 'system', `error: ${msg}`, runState.parentId);
+    appendTranscript(runState.id, 'system', `error: ${msg}`, runState.parentId, opts.conversationId);
     throw err instanceof Error ? err : new Error(msg);
   } finally {
     runState.done = true;
@@ -254,7 +319,7 @@ export async function startRun(text: string, opts: StartRunOpts): Promise<Run> {
     startedAt: new Date().toISOString(),
   };
   runs.set(runState.id, runState);
-  appendTranscript(runState.id, 'user', text, runState.parentId);
+  appendTranscript(runState.id, 'user', text, runState.parentId, opts.conversationId);
   void executeRun(runState, text, opts).catch(() => {});
   return runState;
 }
@@ -275,7 +340,7 @@ export async function runToCompletion(text: string, opts: StartRunOpts): Promise
       startedAt: new Date().toISOString(),
     };
     runs.set(runState.id, runState);
-    appendTranscript(runState.id, 'user', text, runState.parentId);
+    appendTranscript(runState.id, 'user', text, runState.parentId, opts.conversationId);
     return await executeRun(runState, text, opts);
   } finally {
     release();

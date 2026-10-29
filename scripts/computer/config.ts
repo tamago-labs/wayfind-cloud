@@ -17,12 +17,13 @@ export function assert(cond: unknown, msg: string): void {
   console.log(`ok: ${msg}`);
 }
 
-export async function postTask(text: string): Promise<string> {
+export async function postTask(text: string, extra?: Record<string, string>): Promise<string> {
   const body: Record<string, string> = { text };
   // Override the model for test runs without touching the repo default,
   // e.g. TEST_MODEL=recursive/flint-v1.0:free when the default is exhausted.
   if (process.env.TEST_PROVIDER) body.provider = process.env.TEST_PROVIDER;
   if (process.env.TEST_MODEL) body.model = process.env.TEST_MODEL;
+  Object.assign(body, extra);
   const res = await fetch(`${AGENT_URL}/task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -73,10 +74,11 @@ export async function runToDone(
   text: string,
   timeoutMs = 600_000,
   retries = 3,
+  extra?: Record<string, string>,
 ): Promise<{ runId: string; events: SseEvent[]; output: string }> {
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
-    const runId = await postTask(text);
+    const runId = await postTask(text, extra);
     const events = await collectStream(runId, timeoutMs);
     const err = events.find((e) => e.type === 'error');
     if (!err) {

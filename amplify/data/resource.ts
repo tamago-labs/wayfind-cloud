@@ -3,9 +3,11 @@ import { wayfindApiFunction } from "../functions/wayfind-api/resource";
 import { gatekeeper } from "../functions/gatekeeper/resource";
 
 /**
- * Wayfind Cloud data — Phase 3 (PRD §11).
- * 6 owner-authorized models. Wallet-era models (PriceSnapshot, SavedReview,
+ * Wayfind Cloud data — Phase 3 (PRD A11).
+ * 5 owner-authorized models. Wallet-era models (PriceSnapshot, SavedReview,
  * wallet UserProfile) are removed; there is no publicApiKey access anywhere.
+ * Chat transcripts live on the agent server (per-Bot conversation scope),
+ * NOT in DynamoDB — Conversation/Message were removed to avoid dual-write.
  * Later phases add: MemoryItem, Approval (Phase 4), ConnectedApp (Phase 5),
  * Skill, Routine, Run (Phase 7).
  */
@@ -38,7 +40,6 @@ const schema = a.schema({
       status: a.enum(["active", "paused"]),
       pinned: a.boolean(),
       section: a.string(),
-      conversations: a.hasMany("Conversation", "botId"),
     })
     .authorization((allow) => [
       allow.owner(),
@@ -69,42 +70,6 @@ const schema = a.schema({
       allow.owner(),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("computerByOwnerId")]),
-
-  Conversation: a
-    .model({
-      ownerId: a.string().required(),
-      botId: a.id(),
-      bot: a.belongsTo("Bot", "botId"),
-      title: a.string(),
-      isGroup: a.boolean(),
-      participantBotIds: a.string().array(),
-      lastMessageAt: a.datetime(),
-      messages: a.hasMany("Message", "conversationId"),
-    })
-    .authorization((allow) => [
-      allow.owner(),
-    ])
-    .secondaryIndexes((index) => [
-      index("ownerId").queryField("conversationsByOwnerId"),
-      index("botId").queryField("conversationsByBotId"),
-    ]),
-
-  Message: a
-    .model({
-      conversationId: a.id().required(),
-      conversation: a.belongsTo("Conversation", "conversationId"),
-      sender: a.enum(["user", "bot", "system"]),
-      botId: a.id(),
-      content: a.string(),
-      toolActivity: a.json(),
-      approvalId: a.id(),
-    })
-    .authorization((allow) => [
-      allow.owner(),
-    ])
-    .secondaryIndexes((index) => [
-      index("conversationId").queryField("messagesByConversationId"),
-    ]),
 
   CreditLedger: a
     .model({

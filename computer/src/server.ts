@@ -4,12 +4,23 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
 import { permissionMode } from './core/guard.js';
 import { initProvider } from './providers/provider.js';
-import { getRun, listPendingApprovals, listRuns, resolveApproval, startRun } from './runs/runner.js';
+import { getRun, getHistory, listPendingApprovals, listRuns, resolveApproval, startRun } from './runs/runner.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
 import { loadSkills } from './agent/skills.js';
 
+/** Browser origin for local dev (Amplify dev server). Loosen only for local. */
+const CORS_ORIGIN = process.env.AGENT_CORS_ORIGIN ?? '*';
+
+function corsHeaders(): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': CORS_ORIGIN,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
+}
+
 function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, { 'Content-Type': 'application/json', ...corsHeaders() });
   res.end(JSON.stringify(body));
 }
 
@@ -28,6 +39,7 @@ function sse(res: ServerResponse, runId: string): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
+    ...corsHeaders(),
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
@@ -65,6 +77,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const { pathname } = url;
   const method = req.method ?? 'GET';
 
+  // CORS preflight for browser clients (local dev).
+  if (method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders());
+    return void res.end();
+  }
+
   // Lifecycle hooks (mounted by the image under /aws/lambda-microvms/runtime/v1/*).
   if (pathname === '/ready' && method === 'GET') return void json(res, 200, { ok: true });
   if (pathname === '/hooks/run' && method === 'POST') return void json(res, 200, { ok: true });
@@ -74,8 +92,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/status' && method === 'GET') {
     return void json(res, 200, {
-      ok: true,
-      workspace: WORKSPACE_DIR,
+      ok: true,      workspace: WORKSPACE_DIR,
       permissionMode: permissionMode(),
       provider: { baseURL: PROVIDER_BASE_URL, model: PROVIDER_MODEL },
       runs: listRuns().map((r) => ({ id: r.id, done: r.done, startedAt: r.startedAt })),
@@ -84,17 +101,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/task' && method === 'POST') {
     try {
-      const { text, provider, model } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model } = JSON.parse(await readBody(req)) as {
         text?: string;
+        conversationId?: string;
+        system?: string;
         provider?: string;
         model?: string;
       };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
-      const r = await startRun(text, { interactive: false, provider, model });
+      if (conversationId !== undefined && typeof conversationId !== 'string') {
+        return void json(res, 400, { error: 'conversationId must be a string' });
+      }
+      const r = await startRun(text, { interactive: false, provider, model, conversationId, system });
       return void json(res, 202, { runId: r.id });
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
     }
+  }
+
+  const historyMatch = pathname.match(/^\/history\/([A-Za-z0-9-]+)$/);
+  if (historyMatch && method === 'GET') {
+    return void json(res, 200, { messages: getHistory(historyMatch[1]) });
   }
 
   if (pathname === '/approvals' && method === 'GET') {
