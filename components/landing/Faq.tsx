@@ -1,15 +1,15 @@
 const faqs = [
   {
     q: 'Can I use any AI model?',
-    a: 'You choose the model each Bot runs on from the models we offer. Bringing your own API key is planned for the Premium plan, and isn\u2019t available yet.',
+    a: 'You choose the model each Bot runs on from the models we offer. Bringing your own API key works on any plan, and opens after early access.',
   },
   {
     q: 'What is a MicroVM?',
-    a: 'A very small virtual machine. Wayfind uses AWS Lambda MicroVMs, which combine VM-level isolation with near-instant launch and resume, and they keep your computer\u2019s state while it sleeps.',
+    a: 'A very small virtual machine. We are building Wayfind\u2019s cloud computer on AWS Lambda MicroVMs, which combine VM-level isolation with near-instant launch and resume, and they keep your computer\u2019s state while it sleeps. The computer is in development and rolls out in phases.',
   },
   {
-    q: 'Does it really run with my laptop closed?',
-    a: 'Yes. Your computer lives in the cloud. Message a Bot, close the lid, and come back to the result.',
+    q: 'Will it run with my laptop closed?',
+    a: 'That is the design: your computer lives in the cloud, so you message a Bot, close the lid, and come back to the result. It arrives with the cloud computer rollout — early access today covers accounts, Bots and the app around it.',
   },
   {
     q: 'Will I pay while my Bots are idle?',

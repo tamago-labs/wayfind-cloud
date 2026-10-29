@@ -11,13 +11,13 @@ const tabs = [
     id: 'teach',
     label: 'Teach a Bot',
     title: 'Teach once. Turn it into a skill.',
-    body: 'Show a Bot how to complete a shopping task on an e-commerce website. Powered by Muse Wonder, Meta’s frontier model, it learns the workflow and turns it into a reusable skill.',
+    body: 'A Bot completes a task in its browser while the session is recorded. Review the recording, turn it into a reusable skill file (reorder-shoes/SKILL.md), test it, and approve it — then any Bot can run it.',
   },
   {
-    id: 'signin',
-    label: 'Sign in with Google',
-    title: 'You sign in. Your Bot takes it from there.',
-    body: 'Complete Google sign-in in the cloud browser, including any required verification. Your Bot can then continue its task with the authenticated session.',
+    id: 'backup',
+    label: 'Backed up & resumable',
+    title: 'It sleeps. Its work doesn\u2019t disappear.',
+    body: 'The workspace syncs to encrypted storage every time the computer suspends — and whenever you ask. Snapshots are listed in your Bot panel, and restoring one is one click.',
   },
   {
     id: 'files',
@@ -163,72 +163,57 @@ function TeachScreen({ tick }: { tick: number }) {
   );
 }
 
-/* ---------- 2. Browser sign-in with Google (Vault + user approval) ---------- */
+/* ---------- 2. Backup: suspend -> snapshot -> resume/restore ---------- */
 
-function SignInScreen({ tick }: { tick: number }) {
-  const pts = [[50, 28], [50, 58], [50, 58], [50, 50], [50, 62], null, [22, 32], [22, 48], [62, 62], [62, 62]];
-  const phase = tick < 2 ? 'form' : tick < 4 ? 'pick' : tick === 4 ? 'vault' : tick === 5 ? 'approve' : 'app';
-  const url = { form: 'app.acme.io/login', pick: 'accounts.google.com', vault: 'accounts.google.com', approve: 'accounts.google.com', app: 'app.acme.io/dashboard' }[phase];
-  const card = 'absolute left-1/2 top-1/2 w-[58%] -translate-x-1/2 -translate-y-1/2 rounded-xl p-4 text-center text-xs';
+const snapshots = [
+  { n: 'snapshot · 07:02', meta: 'on suspend · 182 MB' },
+  { n: 'snapshot · yesterday 18:44', meta: 'manual · 181 MB' },
+  { n: 'snapshot · yesterday 07:01', meta: 'on suspend · 179 MB' },
+];
+
+function BackupScreen({ tick }: { tick: number }) {
+  const phase = tick < 3 ? 'working' : tick < 5 ? 'backing' : tick < 8 ? 'asleep' : 'restored';
+  const badge = { working: 'Working', backing: 'Backing up', asleep: 'Suspended · backed up', restored: 'Resumed from snapshot' }[phase];
+  const shown = phase === 'working' ? 0 : phase === 'backing' ? 1 : 3;
   return (
-    <Frame badge={phase === 'app' ? 'Signed in' : 'Signing in'} tone="on" cursor={pts[tick]} ping={[1, 3].includes(tick) ? tick : null}>
-      <div className="absolute inset-[3%] overflow-hidden rounded-lg border border-white/10 bg-white/[0.05]">
-        <div className="flex items-center gap-2 border-b border-white/10 px-3 py-1.5 text-[11px] text-white/60">
-          <span aria-hidden="true">🔒</span>
-          <span className="flex-1 truncate rounded-full bg-white/10 px-3 py-0.5">{url}</span>
+    <Frame badge={badge} tone={phase === 'asleep' ? 'off' : 'on'}>
+      <div className="absolute inset-x-[4%] top-[6%] bottom-[8%] rounded-xl border border-white/10 bg-white/[0.06] p-4">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-white/50">Computer · workspace</p>
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${phase === 'asleep' ? 'bg-white/10 text-white/50' : 'bg-blagoon/20 text-blagoon'}`}>
+            {phase === 'asleep' ? 'suspended · $0' : phase === 'restored' ? 'running · restored' : 'running'}
+          </span>
         </div>
-        <div className="relative h-[calc(100%-2rem)]">
-          {phase === 'form' && (
-            <div className={`${card} border border-white/10 bg-white/10`}>
-              <p className="text-sm font-bold">Sign in to Acme</p>
-              <span className={`mt-3 inline-flex items-center gap-2 rounded-full px-4 py-1.5 font-bold text-navy transition ${tick >= 1 ? 'bg-blagoon' : 'bg-white'}`}>
-                <b>G</b> Continue with Google
+
+        <div className="mt-3 space-y-1.5 text-[11px] font-semibold">
+          {['receipts-october.xlsx', 'skills/reorder-shoes/SKILL.md', 'notes/launch-brief.md'].map((f) => (
+            <div key={f} className="flex items-center justify-between rounded-lg bg-white/[0.06] px-3 py-2">
+              <span className="truncate">{f}</span>
+              <span className={phase === 'working' ? 'text-white/40' : 'text-blagoon'}>{phase === 'working' ? 'local' : 'backed up \u2713'}</span>
+            </div>
+          ))}
+        </div>
+
+        <p className="mt-4 text-[10px] font-bold uppercase tracking-wide text-white/50">Snapshots</p>
+        <div className="mt-2 space-y-1.5">
+          {snapshots.map((s, i) => (
+            <div
+              key={s.n}
+              className={`flex items-center justify-between rounded-lg border px-3 py-2 text-[11px] font-semibold transition-all duration-500 ${
+                i === 0 && phase === 'restored' ? 'border-bamber bg-bamber/15' : 'border-white/10 bg-white/[0.04]'
+              } ${i < shown ? 'opacity-100' : 'opacity-30'}`}
+            >
+              <span>{s.n}<span className="ml-2 font-normal text-white/45">{s.meta}</span></span>
+              <span className={i === 0 && phase === 'restored' ? 'text-bamber' : 'text-white/50'}>
+                {i === 0 && phase === 'restored' ? 'restored \u2193' : 'restore'}
               </span>
             </div>
-          )}
-          {phase === 'pick' && (
-            <div className={`${card} bg-white text-navy`}>
-              <p className="font-bold">Choose an account</p>
-              <div className={`mt-3 flex items-center gap-2 rounded-lg border p-2 text-left ${tick >= 3 ? 'border-blagoon bg-blagoon/15' : 'border-slate-200'}`}>
-                <span className="grid h-6 w-6 place-items-center rounded-full bg-navy text-[10px] font-bold text-white">A</span>
-                alex@example.com
-              </div>
-            </div>
-          )}
-          {phase === 'vault' && (
-            <div className={`${card} bg-white text-navy`}>
-              <p className="font-bold">Password</p>
-              <p className="mt-2 text-lg tracking-widest">••••••••••</p>
-              <p className="mt-2 rounded-full bg-navy px-3 py-1 font-semibold text-white">Filled from Vault. The Bot never sees it.</p>
-            </div>
-          )}
-          {phase === 'approve' && (
-            <div className={`${card} bg-white text-navy`}>
-              <p className="font-bold">2-step verification</p>
-              <p className="mt-2 text-slate-600">Your turn: approve on your phone.</p>
-              <p className="mt-2 rounded-full bg-bamber px-3 py-1 font-semibold">Bot is waiting</p>
-            </div>
-          )}
-          {phase === 'app' && (
-            <div className="flex h-full gap-3 p-3">
-              <div className="w-1/4 space-y-2">
-                {['Invoices', 'Receipts', 'Reports'].map((n, i) => (
-                  <div key={n} className={`rounded px-2 py-1.5 text-[11px] font-semibold ${i === 0 && tick >= 8 ? 'bg-blagoon/25' : 'bg-white/10'}`}>{n}</div>
-                ))}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-bold">Welcome back, Alex</p>
-                <div className="mt-2 space-y-1.5">{['90%', '70%', '80%'].map((w) => <div key={w} className="h-1.5 rounded bg-white/15" style={{ width: w }} />)}</div>
-                <div className="mt-4 flex items-center gap-2 rounded-lg bg-white/10 p-2 text-[11px] font-semibold">
-                  <span className="flex -space-x-1.5">
-                    <Mascot c="#F5A524" s={20} /><Mascot c="#7BA05B" s={20} /><Mascot c="#2BB3B1" s={20} />
-                  </span>
-                  Session saved. Shared by all Bots.
-                </div>
-              </div>
-            </div>
-          )}
+          ))}
         </div>
+
+        <p className={`mt-3 text-[11px] font-semibold transition-opacity duration-500 ${phase === 'asleep' || phase === 'restored' ? 'opacity-100' : 'opacity-0'}`}>
+          {phase === 'restored' ? 'Workspace restored \u2014 every file where the Bot left it.' : 'Idle computers cost nothing. The work is already safe.'}
+        </p>
       </div>
     </Frame>
   );
@@ -287,7 +272,7 @@ function FilesScreen({ tick }: { tick: number }) {
   );
 }
 
-const screens: Record<string, ({ tick }: { tick: number }) => JSX.Element> = { teach: TeachScreen, signin: SignInScreen, files: FilesScreen };
+const screens: Record<string, ({ tick }: { tick: number }) => JSX.Element> = { teach: TeachScreen, backup: BackupScreen, files: FilesScreen };
 
 /* ---------- section ---------- */
 
@@ -323,8 +308,12 @@ export default function HowSection() {
           One cloud computer. Every Bot.
         </h2>
         <p className="mt-5 max-w-3xl text-lg text-white/70">
-          Lambda MicroVMs give each user one isolated, serverless computer that all their Bots share.
-          That’s why an always-on agent can cost $5 a month instead of $50.
+          We&apos;re building each account&apos;s computer on AWS Lambda MicroVMs — one isolated,
+          serverless computer that all your Bots share, suspending when idle. That&apos;s how an
+          always-on agent can cost $5 a month instead of $50.
+        </p>
+        <p className="mt-4 inline-block rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-bold text-white/60">
+          Animated preview — the Computer is in development. The three screens below show the design, not a live machine.
         </p>
 
         <div className="mt-12 grid items-center gap-8 lg:grid-cols-[5fr_7fr]">

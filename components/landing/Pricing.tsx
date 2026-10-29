@@ -19,9 +19,21 @@ const plans = [
       'Unlimited Bots and group chats',
       'Glimmer, Wonder + supported premium models',
        'Unlimited scheduled + event routines',
-      'Higher cloud computer minutes', 
+      'Higher cloud computer minutes',
     ],
     featured: true,
+  },
+  {
+    name: 'Enterprise',
+    price: 'Custom',
+    features: [
+      'SSO and team Bots',
+      'Dedicated region + computer capacity',
+      'Audit export and SLA',
+      'Talk to us — nothing self-serve to set up',
+    ],
+    featured: false,
+    custom: true,
   },
 ];
 
@@ -38,7 +50,7 @@ export default function Pricing() {
             No card needed today. Bring your own AI key on any plan, or use ours. Idle time is never charged.
           </p>
         </div>
-        <div className="mt-12 grid gap-5 md:grid-cols-2 mx-auto max-w-4xl">
+        <div className="mt-12 grid gap-5 md:grid-cols-3 mx-auto max-w-6xl">
           {plans.map((p) => (
             <div
               key={p.name}
@@ -58,25 +70,38 @@ export default function Pricing() {
               </div>
               <p className="mt-3 text-5xl font-extrabold">
                 {p.price}
-                <span className={`text-lg font-semibold ${p.featured ? 'text-white/60' : 'text-heroslate'}`}>
-                  /mo
-                </span>
+                {'custom' in p && p.custom ? null : (
+                  <span className={`text-lg font-semibold ${p.featured ? 'text-white/60' : 'text-heroslate'}`}>
+                    /mo
+                  </span>
+                )}
               </p>
               <ul className={`mt-6 flex-1 space-y-2.5 ${p.featured ? 'text-white/80' : 'text-heroslate'}`}>
                 {p.features.map((f) => (
                   <li key={f}>{f}</li>
                 ))}
               </ul>
-              <Link
-                href="/app"
-                className={`mt-8 rounded-full px-6 py-3 text-center font-semibold transition-colors ${
-                  p.featured
-                    ? 'bg-cta text-white hover:bg-ctahover'
-                    : 'border-2 border-navy text-navy hover:bg-navy hover:text-white'
-                }`}
-              >
-                Join early access
-              </Link>
+              {'custom' in p && p.custom ? (
+                <a
+                  href="https://x.com/WayfindZZZ"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-8 rounded-full border-2 border-navy px-6 py-3 text-center font-semibold text-navy transition-colors hover:bg-navy hover:text-white"
+                >
+                  Talk to us
+                </a>
+              ) : (
+                <Link
+                  href="/app"
+                  className={`mt-8 rounded-full px-6 py-3 text-center font-semibold transition-colors ${
+                    p.featured
+                      ? 'bg-cta text-white hover:bg-ctahover'
+                      : 'border-2 border-navy text-navy hover:bg-navy hover:text-white'
+                  }`}
+                >
+                  Join early access
+                </Link>
+              )}
             </div>
           ))}
         </div>

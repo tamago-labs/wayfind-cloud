@@ -273,6 +273,9 @@ export default function AppShell() {
 
         </header>
 
+        <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
+          Demo chat — replies are simulated, nothing is saved or run yet. Real model chat is the next build.
+        </div>
         <Thread bot={bot} onApprove={approve} />
         <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} />
       </main>

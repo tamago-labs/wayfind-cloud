@@ -3,7 +3,7 @@
 Status: living document. Single tracker for phases, decisions and acceptance
 gates. Update status here as work lands; do not rely on chat history.
 
-Last updated: 2026-10-27 (v6 — REWRITE around the Grok Bot product model)
+Last updated: 2026-10-27 (v7 — MicroVM/Computer build plan + landing fixes)
 
 > **Why v6 exists:** v3–v5 planned Wayfind as a dashboard product
 > (stats, approvals page, ledger page, morning-brief page). The owner
@@ -11,6 +11,16 @@ Last updated: 2026-10-27 (v6 — REWRITE around the Grok Bot product model)
 > message, on one shared cloud computer. This PRD is rewritten around that
 > model. Sources studied 2026-10-27: `cursor.com/docs/grok-bot`
 > (+ get-started / work / use-cases) and `docs.x.ai/overview`.
+>
+> **v7 adds (owner-reviewed 2026-10-27):** the current deployed reality
+> (§12.0), landing fixes (Models as a table, Trust → Connectors, Enterprise
+> pricing tier), and the Firecracker/Lambda MicroVM build plan: CLI agent
+> inside the VM with inference via the cloud router, S3 backup tracked in
+> the frontend, Teach-by-browser-recording → SKILL.md. **"Sign in with
+> Google" in the VM browser is dropped as a feature** (Connect Apps OAuth
+> replaces it). Dev-facing detail lives in `docs/DEV-HANDOFF.md`;
+> AWS Lambda/MicroVM provisioning is done separately by the owner/dev,
+> not from the coding environment.
 
 ---
 
@@ -98,13 +108,17 @@ teach-by-demonstration, public Bot template marketplace.
 
 - Solo founder, indie hacker, creator-operator, 1–10 person team; already
   pays for chat AI but gets no finished work from it.
-- Planned tiers (not for sale yet; free in early access, no card):
-  - **Starter $5/mo:** 1 Bot, 1 routine, daily brief routine included,
-    capped computer minutes + model credits.
-  - **Operator $10/mo:** up to 5 Bots, group chats, all beta connectors,
-    scheduled + event routines, BYOK (later).
-  - **Studio $20/mo:** up to 15 Bots, multiple sections/projects, shared
-    Team-Bot style bots, priority capacity.
+- Planned tiers (not for sale yet; free in early access, no card). Names
+  match the schema plan enum (`free|starter|premium|enterprise`):
+  - **Starter $5/mo:** Bots with persistent memory, 1 included default
+    model with quota + BYOK, 1 routine (daily brief included), limited
+    cloud computer minutes.
+  - **Premium $30/mo:** unlimited Bots and group chats, premium models,
+    unlimited scheduled + event routines, higher computer minutes.
+  - **Enterprise — Custom (talk to us):** SSO, dedicated region/computer
+    capacity, team Bots, audit export, SLA. Display-only on the landing;
+    nothing self-serve to build or enforce yet.
+  (The earlier $5/$10/$20 Starter/Operator/Studio ladder is superseded.)
 - Pay for active Bot work + active computer minutes. A suspended computer
   costs nothing; never charge for idle.
 
@@ -133,13 +147,17 @@ templates aligned to the four Finders.
 
 ### 6.1 Landing (marketing — MeetMotes-pattern, light theme, §9)
 
-Hero (Finder crew + Bot identity card) → **Bots roster** ("meet your
-Bots") → **How it works** (Create a Bot → Give it a job → Connect apps as
-it asks → Chat, approve, make it a routine) → **One computer** (shared,
-persistent, watch it work, suspends when idle) → **Skills & routines** →
-**Group chats & handoffs** → Connect apps → Pricing (standalone wedge) →
-FAQ → Create my bot (email + first job/bot). Every mock labelled
-illustrative; no waitlist copy; paid plans not on sale.
+Current sections (owner-built): Hero → Problem → **How / the Computer**
+(3 animated tabs, v7: ① Teach a Bot by browser recording, ② Work together
+on shared files, ③ Backed up & resumable — snapshots, status, restore) →
+**Models as a table** (1 included default model + BYOK providers:
+provider / model / best for / access) → **Connectors** (the old Trust
+section becomes the connector grid; the 4 trust rows survive as a slim
+strip) → **Pricing** (Starter / Premium / Enterprise-Custom) → FAQ →
+Final CTA. Rules: every mock labelled illustrative or demo; no waitlist
+copy; paid plans not on sale; **no "Sign in with Google" (or any browser
+sign-in) promise anywhere** — account-wide Connect Apps OAuth is the
+sign-in story (§10); nothing claims the Computer exists until it does.
 
 ### 6.2 App (the product — bot-list first, NOT a stats dashboard)
 
@@ -171,6 +189,16 @@ Routes:
 Approvals and activity history are **not separate top-level pages** —
 approvals live as cards in chat; history is the transcript + routine run
 history (+ account audit view under Settings later if needed).
+
+### Inference from inside the Computer (decided v7)
+
+The agent CLI running inside the MicroVM never holds provider keys and
+never calls a model provider directly. It calls **`POST /inference`
+(streaming) on `wayfind-api`** with the Computer's per-instance token;
+the router resolves included/BYOK keys from Secrets Manager, enforces
+plan quota, and meters the call against a `Run`. This keeps keys out of
+VM snapshots and backups, and makes every model call visible/costed in
+the frontend (chat transcript + Computer panel run history).
 
 ## 7. Model and agent runtime (xAI seam)
 
@@ -214,20 +242,62 @@ like regions vs our `ap-southeast-1` backend, quotas and per-minute
 pricing) never loses work. One Computer per account, gated by §5
 Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
 
+### 8.1 Computer implementation plan (v7 — what the VM actually contains)
+
+- **Image:** managed AL2023 base + Node + Python + **Chromium/Playwright**
+  (browser is in v1, owner-decided) + the **wayfind CLI agent**
+  (`wayfind chat|run|skill|backup|status`) + HTTP agent server on its
+  endpoint. Workspace at `/workspace` (durable; everything else is
+  replaceable). Hooks: `/ready` health · `/run` mint per-Computer
+  identity (never at build time, §8) + pull workspace from S3 ·
+  `/suspend` sync workspace → S3 + write backup record · `/terminate`
+  final sync attempt.
+- **Tools the CLI gives a Bot:** shell, browser (Playwright), files,
+  `skills/<name>/SKILL.md` loader/runner. No other magic: if it isn't a
+  tool call in the transcript, it didn't happen.
+- **Inference:** cloud router only (§7 box). VM holds no provider keys.
+- **Backup & tracking (frontend-visible, owner-decided):** workspace syncs
+  to an S3-versioned store on suspend, every ~15 min while running, and
+  on demand. Each sync writes a `ComputerBackup` (time, size, trigger,
+  status). The app Computer panel (today's stub `TabComputer`) shows:
+  computer status, **last backup, snapshot list, Restore button**, and
+  run history with per-run cost. Restore = point the Computer at a
+  snapshot and re-sync down; restores are explicit user actions, never
+  automatic.
+- **Teach (owner-decided: browser recording):** v1 records the **Bot's**
+  browser session (Playwright trace + structured action log) while it
+  performs a task. The user reviews the recording in chat and clicks
+  "Turn into skill" → compiler emits `skills/<name>/SKILL.md` (steps,
+  selectors, decision points, approval boundaries) + a replayable script
+  → test run on a safe input → user approves the skill. **Recording the
+  user demonstrating** needs interactive screen streaming and is Teach
+  v2, explicitly out of scope until then. Do not market v1 as "watch me
+  and learn" — it is "watch the Bot, keep the recipe".
+- **Dropped:** browser "Sign in with Google" (and any in-VM web sign-in
+  flow). Replacement is Connect Apps OAuth (§10): tokens on the backend,
+  Bots never see them. Sensitive-step takeover (SSO/passkey/CAPTCHA
+  hand-over) returns only with Teach v2 screen streaming, if ever.
+- **Provisioning boundary:** creating the S3 artifact bucket, IAM build
+  role, MicroVM image and runs (`create-microvm-image`, `run-microvm`, …)
+  is **done separately by the owner/dev** following the AWS getting-
+  started guide. This repo owns: the Dockerfile/CLI code, the control-
+  plane Lambdas (`computer-manager`), the schema, and the frontend.
+  Provisioning outputs (image ARN/version, region, connector ARNs) are
+  recorded in `docs/DEV-HANDOFF.md` when they exist.
+
 ## 9. Brand, mascots, theme (confirmed, shipped)
 
-- Light paper theme (`paper #FAF7F1`, `ink #131316`), brand accents kept
-  (`accent #6C5CE7`, `accent2 #00D2A0`), **same "W" in a black box**
-  (`components/landing/Header.tsx` Logo), JetBrains Mono micro-labels,
-  dark panels for computer/terminal surfaces.
-- Finders (owner-supplied, head-only fluffy heads, `public/finders/`):
-  **Amber** (Inbox/Chief-of-staff amber), **Moss** (Leads, green),
-  **Lagoon** (Research, teal), **Ash** (Repo, grey). Canonical data:
-  `components/landing/finders.ts`. Ship WebP exports (23–32KB); masters
-  are ~3MB PNGs. White bg → circular crops/rings only; Ash is low
-  contrast — always with label. New Bots pick a Finder face + name.
-- MeetMotes patterns kept: mascot hero, identity card, mono labels,
-  illustrative labelling. No NFT/token/trading claims anywhere.
+- Current design system (owner-built, supersedes the v6 paper theme):
+  light navy/ice palette (`navy`, `ice`, `heroslate`, `cta`, Finder colour
+  tokens `bamber/bmoss/blagoon`), `font-brico` display type, dark navy
+  panels for the Computer demos.
+- Mascots are now a **CSS component** (`components/Mascot.tsx`: colours
+  amber/moss/lagoon/ash/blue × shapes blob/circle/squircle/pebble, with
+  blink/motion states) used in the landing hero and as Bot avatars in the
+  app (stored per-Bot as `color` + `shape` strings). The PNG/WebP Finder
+  images in `public/finders/` are legacy — do not build new UI on them.
+- Bot names/roles are user data now (DB roster), not the fixed
+  Amber/Moss/Lagoon/Ash templates. No NFT/token/trading claims anywhere.
 
 ## 10. Connectors (account-wide; order by first Bots created)
 
@@ -295,6 +365,16 @@ fields embedded — no separate request table), `Conversation`, `Message`,
 `CreditLedger`. Added later, one phase at a time: `MemoryItem`,
 `Approval` (Phase 4), `ConnectedApp` (Phase 5), `Skill`, `Routine`,
 `Run` (Phase 7; `Run` stub arrives Phase 4 for cost logging).
+**v7 update: 15 models at full build** — add `Skill` (name, whenToUse,
+instructions/skillFilePath, outputSpec, approvalBoundaries, enabledBotIds),
+`Run` (arrives with the first real chat, not Phase 7), and
+`ComputerBackup` (computerId, s3Version/prefix, sizeBytes, trigger:
+`suspend|interval|manual`, status) for the backup panel in §8.1.
+Current deployed state: the 6 Phase-3 models are live; `Bot` uses
+`role/color/shape` (user mascots), `UserProfile.plan` is
+`free|starter|premium|enterprise`, and schema-level
+`allow.resource(wayfindApiFunction/gatekeeper)` grants the functions data
+access (per-model owner auth unchanged for users).
 Plus 1 Amplify Storage (S3) bucket: chat attachments + run artifacts
 (+ workspace checkpoints in Phase 6). Deletes: wallet-era `UserProfile`,
 `SavedReview`, `PriceSnapshot` models and their publicApiKey auth.
@@ -366,6 +446,31 @@ for a human for days at zero compute cost.
 
 ## 12. Phases
 
+### 12.0 Status correction (v7 review of the owner's build, 2026-10-27)
+
+Deployed and real: Cognito **email + Google** auth, DB-backed Bot roster
+(create/edit/delete, profile names), CSS mascot system, new landing.
+**Not real yet, despite UI suggesting otherwise:** chat is simulated
+client-side (`AppShell` canned replies/tool lines; `Conversation`/`Message`
+models unused, messages unpersisted), Models "Sync" is local state only,
+the Computer does not exist (`TabComputer` stub), the landing states the
+MicroVM computer as fact. Rule restated before Phase 4/M1: anything not
+wired is labelled demo/illustrative on sight, or hidden.
+
+Near-term order (v7): **Phase 4/M0** landing honesty + fixes (Models table,
+Trust→Connectors, Enterprise tier, delete Google-sign-in tab/copy) and
+real-or-labelled app chat → **M1** MicroVM spike → **M2** Computer v1
+(CLI + router inference + backup panel) → **M3** browser tasks + Teach
+recording → skills. Provisioning steps for M1+ are owner/dev-run
+(`docs/DEV-HANDOFF.md`); code lands here phase by phase and is reviewed
+before anything claims it works.
+**M0 status: DONE 2026-10-27** — Models is a table, Trust section is now
+Connectors (+trust strip), Enterprise-Custom tier added, Google-sign-in
+tab replaced by "Backed up & resumable", Computer section framed as
+in-development preview, app chat carries a visible "Demo chat" banner,
+`next build` green. Only M0 leftover: production Google callback URLs
+(localhost-only until the owner supplies the real domain).
+
 ### Phase 1 — Landing v3 (re-align to Grok model) — redo of v5 landing
 Sections per §6.1 (roster, create→job→connect→chat flow, one Computer,
 skills & routines, group chats). Finder faces, light theme, standalone
@@ -418,6 +523,10 @@ API through the router (§7), streaming transcript with tool activity,
 per-Bot memory (read/write), approval cards inline, artifacts (files) in
 chat, stop/redirect. Acceptance: one Bot (Inbox or Chief of Staff) does a
 real, reviewable task for one user, approvals enforced, costs logged.
+**v7 note:** this phase now starts by replacing (or visibly labelling)
+the simulated chat in `AppShell.tsx` and persisting `Conversation`/
+`Message`; `Run` + `CreditLedger` cost rows land here. Until it ships,
+no landing copy may imply Bots already work.
 
 ### Phase 5 — Connect apps (account-wide)
 Framework + Slack, then Gmail/Calendar (order re-checked against Phase 3
@@ -425,14 +534,23 @@ Bot picks). OAuth token vault, per-app enable per Bot, event ingestion.
 Acceptance: a connected app is usable by every Bot without re-connecting;
 tokens never appear in chat or the Computer.
 
-### Phase 6 — The Computer (Lambda MicroVMs)
-Spike first (regions/quotas/max duration/arch/pricing recorded here;
-hello image → run/suspend/resume/terminate; suspend/resume latency +
-cost measured; $5 math re-derived or re-priced). Then: agent image
-(browser+filesystem+terminal workspace), S3 checkpoint in `/suspend`,
-computer panel (watch/status/files), gatekeeper provisioning, minute
-metering → `CreditLedger`. Acceptance: a Repo Coder Bot works an issue
-to a draft PR on the Computer, suspends idle, resumes with state.
+### Phase 6 — The Computer (Lambda MicroVMs) — build detail in §8.1
+- **M1 Spike (owner/dev-run provisioning, results recorded in
+  `docs/DEV-HANDOFF.md`):** regions/quotas/max duration/arch/pricing
+  verified; hello image → run/suspend/resume/terminate; suspend/resume
+  latency + running-vs-suspended cost measured; $5 math re-derived or
+  re-priced. Kill/re-scope criteria are written down before M2 starts.
+- **M2 Computer v1:** CLI agent + browser/files/terminal (§8.1),
+  inference via `POST /inference` (cloud router), gatekeeper
+  provisioning through `computer-manager`, S3 backup
+  (suspend/interval/manual) + Computer panel: status, last backup,
+  snapshots, restore, run history/minute metering → `CreditLedger`.
+  Acceptance: a Repo Coder Bot works an issue to a draft PR on the
+  Computer, suspends idle, resumes with state, and its workspace
+  survives a terminate via backup restore.
+- **M3 Teach & skills on the Computer:** browser-session recording →
+  SKILL.md compiler → test run → approve (§8.1), then Phase 7 routines
+  may target Computer skills.
 
 ### Phase 7 — Skills & routines
 Save skill from a finished chat task; routines (schedule + Slack/GitHub
@@ -448,10 +566,20 @@ record billing + credit enforcement, cohort rollout by region.
 
 ## 13. Open decisions
 
+- [x] v7 owner decisions (2026-10-27): VM inference via cloud router;
+      Teach = browser recording (Bot-session v1, user-demo v2);
+      "Sign in with Google" feature dropped → Connect Apps OAuth;
+      browser (Chromium/Playwright) in the VM from v1; Models section =
+      table with 1 included model + BYOK; Enterprise = Custom/talk-to-us;
+      backups frontend-visible with snapshot restore.
+- [ ] Included default model identity + quota for the Models table
+      (landing currently says "Muse Glimmer" — confirm or replace).
 - [ ] Owner review: landing v3 + app shell (desktop + mobile) — visual gate.
-- [ ] Computer region + MicroVM limits — Phase 6 spike evidence only.
+- [ ] Computer region + MicroVM limits — M1 spike evidence only.
 - [ ] First connector beyond Slack — from Phase 3 Bot picks (expected
       Gmail/Calendar).
+- [ ] Production Google auth: add real domain callback/logout URLs
+      (`amplify/auth/resource.ts` is localhost-only today).
 - [ ] Default model per tier (Grok-class vs cheap) — from Phase 4 costs.
 - [ ] Merchant-of-record before Phase 8 (Paddle/Lemon Squeezy class;
       Stripe region permitting).
@@ -475,6 +603,21 @@ record billing + credit enforcement, cohort rollout by region.
 
 ## 15. Changelog
 
+- 2026-10-27 (v7.1): **M0 shipped** (see §12.0). Landing: Models→table,
+  Trust→Connectors, Enterprise tier, Google-sign-in tab deleted
+  (→ "Backed up & resumable"), Computer framed as preview; app chat
+  labelled Demo. Build green. Next: M1 MicroVM spike (owner/dev-run,
+  `docs/DEV-HANDOFF.md` §4/§8) then review.
+- 2026-10-27 (v7): Reviewed the owner's landing/app build (§12.0 status
+  correction: roster+auth real, chat simulated, Computer nonexistent).
+  Added Computer implementation plan (§8.1: CLI agent, cloud-router
+  inference, S3 backup + restore UI, Teach-by-recording → SKILL.md,
+  Google sign-in feature dropped), landing fix list (Models table,
+  Trust→Connectors, Enterprise-Custom tier), schema 12→15 (`Skill`,
+  `Run` earlier, `ComputerBackup`), near-phase order M0→M3, and the dev
+  handoff split: provisioning detail and knowns/unknowns live in
+  `docs/DEV-HANDOFF.md` (owner/dev-run), this PRD stays the product
+  tracker. Next review gate: M0 honesty fixes + M1 spike results.
 - 2026-10-27 (v6.2): Phase 3 backend code done (see §12 Phase 3 status).
   **OWNER DEPLOY (manual, when ready):** 1) commit + push everything incl.
   `amplify/`, `lib/wayfind-api.ts`, new `app/app/` routes — this is a
