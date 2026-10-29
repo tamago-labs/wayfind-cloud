@@ -229,11 +229,16 @@ export default function AppShell() {
             <Menu className="h-4 w-4" strokeWidth={2.2} />
           </button>
           <span className="hidden w-40 md:block" />
-          <div className="mx-auto flex items-center gap-2.5 rounded-full bg-white py-2 pl-3 pr-5 font-bold text-navy shadow-md shadow-navy/5">
+          <button
+            onClick={() => setPanelOpen((o) => !o)}
+            aria-expanded={panelOpen}
+            aria-label="Bot settings"
+            className="mx-auto flex items-center gap-2.5 rounded-full bg-white py-2 pl-3 pr-5 font-bold text-navy shadow-md shadow-navy/5 hover:bg-slate-50"
+          >
             <Mascot color={bot.color} shape={bot.shape} size="xs" motion="none" />
             <span>{bot.name}</span>
             <span className="hidden text-sm font-medium text-heroslate sm:inline">· {bot.role}</span>
-          </div>
+          </button>
           <button
             onClick={() => setPanelOpen((o) => !o)}
             aria-label="Bot settings"
@@ -253,6 +258,7 @@ export default function AppShell() {
         key={bot.id ?? `local-${cur}`}
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
+        botId={bot.id}
         name={bot.name}
         role={bot.role}
         color={bot.color}
