@@ -3,27 +3,15 @@
 // guard (allow/deny/ask + doom-loop). Use createBuiltinTools(opts).
 import { execFile } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { WORKSPACE_DIR } from '../../core/config.js';
 
 import { approvalPolicy, guarded, type GuardOpts } from '../../core/guard.js';
+import { inside } from './paths.js';
 const ROOT = resolve(WORKSPACE_DIR);
 const MAX_OUTPUT = 20_000;
-
-function inside(p: string): string {
-  // Models often emit `/skills`, `\skills`, or repo-rooted `workspace/skills`.
-  // Normalize to workspace-relative instead of rejecting outright.
-  const cleaned = p.replace(/^[/\\]+/, '').replace(/^workspace[/\\]/, '');
-  const full = resolve(ROOT, cleaned || '.');
-  // Separator-aware containment (ROOT + '/' breaks on Windows backslashes).
-  const rel = relative(ROOT, full);
-  if (rel !== '' && (rel.startsWith('..') || isAbsolute(rel))) {
-    throw new Error(`Path escapes workspace: ${p}`);
-  }
-  return full;
-}
 
 function truncate(s: string): string {
   return s.length > MAX_OUTPUT ? s.slice(0, MAX_OUTPUT) + `\n…(truncated, ${s.length} chars total)` : s;

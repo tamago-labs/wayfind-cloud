@@ -7,7 +7,7 @@ POST + SSE so the browser talks to the VM directly (PRD v7.2).
 
 - `src/server.ts`, `src/cli.ts` — entry points (HTTP/SSE runtime, operator CLI)
 - `src/core/` — `config.ts`, `guard.ts`, `permissions.ts` (env, approval context, prompt rules)
-- `src/agent/` — `agent.ts`, `subagents.ts`, `skills.ts`, `mcp.ts`, `tools/` (builtins, `task`)
+- `src/agent/` — `agent.ts`, `subagents.ts`, `skills.ts`, `mcp.ts`, `tools/` (shell/read/write/list, `edit`, `glob`/`grep`, `skill`, `task` w/ subagent_type + task_id, `webfetch`/`websearch`, `question`)
 - `src/providers/` — `provider.ts`, `providers.ts`, `keystore.ts` (model access + keys)
 - `src/runs/` — `runner.ts`, `usage.ts` (run lifecycle + metering)
 - `workspace/` — seed: `skills/example/SKILL.md`, `mcp.json`

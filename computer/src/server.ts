@@ -5,7 +5,7 @@ import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey }
 import { permissionMode } from './core/guard.js';
 import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider } from './providers/provider.js';
-import { getRun, getHistory, listPendingApprovals, listRuns, resolveApproval, startRun } from './runs/runner.js';
+import { getRun, getHistory, listPendingApprovals, listPendingQuestions, listRuns, resolveApproval, answerQuestion, startRun } from './runs/runner.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
 import { loadSkills } from './agent/skills.js';
 
@@ -128,6 +128,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/approvals' && method === 'GET') {
     return void json(res, 200, { approvals: listPendingApprovals() });
+  }
+
+  if (pathname === '/questions' && method === 'GET') {
+    return void json(res, 200, { questions: listPendingQuestions() });
+  }
+
+  const questionMatch = pathname.match(/^\/questions\/([A-Za-z0-9-]+)$/);
+  if (questionMatch && method === 'POST') {
+    try {
+      const { answers } = JSON.parse(await readBody(req)) as { answers?: string[][] };
+      if (!Array.isArray(answers)) {
+        return void json(res, 400, { error: 'Body must be { answers: string[][] }' });
+      }
+      const ok = answerQuestion(questionMatch[1], answers);
+      return void json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'unknown question' });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
   }
 
   const approvalMatch = pathname.match(/^\/approvals\/([A-Za-z0-9_-]+)$/);

@@ -9,8 +9,9 @@ import { initProvider } from './providers/provider.js';
 import { createTriageAgent } from './agent/agent.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
 import { loadSkills } from './agent/skills.js';
-import { startRun, resolveApproval } from './runs/runner.js';
+import { startRun, resolveApproval, answerQuestion } from './runs/runner.js';
 import { askCli } from './core/permissions.js';
+import type { QuestionPrompt } from './agent/tools/question.js';
 import { run } from '@openai/agents';
 
 const AGENT_URL = process.env.AGENT_URL ?? `http://localhost:${PORT}`;
@@ -133,6 +134,23 @@ async function cmdKeys(args: string[]): Promise<void> {
   process.exit(1);
 }
 
+/** stdin select for the `question` tool (single choice per question). */
+export async function cliAsk(questions: QuestionPrompt[]): Promise<string[][]> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const out: string[][] = [];
+  for (const q of questions) {
+    console.log(`\n[question] ${q.header ? `${q.header}: ` : ''}${q.question}`);
+    q.options.forEach((o, i) => console.log(`  ${i + 1}. ${o.label}${o.description ? ` — ${o.description}` : ''}`));
+    console.log('  0. Skip');
+    const answer = await new Promise<string>((resolve) => rl.question('choose [0-9]: ', resolve));
+    const n = Number.parseInt(answer.trim(), 10);
+    const picked = q.options[n - 1];
+    out.push(picked ? [picked.label] : []);
+  }
+  rl.close();
+  return out;
+}
+
 async function cmdRun(text: string): Promise<void> {
   requireApiKey();
   initProvider();
@@ -140,6 +158,7 @@ async function cmdRun(text: string): Promise<void> {
   // Stream the local run's events to stdout.
   let cursor = 0;
   const asked = new Set<string>();
+  const qAsked = new Set<string>();
   for (;;) {
     while (cursor < r.events.length) {
       const e = r.events[cursor];
@@ -147,6 +166,12 @@ async function cmdRun(text: string): Promise<void> {
       if (e.type === 'chunk' && e.chunk) process.stdout.write(e.chunk);
       if (e.type === 'approval' && e.approvalId) console.log(`\n[approval requested: ${e.permission} "${e.target}"]`);
       if (e.type === 'error') console.error(`\n[error] ${e.error}`);
+      if (e.type === 'question' && e.qid && !qAsked.has(e.qid)) {
+        qAsked.add(e.qid);
+        const qid = e.qid;
+        const answers = await cliAsk(e.questions ?? []);
+        answerQuestion(qid, answers);
+      }
     }
     if (r.done) break;
     if (r.parked) {
@@ -165,7 +190,7 @@ async function cmdRun(text: string): Promise<void> {
 async function cmdChat(): Promise<void> {
   requireApiKey();
   initProvider();
-  const agent = await createTriageAgent({});
+  const agent = await createTriageAgent({}, undefined, undefined, cliAsk);
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: 'you> ' });
   console.log(`Wayfind REPL (model via ${process.env.PROVIDER_BASE_URL ?? 'env'}). Empty line quits.`);
   const history: unknown[] = [];

@@ -11,7 +11,7 @@ import NewBotModal from './Roster/NewBotModal';
 import BotPanel, { type BotEdits } from './BotPanel';
 import Thread from './Thread';
 import Composer from './Composer';
-import { decideApproval, getHistory, postTask, streamRun } from '@/lib/agent';
+import { answerQuestion, decideApproval, getHistory, postTask, streamRun } from '@/lib/agent';
 import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
@@ -132,6 +132,14 @@ export default function AppShell() {
               else msgs.push(row);
               return { ...b, msgs };
             }),
+          onQuestion: (q) =>
+            patchBot(targetIndex, (b) => ({
+              ...b,
+              msgs: [
+                ...b.msgs.filter((m) => m.t !== 'typing'),
+                { t: 'q', qid: q.qid, questions: q.questions },
+              ],
+            })),
           onApproval: (a) =>
             patchBot(targetIndex, (b) => ({
               ...b,
@@ -179,9 +187,21 @@ export default function AppShell() {
     }
   };
 
+  const answer = (msgIndex: number, answers: string[][]) => {
+    patchBot(cur, (b) => {
+      const target = b.msgs[msgIndex];
+      if (!target || target.t !== 'q' || target.done) return b;
+      return { ...b, msgs: b.msgs.map((m, j) => (j === msgIndex && m.t === 'q' ? { ...m, done: true as const } : m)) };
+    });
+    const target = bot?.msgs[msgIndex];
+    if (target && target.t === 'q') {
+      const qid = target.qid;
+      void answerQuestion(qid, answers).catch((err) => console.error('[AppShell] answer failed:', err));
+    }
+  };
+
   // Returns an error message on failure, null on success.
-  const saveBotEdits = async (edits: BotEdits): Promise<string | null> => {
-    const target = bots[cur];
+  const saveBotEdits = async (edits: BotEdits): Promise<string | null> => {    const target = bots[cur];
     if (!target) return 'No Bot selected.';
     if (!target.id) {
       patchBot(cur, (b) => ({ ...b, ...edits }));
@@ -346,7 +366,7 @@ export default function AppShell() {
         <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
           Local dev — replies come from your computer server. Make sure it’s running on :8080.
         </div>
-        <Thread bot={bot} onApprove={approve} />
+        <Thread bot={bot} onApprove={approve} onAnswer={answer} />
         <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} />
       </main>
 

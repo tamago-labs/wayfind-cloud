@@ -6,10 +6,13 @@ import { Agent } from '@openai/agents';
 import type { GuardOpts } from '../core/guard.js';
 import { loadMcpTools } from './mcp.js';
 import { resolveModel, type ResolvedModel } from '../providers/providers.js';
+import { createEditTool } from './tools/edit.js';
+import { createSearchTools } from './tools/search.js';
 import { createWebTools, hasSearchKey } from './tools/web.js';
 import { createSkillTool, loadSkills, skillCatalogPrompt } from './skills.js';
 import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';
+import { createQuestionTool, type AskHook } from './tools/question.js';
 import { createTaskTool, type RunChild } from './tools/task.js';
 
 const BASE_INSTRUCTIONS =
@@ -25,17 +28,28 @@ const BASE_INSTRUCTIONS =
 export interface AgentSelection {
   provider?: string;
   model?: string;
+  /** Subagent variant: research agents get a read-only toolset. */
+  variant?: 'full' | 'research';
 }
+
+/** Tools unavailable to read-only research subagents. */
+const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question']);
 
 export async function createTriageAgent(
   opts: GuardOpts,
   sel: AgentSelection = {},
   runChild?: RunChild,
+  ask?: AskHook,
 ): Promise<InstanceType<typeof Agent>> {
   const skills = loadSkills();
   const [mcpTools] = await Promise.all([loadMcpTools(opts)]);
   const resolved: ResolvedModel = resolveModel(sel.provider, sel.model);
-  const tools = [...createBuiltinTools(opts), createSkillTool(skills, opts), ...mcpTools, ...createWebTools(opts)];
+  let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), ...mcpTools, ...createWebTools(opts)];
+  if (sel.variant === 'research') {
+    tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
+  }
+  if (ask) tools.push(createQuestionTool(opts, ask));
+  if (runChild) tools.push(createTaskTool(runChild, opts));
   if (process.env.WAYFIND_DEBUG_EVENTS === '1') {
     console.log(`[agent] tools: ${tools.map((t) => (t as { name: string }).name).join(', ')} (search key: ${hasSearchKey() ? 'yes' : 'no'})`);
   }

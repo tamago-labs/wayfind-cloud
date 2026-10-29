@@ -36,6 +36,10 @@ export interface StreamHandlers {
   onChunk?: (delta: string) => void;
   onAgent?: (name: string) => void;
   onApproval?: (approval: { approvalId: string; permission?: string; target?: string }) => void;
+  onQuestion?: (q: {
+    qid: string;
+    questions: Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }> }>;
+  }) => void;
 }
 
 /** Resolve when the run emits done; reject on error/timeout. Ignores `: ping` heartbeats. */
@@ -76,7 +80,16 @@ export async function streamRun(runId: string, handlers: StreamHandlers, timeout
         } else if (e.type === 'agent' && typeof e.agent === 'string') {
           handlers.onAgent?.(e.agent);
         } else if (e.type === 'approval' && typeof e.approvalId === 'string') {
-          handlers.onApproval?.({ approvalId: e.approvalId });
+          handlers.onApproval?.({ approvalId: e.approvalId as string });
+        } else if (e.type === 'question' && typeof e.qid === 'string' && Array.isArray(e.questions)) {
+          handlers.onQuestion?.({
+            qid: e.qid as string,
+            questions: e.questions as {
+              question: string;
+              header?: string;
+              options: Array<{ label: string; description?: string }>;
+            }[],
+          });
         } else if (e.type === 'done') {
           if (typeof e.output === 'string') output = e.output;
           await reader.cancel().catch(() => {});
@@ -90,6 +103,16 @@ export async function streamRun(runId: string, handlers: StreamHandlers, timeout
   }
   await reader.cancel().catch(() => {});
   throw new Error('agent stream closed before done');
+}
+
+/** Answer a parked question. The run continues with your answers. */
+export async function answerQuestion(qid: string, answers: string[][]): Promise<boolean> {
+  const res = await fetch(`${AGENT_URL}/questions/${qid}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ answers }),
+  });
+  return res.ok;
 }
 
 export async function getHistory(conversationId: string): Promise<HistoryMessage[]> {

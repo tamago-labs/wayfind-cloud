@@ -7,6 +7,7 @@ import type { Msg, SeedBot } from './seed';
 interface ThreadProps {
   bot: SeedBot;
   onApprove: (msgIndex: number, ok: boolean) => void;
+  onAnswer?: (msgIndex: number, answers: string[][]) => void;
 }
 
 function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; onOk: () => void; onNo: () => void }) {
@@ -40,7 +41,7 @@ function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; on
   );
 }
 
-export default function Thread({ bot, onApprove }: ThreadProps) {
+export default function Thread({ bot, onApprove, onAnswer }: ThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -76,6 +77,44 @@ export default function Thread({ bot, onApprove }: ThreadProps) {
               <div key={i} className="msg-in flex items-center gap-2 px-1 text-xs font-semibold text-heroslate">
                 <i className="h-1.5 w-1.5 rounded-full bg-blagoon" />
                 <span>{m.x}</span>
+              </div>
+            );
+          }
+          if (m.t === 'q') {
+            const answered = m.done === true;
+            return (
+              <div key={i} className="msg-in rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                {m.questions.map((q, qi) => (
+                  <div key={qi} className={qi > 0 ? 'mt-3 border-t border-slate-100 pt-3' : ''}>
+                    {q.header && <p className="text-xs font-bold uppercase tracking-wide text-cta">{q.header}</p>}
+                    <p className="mt-0.5 font-bold text-navy">{q.question}</p>
+                    {!answered && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {q.options.map((o) => (
+                          <button
+                            key={o.label}
+                            onClick={() => {
+                              // Single-select v1: answer only this question.
+                              const answers = m.questions.map((qq, j) => (j === qi ? [o.label] : []));
+                              onAnswer?.(i, answers);
+                            }}
+                            title={o.description}
+                            className="rounded-full border border-navy/20 px-4 py-1.5 text-sm font-semibold text-navy hover:border-cta hover:text-cta"
+                          >
+                            {o.label}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => onAnswer?.(i, m.questions.map(() => []))}
+                          className="rounded-full px-4 py-1.5 text-sm font-semibold text-heroslate hover:bg-slate-50"
+                        >
+                          Skip
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {answered && <p className="mt-2 text-sm font-bold text-blagoon">✓ Answered</p>}
               </div>
             );
           }

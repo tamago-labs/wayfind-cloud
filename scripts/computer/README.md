@@ -28,7 +28,8 @@ PASS/FAIL (shapes, states, files — never model-output quality).
 | `05-approval-flow` | write parks with `{type:'approval'}` → approve resumes to `done` (+file written); reject terminates without writing. **SKIPs on permissive servers**; needs `PERMISSION_MODE=enforcing`. Interrupt/resume is SDK-native (RunState), so no provider hang |
 | `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
 | `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
-| `07-subagents` | `task` fan-out (one subagent per file, `toolCalls >= 3`), child failure surfaces as `done`, recursive delegation completes (4-deep cap is code-verified; watch it with `WAYFIND_DEBUG_EVENTS=1`) |
+| `07-subagents` | `task` fan-out (one subagent per file, `toolCalls >= 3`), child failure surfaces as `done`, recursive delegation completes, `task_id` resume recalls prior child state (4-deep cap is code-verified; watch it with `WAYFIND_DEBUG_EVENTS=1`) |
+| `10-question` | model asks the user via the `question` tool; harness answers through `POST /questions/:id`; run resumes with the answer (120s tool-side timeout → "Unanswered") |
 | `08-conversation` | per-`conversationId` transcript isolation (no bleed), own-word recall, `/history` matches (wipes nothing; uses stamped test conversations) |
 | `09-search` | `webfetch` returns a live page as markdown (keyless); `websearch` answers from Exa when a key exists (`/status.search`), otherwise must say a key is missing gracefully |
 

@@ -45,6 +45,24 @@ async function main(): Promise<void> {
     console.log('note: depth cap (4) is code-verified; run server with WAYFIND_DEBUG_EVENTS=1 to watch it fire');
   }
 
+  // 07d — task_id resume: a previous child session continues.
+  {
+    const code = `CODE-${Date.now().toString(36).toUpperCase()}`;
+    const s1 = await runToDone(
+      'Spawn one `task` subagent with description "remember code" and prompt "The code is ' +
+        code +
+        '. Reply DONE." Then reply with ONLY the task_id from the <task_result task_id="..."> tag — just the id, nothing else.',
+    );
+    const taskId = s1.output.trim();
+    assert(/^[A-Za-z0-9-]+$/.test(taskId), `first spawn returned a task_id (got ${JSON.stringify(taskId.slice(0, 80))})`);
+    const s2 = await runToDone(
+      'Spawn one `task` subagent with task_id "' +
+        taskId +
+        '" and prompt "What was the code? Reply with only the code." Then reply with ONLY its answer.',
+    );
+    assert(s2.output.includes(code), `resumed child recalled the code (got ${JSON.stringify(s2.output.slice(0, 120))})`);
+  }
+
   console.log('07-subagents: PASS');
 }
 

@@ -14,12 +14,14 @@ import { join } from 'node:path';
 import { MemorySession, run, RunState } from '@openai/agents';
 import { PROVIDER_MODEL, WORKSPACE_DIR } from '../core/config.js';
 import { createTriageAgent, type AgentSelection } from '../agent/agent.js';
+import type { QuestionPrompt } from '../agent/tools/question.js';
+import type { ChildRequest, ChildResult } from '../agent/tools/task.js';
 import { clearRunLog, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
 import { resolveModel } from '../providers/providers.js';
 import { reportUsage } from './usage.js';
 
 export interface RunEvent {
-  type: 'chunk' | 'agent' | 'approval' | 'approval-resolved' | 'done' | 'error';
+  type: 'chunk' | 'agent' | 'approval' | 'approval-resolved' | 'question' | 'done' | 'error';
   chunk?: string;
   agent?: string;
   approvalId?: string;
@@ -27,6 +29,8 @@ export interface RunEvent {
   target?: string;
   auto?: boolean;
   decision?: 'approve' | 'reject';
+  qid?: string;
+  questions?: QuestionPrompt[];
   output?: string;
   error?: string;
   toolCalls?: number;
@@ -58,6 +62,64 @@ export interface PendingApproval {
   permission: string;
   target: string;
   requestedAt: string;
+}
+
+export interface PendingQuestion {
+  id: string;
+  runId: string;
+  questions: QuestionPrompt[];
+  requestedAt: string;
+}
+
+const pendingQuestions = new Map<
+  string,
+  { runId: string; questions: QuestionPrompt[]; requestedAt: string; resolve: (answers: string[][]) => void }
+>();
+
+export function listPendingQuestions(): PendingQuestion[] {
+  return [...pendingQuestions.entries()].map(([id, p]) => ({
+    id,
+    runId: p.runId,
+    questions: p.questions,
+    requestedAt: p.requestedAt,
+  }));
+}
+
+/** Resolve a parked question. Returns false for unknown ids. */
+export function answerQuestion(id: string, answers: string[][]): boolean {
+  const pending = pendingQuestions.get(id);
+  if (!pending) return false;
+  pendingQuestions.delete(id);
+  pending.resolve(answers);
+  return true;
+}
+
+/**
+ * AskHook for the `question` tool: push an SSE event and wait for
+ * POST /questions/:id. Times out to per-question [] after 120s
+ * ("Unanswered" — opencode parity). NOTE: the provider turn stays open
+ * while waiting; keep answers fast.
+ */
+function makeQuestionHook(runState: Run): (questions: QuestionPrompt[]) => Promise<string[][]> {
+  return (questions: QuestionPrompt[]) => {
+    const id = randomUUID();
+    runState.events.push({ type: 'question', qid: id, questions });
+    return new Promise<string[][]>((resolve) => {
+      const timer = setTimeout(() => {
+        if (pendingQuestions.delete(id)) resolve(questions.map(() => []));
+      }, 120_000);
+      timer.unref?.();
+      pendingQuestions.set(id, {
+        runId: runState.id,
+        questions,
+        requestedAt: new Date().toISOString(),
+        resolve: (answers) => {
+          clearTimeout(timer);
+          resolve(answers);
+        },
+      });
+    });
+  };
 }
 
 const runs = new Map<string, Run>();
@@ -245,6 +307,10 @@ export interface StartRunOpts {
   conversationId?: string;
   /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
+  /** Subagent variant for `task` children. */
+  subagentType?: 'general' | 'research';
+  /** Resume this child session (task_id) instead of starting fresh. */
+  resumeTaskId?: string;
 }
 
 /** Max `task` delegation depth. At the cap the tool stays visible but asks
@@ -274,38 +340,49 @@ function releaseChildSlot(): void {
   childQueue.shift()?.();
 }
 
-function makeRunChild(runState: Run): (childText: string) => Promise<string> {
+function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult> {
   const depth = runState.depth;
-  return async (childText: string): Promise<string> => {
-    if (depth + 1 >= MAX_TASK_DEPTH) {
+  return async (req) => {
+    if (!req.taskId && depth + 1 >= MAX_TASK_DEPTH) {
       if (process.env.WAYFIND_DEBUG_EVENTS === '1') console.log(`[task] depth cap (${MAX_TASK_DEPTH}) — inline`);
-      return '<task_result>\nDepth cap reached — do this part yourself instead of delegating.\n</task_result>';
+      return {
+        output: '<task_result>\nDepth cap reached — do this part yourself instead of delegating.\n</task_result>',
+        taskId: '',
+      };
     }
     // Children get only the delegated text (history isolation), so orient
-    // them: without this they guess absolute paths, hit "escapes workspace"
-    // errors, and report back "I can't".
-    const oriented =
-      `Workspace root: ${WORKSPACE_DIR}. All file paths are relative to it — never use absolute paths. ` +
-      `Key files: providers.json (model/provider catalog), permissions.json (tool rules), skills/<name>/SKILL.md (skill docs). ` +
-      `Prefer your read/list/skill tools over shell for inspection. Report paths tried plus the result.\n\nTask:\n\n${childText}`;
-    const label = childText.match(/^\[(.*?)\]/)?.[1] ?? 'subtask';
-    runState.events.push({ type: 'agent', agent: `task: ${label} started` });
+    // fresh ones: without this they guess absolute paths, hit "escapes
+    // workspace" errors, and report back "I can't". Resumed children keep
+    // their session and get the new prompt as-is.
+    const fresh = !req.taskId || !childSessions.has(req.taskId);
+    const text = fresh
+      ? `Workspace root: ${WORKSPACE_DIR}. All file paths are relative to it — never use absolute paths. ` +
+        `Key files: providers.json (model/provider catalog), permissions.json (tool rules), skills/<name>/SKILL.md (skill docs). ` +
+        `Prefer your read/list/glob/grep/skill tools over shell for inspection. Report paths tried plus the result.\n\nTask:\n\n${req.prompt}`
+      : req.prompt;
+    const label = req.description;
+    runState.events.push({ type: 'agent', agent: `task:${req.subagentType} ${label} ${fresh ? 'started' : 'resumed'}` });
     try {
-      const out = await runToCompletion(oriented, {
+      const { output, taskId } = await runToCompletion(text, {
         provider: runState.sel.provider,
         model: runState.sel.model,
         parentId: runState.id,
-        depth: depth + 1,
+        depth: fresh ? depth + 1 : depth,
         conversationId: runState.conversationId,
+        subagentType: req.subagentType,
+        resumeTaskId: fresh ? undefined : req.taskId,
       });
-      runState.events.push({ type: 'agent', agent: `task: ${label} finished` });
-      return out;
+      runState.events.push({ type: 'agent', agent: `task:${req.subagentType} ${label} finished` });
+      return { output, taskId };
     } catch (err) {
-      runState.events.push({ type: 'agent', agent: `task: ${label} failed` });
+      runState.events.push({ type: 'agent', agent: `task:${req.subagentType} ${label} failed` });
       throw err;
     }
   };
 }
+
+/** One SDK session per live child (task_id). Resuming continues the child. */
+const childSessions = new Map<string, { session: MemorySession; depth: number }>();
 
 /** Consume one streamed run to completion: chunks/agent events in, then
  * either done (finalOutput + usage) or parked (interruptions saved). */
@@ -382,7 +459,7 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   try {
-    const agent = await createTriageAgent(auditTo(runState.id), runState.sel, makeRunChild(runState));
+    const agent = await createTriageAgent(auditTo(runState.id), runState.sel, makeRunChild(runState), makeQuestionHook(runState));
     // History isolation: children get ONLY their prompt. Top-level input is
     // the live turn (plus JSONL seed on first contact); the session carries
     // everything else. The brief rides bracketed every turn, never persisted.
@@ -390,7 +467,15 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     const input = (
       runState.parentId ? [userMessage(text)] : [...seedFor(opts.conversationId), userMessage(liveText)]
     ) as never;
-    const session = runState.parentId ? undefined : sessionFor(opts.conversationId);
+    let session: MemorySession | undefined;
+    if (!runState.parentId) {
+      session = sessionFor(opts.conversationId);
+    } else if (opts.resumeTaskId && childSessions.has(opts.resumeTaskId)) {
+      session = childSessions.get(opts.resumeTaskId)?.session;
+    } else {
+      session = new MemorySession();
+      childSessions.set(runState.id, { session, depth: runState.depth });
+    }
     const stream = await runWithContext(runState.id, !!runState.parentId, () =>
       run(agent, input, {
         stream: true,
@@ -416,7 +501,11 @@ function newRunState(opts: StartRunOpts): Run {
     parentId: opts.parentId,
     model: opts.model ?? PROVIDER_MODEL,
     provider: opts.provider ?? 'default',
-    sel: { provider: opts.provider, model: opts.model },
+    sel: {
+      provider: opts.provider,
+      model: opts.model,
+      ...(opts.subagentType ? { variant: opts.subagentType === 'research' ? ('research' as const) : ('full' as const) } : {}),
+    },
     conversationId: opts.conversationId,
     depth: opts.depth ?? 0,
     events: [],
@@ -437,14 +526,18 @@ export function startRun(text: string, opts: StartRunOpts): Run {
   return runState;
 }
 
-/** Blocking child run for the `task` tool — returns the final output. */
-export async function runToCompletion(text: string, opts: StartRunOpts): Promise<string> {
+/** Blocking child run for the `task` tool — returns output + child task_id. */
+export async function runToCompletion(
+  text: string,
+  opts: StartRunOpts,
+): Promise<{ output: string; taskId: string }> {
   const release = await acquireChildSlot();
   try {
     const runState = newRunState(opts);
     runs.set(runState.id, runState);
     appendTranscript(runState.id, 'user', text, runState.parentId, opts.conversationId);
-    return await executeRun(runState, text, opts);
+    const output = await executeRun(runState, text, opts);
+    return { output, taskId: runState.id };
   } finally {
     release();
   }
