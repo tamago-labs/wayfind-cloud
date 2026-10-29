@@ -132,7 +132,7 @@ export default function AppShell() {
           onAgent: (name) =>
             patchBot(targetIndex, (b) => {
               const msgs = b.msgs.filter((m) => m.t !== 'typing');
-              const row: Msg = { t: 'tool', x: `Using the tool · ${name}` };
+              const row: Msg = { t: 'tool', x: `Using · ${name}` };
               const last = msgs[msgs.length - 1];
               if (last && last.t === 'tool') msgs[msgs.length - 1] = row;
               else msgs.push(row);
