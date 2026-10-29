@@ -43,4 +43,4 @@ amplifyconfiguration*
 # microvm spike scripts (local creds + state + zips)
 scripts/microvm/.env
 scripts/microvm/.microvm-state.json
-scripts/microvm/*.zip
+scripts/microvm/**/*.zip
