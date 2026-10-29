@@ -190,27 +190,34 @@ Approvals and activity history are **not separate top-level pages** —
 approvals live as cards in chat; history is the transcript + routine run
 history (+ account audit view under Settings later if needed).
 
-### Inference from inside the Computer (decided v7)
+### Inference inside the Computer (decided v7.2 — supersedes cloud router)
 
-The agent CLI running inside the MicroVM never holds provider keys and
-never calls a model provider directly. It calls **`POST /inference`
-(streaming) on `wayfind-api`** with the Computer's per-instance token;
-the router resolves included/BYOK keys from Secrets Manager, enforces
-plan quota, and meters the call against a `Run`. This keeps keys out of
-VM snapshots and backups, and makes every model call visible/costed in
-the frontend (chat transcript + Computer panel run history).
+The agent CLI calls model providers directly from inside the MicroVM,
+Claude-Code-style: skills, MCP servers and a keystore live in
+`/workspace`. The included-model key is provisioned at `/run` (never
+baked into the image); BYOK keys are pushed into the keystore by the
+backend when the user saves them in settings — never via chat. There is
+no model relay: streaming goes browser→VM direct (SSE) with short-lived
+port-scoped tokens minted by `wayfind-api`, which keeps control plane
+only (auth, token minting, usage ingest, approval relay). Usage events
+posted by the CLI write the `Run`/`CreditLedger` rows, so every model
+call stays visible/costed in the frontend. (Supersedes the v7 `POST
+/inference` router: it put a billed relay hop on every token for key
+hygiene that keystore scoping + per-user-encrypted backups now cover.)
 
 ## 7. Model and agent runtime (xAI seam)
 
 - `docs.x.ai` exposes the **Grok API**: OpenAI-compatible Responses API
   (`https://api.x.ai/v1`, e.g. model `grok-4.7`), function calling, web
-  search, structured outputs. Wayfind's router treats providers uniformly:
-  **xAI Grok as the reference "Grok-class" provider**, plus a cheap model
-  for watchers/routine prep, escalation only when a task needs it.
+ search, structured outputs. The CLI treats providers uniformly through
+ one model client (OpenAI-compatible; `grok-4.7` as the reference
+ "Grok-class" model), plus a cheap model for watchers/routine prep,
+ escalation only when a task needs it.
 - Existing seam: `amplify/functions/wayfind-api/config/provider.ts`
-  (today LongCat, OpenAI-compatible). Phase 4 generalises it into the
-  router with per-Run cost logging. Only paid APIs, BYOK later — no pooled
-  consumer subscriptions.
+ (today LongCat, OpenAI-compatible) moves into the CLI agent as its
+ model client; per-Run cost logging is posted back as usage events.
+ Only paid APIs, BYOK in the VM keystore — no pooled consumer
+ subscriptions.
 - Watchers (RSS/web/app events) are non-LLM pollers; a model wakes only
   on real change or on schedule. That is what makes routines cheap.
 
@@ -255,7 +262,10 @@ Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
 - **Tools the CLI gives a Bot:** shell, browser (Playwright), files,
   `skills/<name>/SKILL.md` loader/runner. No other magic: if it isn't a
   tool call in the transcript, it didn't happen.
-- **Inference:** cloud router only (§7 box). VM holds no provider keys.
+- **Inference:** direct from the VM (§7 box). The VM holds model keys
+ in its keystore (included key provisioned at `/run`, BYOK pushed via
+ the privileged backend channel); connector OAuth tokens stay on the
+ backend and never enter the VM.
 - **Backup & tracking (frontend-visible, owner-decided):** workspace syncs
   to an S3-versioned store on suspend, every ~15 min while running, and
   on demand. Each sync writes a `ComputerBackup` (time, size, trigger,
@@ -301,8 +311,10 @@ Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
 
 ## 10. Connectors (account-wide; order by first Bots created)
 
-Rule: official OAuth/API, event support, approval surface; tokens only on
-the connector backend (§11), never in the Computer or chat.
+Rule: official OAuth/API, event support, approval surface; connector
+OAuth tokens only on the connector backend (§11) — never in the
+Computer or chat. (Model keys are the exception: they live in the VM
+keystore by design, §7 box.)
 
 | # | Connector | First Bots | Note |
 |---|---|---|---|
@@ -415,7 +427,8 @@ Routes (v1):
   token/tool-activity stream for the open chat. Durability comes from
   Messages written by the worker, not from the stream.
 - `POST /runs` {botId, instruction, skillId?} · `GET /runs/:id` ·
-  `POST /runs/:id/stop` ("stop now").
+ `POST /runs/:id/stop` ("stop now") · `POST /runs/:id/usage`
+ (CLI usage events → `Run`/`CreditLedger` rows).
 - `POST /approvals/:id` {decision: approve|edit|reject, editedPayload?} —
   resumes the waiting worker/Run.
 - `POST /computer/request` · `POST /computer/action` {suspend|resume|reset}
@@ -460,7 +473,7 @@ wired is labelled demo/illustrative on sight, or hidden.
 Near-term order (v7): **Phase 4/M0** landing honesty + fixes (Models table,
 Trust→Connectors, Enterprise tier, delete Google-sign-in tab/copy) and
 real-or-labelled app chat → **M1** MicroVM spike → **M2** Computer v1
-(CLI + router inference + backup panel) → **M3** browser tasks + Teach
+(CLI + direct-in-VM inference + backup panel) → **M3** browser tasks + Teach
 recording → skills. Provisioning steps for M1+ are owner/dev-run
 (`docs/DEV-HANDOFF.md`); code lands here phase by phase and is reviewed
 before anything claims it works.
@@ -519,7 +532,7 @@ Create Bot → Request Computer → see gatekeeper decision.
 
 ### Phase 4 — Chat + model runtime (no Computer yet)
 Message a Bot and get real work via Connect apps + tools: xAI Responses
-API through the router (§7), streaming transcript with tool activity,
+API via `bot-worker` (§7, server-side until the Computer exists),
 per-Bot memory (read/write), approval cards inline, artifacts (files) in
 chat, stop/redirect. Acceptance: one Bot (Inbox or Chief of Staff) does a
 real, reviewable task for one user, approvals enforced, costs logged.
@@ -541,8 +554,8 @@ tokens never appear in chat or the Computer.
   latency + running-vs-suspended cost measured; $5 math re-derived or
   re-priced. Kill/re-scope criteria are written down before M2 starts.
 - **M2 Computer v1:** CLI agent + browser/files/terminal (§8.1),
-  inference via `POST /inference` (cloud router), gatekeeper
-  provisioning through `computer-manager`, S3 backup
+ direct-in-VM inference with keystore + SSE transport (v7.2, no model
+ relay), gatekeeper provisioning through `computer-manager`, S3 backup
   (suspend/interval/manual) + Computer panel: status, last backup,
   snapshots, restore, run history/minute metering → `CreditLedger`.
   Acceptance: a Repo Coder Bot works an issue to a draft PR on the
@@ -566,12 +579,18 @@ record billing + credit enforcement, cohort rollout by region.
 
 ## 13. Open decisions
 
-- [x] v7 owner decisions (2026-10-27): VM inference via cloud router;
-      Teach = browser recording (Bot-session v1, user-demo v2);
-      "Sign in with Google" feature dropped → Connect Apps OAuth;
-      browser (Chromium/Playwright) in the VM from v1; Models section =
-      table with 1 included model + BYOK; Enterprise = Custom/talk-to-us;
-      backups frontend-visible with snapshot restore.
+- [x] v7 owner decisions (2026-10-27): VM inference via cloud router —
+ **superseded by v7.2 below** (kept for history);
+ Teach = browser recording (Bot-session v1, user-demo v2);
+ "Sign in with Google" feature dropped → Connect Apps OAuth;
+ browser (Chromium/Playwright) in the VM from v1; Models section =
+ table with 1 included model + BYOK; Enterprise = Custom/talk-to-us;
+ backups frontend-visible with snapshot restore.
+- [x] v7.2 owner decision (2026-10-29): VM-first inference — CLI calls
+ providers directly from the VM (skills/MCP/keystore inside, Claude-Code-style);
+ browser→VM direct SSE with API-minted tokens; no model relay;
+ BYOK keys pushed to the VM keystore via the privileged channel;
+ backups per-user encrypted since the keystore is in the workspace.
 - [ ] Included default model identity + quota for the Models table
       (landing currently says "Muse Glimmer" — confirm or replace).
 - [ ] Owner review: landing v3 + app shell (desktop + mobile) — visual gate.
@@ -603,6 +622,13 @@ record billing + credit enforcement, cohort rollout by region.
 
 ## 15. Changelog
 
+- 2026-10-29 (v7.2): **VM-first inference** (owner decision, supersedes
+ the v7 cloud router): CLI calls providers directly from the VM with a
+ keystore in `/workspace` (included key at `/run`, BYOK via privileged
+ push, never chat); streaming is browser→VM direct SSE with API-minted
+ tokens; metering via CLI usage events → `POST /runs/:id/usage`;
+ connector OAuth tokens stay backend-only; backups per-user encrypted.
+ `wayfind-api` keeps control plane only (auth, tokens, usage, approvals).
 - 2026-10-27 (v7.1): **M0 shipped** (see §12.0). Landing: Models→table,
   Trust→Connectors, Enterprise tier, Google-sign-in tab deleted
   (→ "Backed up & resumable"), Computer framed as preview; app chat

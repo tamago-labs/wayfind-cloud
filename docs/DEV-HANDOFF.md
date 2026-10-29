@@ -130,10 +130,24 @@ terminal/files first — that decision goes in §8 + PRD changelog.
 - Identity: minted in `/run` only — per-Computer token (Secrets
   Manager), computerId, ownerId injected by `computer-manager` at
   `run-microvm` time. Nothing per-user baked into the image, ever.
-- Inference: CLI → `POST /inference` on `wayfind-api` (streaming),
-  Computer token auth. Router: included default / cheap / BYOK keys
-  from Secrets Manager; quota per plan; every call writes cost to a
-  `Run`. Provider keys never enter the VM (owner decision, PRD §7).
+  The included-model key is fetched from Secrets Manager at the same
+  time and written into the VM keystore (memory/file, never the image).
+- Inference: direct from inside the VM, Claude-Code-style (v7.2, no
+  model relay). The CLI calls providers itself using a VM keystore
+  (`/workspace/.wayfind/keys`): the included-model key is provisioned
+  at `/run` (never baked into the image; rotated server-side), BYOK
+  keys are pushed into the keystore through the privileged backend→VM
+  channel when the user saves them in settings — never via chat.
+- Streaming: browser opens SSE straight to the VM endpoint with a
+  short-lived port-scoped token minted by `wayfind-api`.
+  `wayfind-api` keeps control plane only: auth, token minting, usage
+  ingest (`POST /runs/:id/usage`), approval relay (browser decision →
+  VM). Do NOT build a WS relay on Function URLs — they can't do true
+  bidirectional WebSocket.
+- Metering: CLI posts usage events after each call; `Run` /
+  `CreditLedger` rows are written from those events. Enforceable
+  because users have no shell of their own; server-side anomaly flags
+  later, not hard gates now.
 - Tools exposed to the model: shell (in-VM), browser (Playwright),
   filesystem (`/workspace`), skills. Tool activity streams to chat as
   transcript events; consequential actions return an **approval
@@ -163,8 +177,9 @@ terminal/files first — that decision goes in §8 + PRD changelog.
   (task, duration, computer minutes, model credits).
 - Restore must be tested in M2 acceptance: terminate a VM, restore
   from backup on a fresh one, files intact. Backups contain workspace
-  files only — never provider keys (none exist in the VM) and browser
-  profile state only if M2 explicitly opts in (default: out).
+  files including the keystore — so backup buckets are encrypted
+  per-user (KMS); restores rehydrate keys. Browser profile state only
+  if M2 explicitly opts in (default: out).
 
 ## 7. Near phases — what "cover" realistically means
 
@@ -173,7 +188,7 @@ terminal/files first — that decision goes in §8 + PRD changelog.
 | M0 honesty + landing | Models table, Trust→Connectors, Enterprise tier, remove Google-sign-in tab/copy, label/park simulated chat, add prod Google callback URLs note | No backend feature work |
 | **M0 status: DONE 2026-10-27** (`npm run build` green; `/` 150 kB, `/app` 239 kB). Remaining from M0 scope: prod Google callback URLs still localhost-only in `amplify/auth/resource.ts` — needs the real domain from the owner, code change is 2 lines when known. | | |
 | M1 spike | §4 checklist, §8 results table filled, kill/re-scope decision | No product code |
-| M2 Computer v1 | Image+CLI (§5), `computer-manager` Lambda (provision/suspend/resume/meter), gatekeeper→provisioning, backup+panel (§6), inference route | Browser *tasks* beyond smoke test; Teach; routines on Computer |
+| M2 Computer v1 | Image+CLI (§5), `computer-manager` Lambda (provision/suspend/resume/meter), gatekeeper→provisioning, backup+panel (§6), direct-in-VM inference + SSE transport | Browser *tasks* beyond smoke test; Teach; routines on Computer |
 | M3 Browser + Teach | Playwright task tools hardened, session recording → SKILL.md → test/approve, Library tab shows skills/files | Human-demo recording; takeover UI; group-chat orchestration on Computer |
 | Later | Routines targeting the Computer, Connect Apps (OAuth) tokens brokered to CLI as tools, group chats/handoffs, billing enforcement | Scheduled only when the phase above is proven |
 
@@ -214,8 +229,10 @@ Recorded 2026-10-29 (hello-world spike, since cleaned up):
 
 - Nothing user-facing claims a feature before an acceptance test passes
   (PRD checkbox rule). Simulated/demo UI must say so on the surface.
-- Secrets only via Amplify secrets/Secrets Manager; never env literals,
-  never in chat, never in the VM or its backups.
+- Secrets via Amplify secrets/Secrets Manager; never env literals,
+ never in chat, never in transcripts/logs. Model keys live only in
+ the VM keystore + per-user-encrypted backups; connector OAuth tokens
+ never enter the VM.
 - Approvals are enforced outside the VM/CLI; a Bot cannot approve
   itself, and memory is never a safety boundary.
 - One Computer per account is shared by all its Bots — anything on it
