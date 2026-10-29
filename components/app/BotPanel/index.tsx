@@ -5,6 +5,7 @@ import type { MascotColor, MascotShape } from '@/components/Mascot';
 import BotPanelHeader from './BotPanelHeader';
 import BotPanelBody from './BotPanelBody';
 import BotEditModal from './BotEditModal';
+import DeleteBotModal from './DeleteBotModal';
 
 export interface BotEdits {
   name: string;
@@ -23,10 +24,12 @@ interface BotPanelProps {
   shape: MascotShape;
   synced: boolean;
   onSave: (edits: BotEdits) => Promise<string | null>;
+  onDelete: () => Promise<string | null>;
 }
 
-export default function BotPanel({ open, onClose, botId, name, role, color, shape, synced, onSave }: BotPanelProps) {
+export default function BotPanel({ open, onClose, botId, name, role, color, shape, synced, onSave, onDelete }: BotPanelProps) {
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const v = { name, role, color, shape };
 
   return (
@@ -37,9 +40,22 @@ export default function BotPanel({ open, onClose, botId, name, role, color, shap
       aria-hidden={!open}
     >
       <div className="flex h-full w-80 flex-col p-5">
-        <BotPanelHeader onClose={onClose} />
+        <BotPanelHeader onClose={onClose} onDeleteClick={() => setDeleteOpen(true)} />
         <BotPanelBody value={v} botId={botId} synced={synced} onEdit={() => setEditOpen(true)} />
       </div>
+      <DeleteBotModal
+        open={deleteOpen}
+        botName={name}
+        onClose={() => setDeleteOpen(false)}
+        onDelete={async () => {
+          const err = await onDelete();
+          if (!err) {
+            setDeleteOpen(false);
+            onClose();
+          }
+          return err;
+        }}
+      />
       <BotEditModal
         open={editOpen}
         onClose={() => setEditOpen(false)}

@@ -133,6 +133,29 @@ export default function AppShell() {
   };
 
   // Returns an error message on failure, null on success.
+  const deleteBot = async (): Promise<string | null> => {
+    const target = bots[cur];
+    if (!target) return 'No Bot selected.';
+    if (target.id) {
+      try {
+        const { errors } = await dataClient.models.Bot.delete({ id: target.id });
+        if (errors?.length) {
+          const msg = errors.map((e) => e.message).join('; ');
+          console.error('[AppShell] bot delete failed:', msg);
+          return msg;
+        }
+      } catch (err) {
+        console.error('[AppShell] bot delete failed:', err);
+        return err instanceof Error ? err.message : 'Delete failed. Check your connection and try again.';
+      }
+    }
+    setBots((prev) => prev.filter((_, i) => i !== cur));
+    setCur((c) => Math.max(0, c - 1));
+    setPanelOpen(false);
+    return null;
+  };
+
+  // Returns an error message on failure, null on success.
   const createBot = async (name: string): Promise<string | null> => {
     const ownerId = user?.userId;
     if (!ownerId) return 'Not signed in. Please sign in again.';
@@ -265,6 +288,7 @@ export default function AppShell() {
         shape={bot.shape}
         synced={bot.id !== null}
         onSave={saveBotEdits}
+        onDelete={deleteBot}
       />
       <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} />
     </div>
