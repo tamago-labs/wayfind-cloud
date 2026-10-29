@@ -25,6 +25,7 @@ export interface RunEvent {
   decision?: 'approve' | 'reject';
   output?: string;
   error?: string;
+  toolCalls?: number;
 }
 
 export interface Run {
@@ -131,9 +132,15 @@ export interface StartRunOpts {
   provider?: string;
   model?: string;
   parentId?: string;
+  /** Nesting depth of `task` delegation; top-level runs are 0. */
+  depth?: number;
   onApproval?: (approval: PendingApproval) => void;
   approvalTimeoutMs?: number;
 }
+
+/** Max `task` delegation depth. At the cap the tool stays visible but asks
+ * the model to do the work inline instead of spawning (no missing-tool confusion). */
+const MAX_TASK_DEPTH = 4;
 
 const APPROVAL_TIMEOUT_MS = Number(process.env.APPROVAL_TIMEOUT_MS ?? 10 * 60_000);
 
@@ -172,13 +179,22 @@ function wireGuard(runId: string, opts: StartRunOpts): GuardOpts {
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   const guardOpts = wireGuard(runState.id, opts);
+  const depth = opts.depth ?? 0;
   try {
-    const agent = await createTriageAgent(
-      guardOpts,
-      { provider: opts.provider, model: opts.model },
-      (childText) => runToCompletion(childText, { ...opts, parentId: runState.id }),
-    );
-    const input = [...loadHistory(), userMessage(text)] as never;
+    const runChild = async (childText: string): Promise<string> => {
+      if (depth + 1 >= MAX_TASK_DEPTH) {
+        if (process.env.WAYFIND_DEBUG_EVENTS === '1') console.log(`[task] depth cap (${MAX_TASK_DEPTH}) — inline`);
+        return '<task_result>\nDepth cap reached — do this part yourself instead of delegating.\n</task_result>';
+      }
+      return runToCompletion(childText, { ...opts, parentId: runState.id, depth: depth + 1 });
+    };
+    const agent = await createTriageAgent(guardOpts, { provider: opts.provider, model: opts.model }, runChild);
+    // History isolation: children get ONLY their prompt. Inheriting the shared
+    // transcript made descendants obey the parent's delegation instructions
+    // (exponential spawn + semaphore deadlock). Top-level runs keep history.
+    const input = (runState.parentId
+      ? [userMessage(text)]
+      : [...loadHistory(), userMessage(text)]) as never;
     const stream = await runWithContext(runState.id, () => run(agent, input, { stream: true, maxTurns: 20 }));
     const seenTypes = process.env.WAYFIND_DEBUG_EVENTS === '1' ? new Set<string>() : null;
     for await (const event of stream as unknown as Iterable<{
@@ -199,7 +215,7 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     const textOut = typeof output === 'string' ? output : JSON.stringify(output ?? '');
     runState.output = textOut;
     runState.toolCalls = toolCallCount(runState.id);
-    runState.events.push({ type: 'done', output: textOut });
+    runState.events.push({ type: 'done', output: textOut, toolCalls: runState.toolCalls });
     appendTranscript(runState.id, 'assistant', textOut, runState.parentId);
     if (seenTypes) console.log(`[debug] stream event types: ${[...seenTypes].join(', ')}`);
     await reportUsage({

@@ -27,6 +27,7 @@ PASS/FAIL (shapes, states, files — never model-output quality).
 | `04-skills` | skill catalog inject + `skill` tool load |
 | `05-approval-flow` | write parks with `{type:'approval'}` → approve completes the run; reject fails it. **SKIPs on permissive servers** (v1 default auto-allows); needs `PERMISSION_MODE=enforcing`, which currently hangs on provider idle timeout — SDK-native resume required to make it pass |
 | `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
+| `07-subagents` | `task` fan-out (one subagent per file, `toolCalls >= 3`), child failure surfaces as `done`, recursive delegation completes (4-deep cap is code-verified; watch it with `WAYFIND_DEBUG_EVENTS=1`) |
 
 Stop on first FAIL (each script exits non-zero). `05` wipes the
 transcript first (stale history makes models redo old writes) and

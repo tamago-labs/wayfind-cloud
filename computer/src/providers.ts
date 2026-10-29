@@ -75,7 +75,7 @@ export interface ResolvedModel {
 export function resolveModel(providerId?: string, modelId?: string): ResolvedModel {
   const catalog = loadCatalog();
   const pid = providerId ?? catalog.defaults?.provider ?? 'meta';
-  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'muse-spark-1.3-contributor';
+  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'muse-spark-1.3';
   const entry = catalog.providers?.[pid];
   const baseURL = entry?.baseURL ?? process.env.PROVIDER_BASE_URL ?? 'https://api.meta.ai/v1';
   const client = providerClient(pid, entry ?? { baseURL });

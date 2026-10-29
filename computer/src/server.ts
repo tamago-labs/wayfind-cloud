@@ -32,6 +32,7 @@ function sse(res: ServerResponse, runId: string): void {
     'X-Accel-Buffering': 'no',
   });
   let cursor = 0;
+  let ticks = 0;
   const timer = setInterval(() => {
     const r = getRun(runId);
     if (!r) {
@@ -40,10 +41,17 @@ function sse(res: ServerResponse, runId: string): void {
       res.end();
       return;
     }
+    let wrote = false;
     while (cursor < r.events.length) {
       res.write(`data: ${JSON.stringify(r.events[cursor])}\n\n`);
       cursor += 1;
+      wrote = true;
     }
+    // Heartbeat comment every ~15s of silence: keeps long runs (parallel
+    // subagents, parked approvals) alive through idle-killing proxies, and
+    // is ignored by SSE clients (not a `data:` line).
+    ticks += 1;
+    if (!wrote && ticks % 60 === 0) res.write(': ping\n\n');
     if (r.done) {
       clearInterval(timer);
       res.end();
