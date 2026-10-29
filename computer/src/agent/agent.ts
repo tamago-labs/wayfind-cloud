@@ -6,6 +6,7 @@ import { Agent } from '@openai/agents';
 import type { GuardOpts } from '../core/guard.js';
 import { loadMcpTools } from './mcp.js';
 import { resolveModel, type ResolvedModel } from '../providers/providers.js';
+import { createWebTools, hasSearchKey } from './tools/web.js';
 import { createSkillTool, loadSkills, skillCatalogPrompt } from './skills.js';
 import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';
@@ -34,7 +35,10 @@ export async function createTriageAgent(
   const skills = loadSkills();
   const [mcpTools] = await Promise.all([loadMcpTools(opts)]);
   const resolved: ResolvedModel = resolveModel(sel.provider, sel.model);
-  const tools = [...createBuiltinTools(opts), createSkillTool(skills, opts), ...mcpTools];
+  const tools = [...createBuiltinTools(opts), createSkillTool(skills, opts), ...mcpTools, ...createWebTools(opts)];
+  if (process.env.WAYFIND_DEBUG_EVENTS === '1') {
+    console.log(`[agent] tools: ${tools.map((t) => (t as { name: string }).name).join(', ')} (search key: ${hasSearchKey() ? 'yes' : 'no'})`);
+  }
   if (runChild) tools.push(createTaskTool(runChild, opts));
   return new Agent({
     name: 'Wayfind',

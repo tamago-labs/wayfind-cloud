@@ -11,7 +11,7 @@ import NewBotModal from './Roster/NewBotModal';
 import BotPanel, { type BotEdits } from './BotPanel';
 import Thread from './Thread';
 import Composer from './Composer';
-import { getHistory, postTask, streamRun } from '@/lib/agent';
+import { decideApproval, getHistory, postTask, streamRun } from '@/lib/agent';
 import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
@@ -132,6 +132,21 @@ export default function AppShell() {
               else msgs.push(row);
               return { ...b, msgs };
             }),
+          onApproval: (a) =>
+            patchBot(targetIndex, (b) => ({
+              ...b,
+              msgs: [
+                ...b.msgs.filter((m) => m.t !== 'typing'),
+                {
+                  t: 'ask',
+                  title: 'Approval needed',
+                  x: `${a.permission ?? 'tool'}: ${a.target ?? ''}`,
+                  ok: 'Approve',
+                  after: 'Approved — continuing.',
+                  approvalId: a.approvalId,
+                },
+              ],
+            })),
         });
         patchBot(targetIndex, (b) => ({ ...b, busy: false }));
       } catch (err) {
@@ -154,6 +169,14 @@ export default function AppShell() {
       );
       return { ...b, msgs: [...msgs, follow] };
     });
+    // Server-backed approval: tell the parked run to resume (or stop).
+    const target = bot?.msgs[msgIndex];
+    if (target && target.t === 'ask' && target.approvalId) {
+      const approvalId = target.approvalId;
+      void decideApproval(approvalId, ok ? 'approve' : 'reject').catch((err) =>
+        console.error('[AppShell] approval decision failed:', err),
+      );
+    }
   };
 
   // Returns an error message on failure, null on success.

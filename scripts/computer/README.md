@@ -25,16 +25,14 @@ PASS/FAIL (shapes, states, files — never model-output quality).
 | `02-task-text` | minimal round-trip: exact-echo output, chunk events, no approval |
 | `03-tools-readonly` | read/list/allow-listed shell; no permission blocks |
 | `04-skills` | skill catalog inject + `skill` tool load |
-| `05-approval-flow` | write parks with `{type:'approval'}` → approve completes the run; reject fails it. **SKIPs on permissive servers** (v1 default auto-allows); needs `PERMISSION_MODE=enforcing`, which currently hangs on provider idle timeout — SDK-native resume required to make it pass |
+| `05-approval-flow` | write parks with `{type:'approval'}` → approve resumes to `done` (+file written); reject terminates without writing. **SKIPs on permissive servers**; needs `PERMISSION_MODE=enforcing`. Interrupt/resume is SDK-native (RunState), so no provider hang |
+| `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
 | `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
 | `07-subagents` | `task` fan-out (one subagent per file, `toolCalls >= 3`), child failure surfaces as `done`, recursive delegation completes (4-deep cap is code-verified; watch it with `WAYFIND_DEBUG_EVENTS=1`) |
 | `08-conversation` | per-`conversationId` transcript isolation (no bleed), own-word recall, `/history` matches (wipes nothing; uses stamped test conversations) |
+| `09-search` | `webfetch` returns a live page as markdown (keyless); `websearch` answers from Exa when a key exists (`/status.search`), otherwise must say a key is missing gracefully |
 
-Stop on first FAIL (each script exits non-zero). `05` wipes the
-transcript first (stale history makes models redo old writes) and
-approves every ask on the approve path; the reject path rejects once.
-Server park timeout is `APPROVAL_TIMEOUT_MS` (default 10 min) — set
-`APPROVAL_TIMEOUT_MS=120000` for faster test failure. `05` can still
+Stop on first FAIL (each script exits non-zero). `05` approves every ask on the approve path; the reject path rejects once and asserts the file was never written. Set `APPROVAL_TIMEOUT_MS` is gone — parked runs wait indefinitely for a decision (restart the server to drop them). `05` can still
 take minutes on a slow model.
 
 ## Out of scope

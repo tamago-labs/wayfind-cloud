@@ -10,7 +10,7 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { WORKSPACE_DIR } from '../core/config.js';
 
-import { guarded, type GuardOpts } from '../core/guard.js';
+import { approvalPolicy, guarded, type GuardOpts } from '../core/guard.js';
 interface McpServerConfig {
   command?: string[];
   environment?: Record<string, string>;
@@ -129,6 +129,7 @@ export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<ty
                   .join('\n') || '(no output)'
               );
             }, opts),
+            needsApproval: approvalPolicy(`mcp:${serverName}`, () => t.name),
           }),
         );
       }

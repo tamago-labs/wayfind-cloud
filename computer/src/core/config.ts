@@ -27,8 +27,7 @@ export const PROVIDER_API_KEY = process.env.PROVIDER_API_KEY ?? keys.PROVIDER_AP
 
 export const PORT = Number(process.env.PORT ?? 8080);
 
-export function requireApiKey(): string {
-  if (!PROVIDER_API_KEY) {
+export function requireApiKey(): string {  if (!PROVIDER_API_KEY) {
     console.error('Missing PROVIDER_API_KEY — set it in .env or the workspace keystore.');
     process.exit(1);
   }

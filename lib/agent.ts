@@ -11,6 +11,16 @@ export interface HistoryMessage {
   at: string;
 }
 
+/** Resolve a parked approval. The run resumes and streams on. */
+export async function decideApproval(approvalId: string, decision: 'approve' | 'reject'): Promise<boolean> {
+  const res = await fetch(`${AGENT_URL}/approvals/${approvalId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision }),
+  });
+  return res.ok;
+}
+
 export async function postTask(text: string, conversationId?: string, system?: string): Promise<string> {
   const res = await fetch(`${AGENT_URL}/task`, {
     method: 'POST',

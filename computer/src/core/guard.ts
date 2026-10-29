@@ -1,8 +1,13 @@
-// Shared tool guard: permission check (allow/deny/ask) + doom-loop guard
+// Shared tool guard: permission check (allow/deny) + doom-loop guard
 // (3x identical tool+target in one run → stop). Runs in an
 // AsyncLocalStorage context so concurrent server runs stay isolated.
+//
+// Approvals use the SDK-native path: tools declare `needsApproval` via
+// approvalPolicy() below, the run pauses with `interruptions`, and resume
+// goes through RunState (see runs/runner.ts). `guarded()` only enforces
+// allow/deny inside execute — asks are decided before execute ever runs.
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { askCli, check, loadRules, type Action, type Rule } from './permissions.js';
+import { check, loadRules, type Action, type Rule } from './permissions.js';
 
 import { randomUUID } from 'node:crypto';
 
@@ -15,20 +20,20 @@ export interface ApprovalRequest {
 }
 
 export interface GuardOpts {
-  interactive: boolean;
   onApproval?: (approval: ApprovalRequest) => void;
-  /** Server mode: park until the frontend decides (timeout → reject). */
-  waitForDecision?: (approval: ApprovalRequest) => Promise<'approve' | 'reject'>;
-  alwaysAllow?: { permission: string; pattern: string }[];
 }
 
-const runStore = new AsyncLocalStorage<string>();
+interface RunCtx {
+  runId: string;
+  /** Child (task) runs act under the parent's delegation grant. */
+  child: boolean;
+}
+
+const runStore = new AsyncLocalStorage<RunCtx>();
 const callLogs = new Map<string, Array<{ tool: string; target: string }>>();
-const sessionAllows: Array<{ permission: string; pattern: string }> = [];
 
 /** v1 default: permissive — asks auto-allow and are logged for audit.
- * Set PERMISSION_MODE=enforcing to park on asks (requires a resume
- * transport that survives provider idle timeouts — not yet built). */
+ * Set PERMISSION_MODE=enforcing to pause on asks via SDK interruptions. */
 export function permissionMode(): 'permissive' | 'enforcing' {
   return process.env.PERMISSION_MODE === 'enforcing' ? 'enforcing' : 'permissive';
 }
@@ -38,15 +43,28 @@ function wildcard(pattern: string, value: string): boolean {
   return rx.test(value);
 }
 
-function decide(rules: Rule[], permission: string, target: string): Action {
-  for (const a of sessionAllows) {
-    if (a.permission === permission && wildcard(a.pattern, target)) return 'allow';
-  }
+export function decide(rules: Rule[], permission: string, target: string): Action {
   return check(rules, permission, target);
 }
 
-export function runWithContext<T>(runId: string, fn: () => T): T {
-  return runStore.run(runId, fn);
+/**
+ * SDK `needsApproval` policy for a tool: interrupt only when the rules say
+ * "ask" AND the server runs in enforcing mode. Child runs inherit the
+ * parent's delegation grant (the `task` spawn itself was already gated).
+ */
+export function approvalPolicy<TArgs>(
+  permission: string,
+  targetOf: (args: TArgs) => string,
+): (_ctx: unknown, input: TArgs) => Promise<boolean> {
+  return async (_ctx: unknown, input: TArgs) => {
+    if (runStore.getStore()?.child) return false;
+    if (permissionMode() !== 'enforcing') return false;
+    return decide(loadRules(), permission, targetOf(input as TArgs)) === 'ask';
+  };
+}
+
+export function runWithContext<T>(runId: string, child: boolean, fn: () => T): T {
+  return runStore.run({ runId, child }, fn);
 }
 
 /** Wrap a tool execute with permission + doom-loop checks. */
@@ -64,25 +82,12 @@ export function guarded<TArgs, TResult>(
       throw new Error(`Denied by policy: ${permission} "${target}"`);
     }
     if (action === 'ask') {
-      if (permissionMode() === 'permissive') {
-        // v1: audit only — log the ask and allow. Flip with
-        // PERMISSION_MODE=enforcing (needs a hang-proof resume transport).
-        opts.onApproval?.({ id: randomUUID(), permission, target, auto: true });
-      } else if (opts.interactive) {
-        const answer = await askCli(permission, target);
-        if (answer === 'deny') throw new Error(`Denied by user: ${permission} "${target}"`);
-        if (answer === 'always') sessionAllows.push({ permission, pattern: target });
-      } else if (opts.waitForDecision) {
-        const approval: ApprovalRequest = { id: randomUUID(), permission, target };
-        opts.onApproval?.(approval);
-        const decision = await opts.waitForDecision(approval);
-        if (decision !== 'approve') throw new Error(`Rejected: ${permission} "${target}"`);
-      } else {
-        opts.onApproval?.({ id: randomUUID(), permission, target });
-        throw new Error(`Needs approval (permissive mode is off and no resume channel): ${permission} "${target}"`);
-      }
+      // Audit only. The SDK interruption flow (needsApproval) is the sole
+      // enforcer in enforcing mode — reaching execute means this call was
+      // approved (fresh resume or auto). Permissive mode auto-allows.
+      opts.onApproval?.({ id: randomUUID(), permission, target, auto: permissionMode() === 'permissive' });
     }
-    const runId = runStore.getStore() ?? 'cli';
+    const runId = runStore.getStore()?.runId ?? 'cli';
     const log = callLogs.get(runId) ?? [];
     log.push({ tool: permission, target });
     callLogs.set(runId, log);

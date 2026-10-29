@@ -3,7 +3,7 @@
 // step they execute concurrently — that is the parallel fan-out.
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { guarded, type GuardOpts } from '../../core/guard.js';
+import { approvalPolicy, guarded, type GuardOpts } from '../../core/guard.js';
 
 export type RunChild = (text: string) => Promise<string>;
 
@@ -13,6 +13,8 @@ export function createTaskTool(runChild: RunChild, opts: GuardOpts): ReturnType<
     description:
       'Spawn a subagent for an independent work stream and wait for its result. ' +
       'Use for parallel lanes (research, setup, build) instead of serial work. ' +
+      'Write a self-contained prompt: exact workspace-relative paths, what to do, and the return shape. ' +
+      'The subagent sees only your prompt — no conversation history. ' +
       'Returns <task_result>…</task_result>.',
     parameters: z.object({
       description: z.string().describe('Short lane label, e.g. "research auth options"'),
@@ -22,5 +24,6 @@ export function createTaskTool(runChild: RunChild, opts: GuardOpts): ReturnType<
       const output = await runChild(`[${a.description}] ${a.prompt}`);
       return `<task_result>\n${output}\n</task_result>`;
     }, opts),
+    needsApproval: approvalPolicy('task', (a: { description: string }) => a.description),
   });
 }

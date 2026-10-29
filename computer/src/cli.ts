@@ -9,7 +9,8 @@ import { initProvider } from './providers/provider.js';
 import { createTriageAgent } from './agent/agent.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
 import { loadSkills } from './agent/skills.js';
-import { startRun } from './runs/runner.js';
+import { startRun, resolveApproval } from './runs/runner.js';
+import { askCli } from './core/permissions.js';
 import { run } from '@openai/agents';
 
 const AGENT_URL = process.env.AGENT_URL ?? `http://localhost:${PORT}`;
@@ -135,18 +136,27 @@ async function cmdKeys(args: string[]): Promise<void> {
 async function cmdRun(text: string): Promise<void> {
   requireApiKey();
   initProvider();
-  const r = await startRun(text, { interactive: true });
+  const r = startRun(text, {});
   // Stream the local run's events to stdout.
   let cursor = 0;
+  const asked = new Set<string>();
   for (;;) {
     while (cursor < r.events.length) {
       const e = r.events[cursor];
       cursor += 1;
       if (e.type === 'chunk' && e.chunk) process.stdout.write(e.chunk);
-      if (e.type === 'approval') console.log(`\n[approval requested: ${e.permission} "${e.target}"]`);
+      if (e.type === 'approval' && e.approvalId) console.log(`\n[approval requested: ${e.permission} "${e.target}"]`);
       if (e.type === 'error') console.error(`\n[error] ${e.error}`);
     }
     if (r.done) break;
+    if (r.parked) {
+      for (const p of r.interruptions) {
+        if (asked.has(p.id)) continue;
+        asked.add(p.id);
+        const answer = await askCli(p.permission, p.target);
+        await resolveApproval(p.id, answer === 'deny' ? 'reject' : 'approve');
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   process.stdout.write('\n');
@@ -155,7 +165,7 @@ async function cmdRun(text: string): Promise<void> {
 async function cmdChat(): Promise<void> {
   requireApiKey();
   initProvider();
-  const agent = await createTriageAgent({ interactive: true });
+  const agent = await createTriageAgent({});
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: 'you> ' });
   console.log(`Wayfind REPL (model via ${process.env.PROVIDER_BASE_URL ?? 'env'}). Empty line quits.`);
   const history: unknown[] = [];

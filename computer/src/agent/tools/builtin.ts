@@ -3,18 +3,25 @@
 // guard (allow/deny/ask + doom-loop). Use createBuiltinTools(opts).
 import { execFile } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { WORKSPACE_DIR } from '../../core/config.js';
 
-import { guarded, type GuardOpts } from '../../core/guard.js';
+import { approvalPolicy, guarded, type GuardOpts } from '../../core/guard.js';
 const ROOT = resolve(WORKSPACE_DIR);
 const MAX_OUTPUT = 20_000;
 
 function inside(p: string): string {
-  const full = resolve(ROOT, p);
-  if (full !== ROOT && !full.startsWith(ROOT + '/')) throw new Error(`Path escapes workspace: ${p}`);
+  // Models often emit `/skills`, `\skills`, or repo-rooted `workspace/skills`.
+  // Normalize to workspace-relative instead of rejecting outright.
+  const cleaned = p.replace(/^[/\\]+/, '').replace(/^workspace[/\\]/, '');
+  const full = resolve(ROOT, cleaned || '.');
+  // Separator-aware containment (ROOT + '/' breaks on Windows backslashes).
+  const rel = relative(ROOT, full);
+  if (rel !== '' && (rel.startsWith('..') || isAbsolute(rel))) {
+    throw new Error(`Path escapes workspace: ${p}`);
+  }
   return full;
 }
 
@@ -39,7 +46,7 @@ function runShell(command: string, timeoutMs?: number): Promise<string> {
 export function createBuiltinTools(opts: GuardOpts): Array<ReturnType<typeof tool>> {
   const shell = tool({
     name: 'shell',
-    description: 'Run a shell command inside the workspace (sh -c). Use for searching, running scripts, inspecting files.',
+    description: 'Run a shell command inside the workspace (sh -c). Use for running scripts and inspecting files.',
     parameters: z.object({
       command: z.string().describe('Shell command to run'),
       timeoutMs: z.number().optional().describe('Kill after this many ms (default 60000)'),
@@ -47,6 +54,7 @@ export function createBuiltinTools(opts: GuardOpts): Array<ReturnType<typeof too
     execute: guarded('shell', (a: { command: string }) => a.command, (a: { command: string; timeoutMs?: number }) =>
       runShell(a.command, a.timeoutMs),
     opts),
+    needsApproval: approvalPolicy('shell', (a: { command: string }) => a.command),
   });
 
   const read = tool({
@@ -56,6 +64,7 @@ export function createBuiltinTools(opts: GuardOpts): Array<ReturnType<typeof too
     execute: guarded('read', (a: { path: string }) => a.path, async (a: { path: string }) =>
       truncate(readFileSync(inside(a.path), 'utf8')),
     opts),
+    needsApproval: approvalPolicy('read', (a: { path: string }) => a.path),
   });
 
   const write = tool({
@@ -76,6 +85,7 @@ export function createBuiltinTools(opts: GuardOpts): Array<ReturnType<typeof too
       },
       opts,
     ),
+    needsApproval: approvalPolicy('write', (a: { path: string }) => a.path),
   });
 
   const list = tool({
@@ -87,6 +97,7 @@ export function createBuiltinTools(opts: GuardOpts): Array<ReturnType<typeof too
       const entries = readdirSync(full).map((e) => (statSync(join(full, e)).isDirectory() ? e + '/' : e));
       return truncate(entries.join('\n') || '(empty)');
     }, opts),
+    needsApproval: approvalPolicy('list', (a: { path?: string }) => a.path ?? '.'),
   });
 
   return [shell, read, write, list];

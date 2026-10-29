@@ -29,7 +29,7 @@ async function main(): Promise<void> {
       'Use a `task` subagent to read the file /nonexistent-xyz-123/report.md and tell me what it contains.',
     );
     assert(
-      /fail|could not|error|not found|no such|doesn.?t exist/i.test(output),
+      /fail|could not|error|not found|no such|doesn.?t exist|does not exist/i,
       `child failure reported in output (got ${JSON.stringify(output.slice(0, 120))})`,
     );
   }

@@ -7,7 +7,7 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { WORKSPACE_DIR } from '../core/config.js';
 
-import { guarded, type GuardOpts } from '../core/guard.js';
+import { approvalPolicy, guarded, type GuardOpts } from '../core/guard.js';
 export interface Skill {
   name: string;
   description: string;
@@ -76,5 +76,6 @@ export function createSkillTool(skills: Skill[], opts: GuardOpts): ReturnType<ty
       if (!s) return `Unknown skill "${name}". Available: ${skills.map((k) => k.name).join(', ') || '(none)'}`;
       return `# Skill: ${s.name}\n\n${s.content}`;
     }, opts),
+    needsApproval: approvalPolicy('skill', (a: { name: string }) => a.name),
   });
 }

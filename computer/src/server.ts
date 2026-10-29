@@ -3,6 +3,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
 import { permissionMode } from './core/guard.js';
+import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider } from './providers/provider.js';
 import { getRun, getHistory, listPendingApprovals, listRuns, resolveApproval, startRun } from './runs/runner.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
@@ -89,11 +90,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (pathname === '/hooks/suspend' && method === 'POST') return void json(res, 200, { ok: true });
   if (pathname === '/hooks/resume' && method === 'POST') return void json(res, 200, { ok: true });
   if (pathname === '/hooks/terminate' && method === 'POST') return void json(res, 200, { ok: true });
-
   if (pathname === '/status' && method === 'GET') {
     return void json(res, 200, {
-      ok: true,      workspace: WORKSPACE_DIR,
+      ok: true,
+      workspace: WORKSPACE_DIR,
       permissionMode: permissionMode(),
+      search: hasSearchKey(),
       provider: { baseURL: PROVIDER_BASE_URL, model: PROVIDER_MODEL },
       runs: listRuns().map((r) => ({ id: r.id, done: r.done, startedAt: r.startedAt })),
     });
@@ -112,7 +114,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (conversationId !== undefined && typeof conversationId !== 'string') {
         return void json(res, 400, { error: 'conversationId must be a string' });
       }
-      const r = await startRun(text, { interactive: false, provider, model, conversationId, system });
+      const r = startRun(text, { provider, model, conversationId, system });
       return void json(res, 202, { runId: r.id });
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
@@ -128,15 +130,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void json(res, 200, { approvals: listPendingApprovals() });
   }
 
-  const approvalMatch = pathname.match(/^\/approvals\/([A-Za-z0-9-]+)$/);
+  const approvalMatch = pathname.match(/^\/approvals\/([A-Za-z0-9_-]+)$/);
   if (approvalMatch && method === 'POST') {
     try {
       const { decision } = JSON.parse(await readBody(req)) as { decision?: string };
       if (decision !== 'approve' && decision !== 'reject') {
         return void json(res, 400, { error: 'Body must be { decision: "approve" | "reject" }' });
       }
-      const ok = resolveApproval(approvalMatch[1], decision);
-      return void json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'unknown approval' });
+      // SDK-native resume: the parked RunState continues from the interruption.
+      try {
+        const ok = await resolveApproval(approvalMatch[1], decision);
+        return void json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'unknown approval' });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[approvals] resume failed:', msg);
+        return void json(res, 500, { error: `resume failed: ${msg}` });
+      }
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
     }

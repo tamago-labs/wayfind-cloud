@@ -5,7 +5,7 @@ export type Msg =
   | { t: 'b'; x: string }
   | { t: 'tool'; x: string }
   | { t: 'typing' }
-  | { t: 'ask'; title: string; x: string; ok: string; after: string; done?: 'ok' | 'no' };
+  | { t: 'ask'; title: string; x: string; ok: string; after: string; done?: 'ok' | 'no'; approvalId?: string };
 
 export interface SeedBot {
   name: string;
