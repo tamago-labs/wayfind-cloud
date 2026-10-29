@@ -5,12 +5,17 @@ import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtim
 import { env } from "$amplify/env/wayfind-api";
 import type { Schema } from "../../data/resource";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
+import {
+  LambdaMicrovmsClient,
+  CreateMicrovmAuthTokenCommand,
+} from "@aws-sdk/client-lambda-microvms";
 import { createVerify, createPublicKey } from "crypto";
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
 Amplify.configure(resourceConfig, libraryOptions);
 const dataClient = generateClient<Schema>();
 const lambda = new LambdaClient({});
+const microvms = new LambdaMicrovmsClient({ region: process.env.AWS_REGION });
 
 /* ---------------- Cognito JWT verification (no external deps) ---------------- */
 
@@ -167,6 +172,92 @@ export const handler = async (
     }
 
     // POST /chat/message â€” Phase 4 (chat + model runtime). Honest stub.
+    // POST /runs/:id/usage - CLI usage events go to CreditLedger rows (M2).
+    // Body: { model?, provider?, durationMs?, outputChars?, toolCalls?,
+    //         tokens?: { input, output }, costPer1M?: { input, output } }.
+    // Without token counts the spend is unknown: writes a 0-delta audit row.
+    if (/\/runs\/[^/]+\/usage$/.test(path) && method === "POST") {
+      const runId = path.split("/").slice(-2, -1)[0];
+      let body: {
+        model?: string;
+        provider?: string;
+        durationMs?: number;
+        outputChars?: number;
+        toolCalls?: number;
+        tokens?: { input?: number; output?: number };
+        costPer1M?: { input?: number; output?: number };
+      } = {};
+      try {
+        body = JSON.parse(event.body ?? "{}");
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      let delta = 0;
+      const { tokens, costPer1M } = body;
+      if (
+        typeof tokens?.input === "number" &&
+        typeof tokens?.output === "number" &&
+        typeof costPer1M?.input === "number" &&
+        typeof costPer1M?.output === "number"
+      ) {
+        delta = -((tokens.input * costPer1M.input + tokens.output * costPer1M.output) / 1_000_000);
+      }
+      const reason =
+        `model usage run=${runId} provider=${body.provider ?? "?"} model=${body.model ?? "?"} ` +
+        `tokens=${tokens ? `${tokens.input ?? 0}in/${tokens.output ?? 0}out` : "unknown"} ` +
+        `tools=${body.toolCalls ?? 0} durationMs=${body.durationMs ?? 0}`;
+      const { data: entry, errors } = await dataClient.models.CreditLedger.create({
+        ownerId,
+        delta,
+        reason,
+        balanceAfter: null,
+        runId,
+      });
+      if (errors || !entry) {
+        return json(500, { error: `ledger write failed: ${JSON.stringify(errors)}` });
+      }
+      return json(200, { ok: true, ledgerId: entry.id, delta });
+    }
+
+    // POST /computer/token - mint a short-lived, port-scoped auth token for
+    // the caller's own MicroVM (browser-to-VM direct SSE). Body: { microvmId?,
+    // expirationInMinutes? (default 30, max 60), port? (default 8080) }.
+    // microvmId must match the caller's Computer row - never another account.
+    if (path.endsWith("/computer/token") && method === "POST") {
+      let body: { microvmId?: string; expirationInMinutes?: number; port?: number } = {};
+      try {
+        body = JSON.parse(event.body ?? "{}");
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
+      const computer = computers?.[0];
+      const microvmId = body.microvmId ?? computer?.microvmId;
+      if (!microvmId) {
+        return json(404, { error: "no provisioned MicroVM for this account" });
+      }
+      if (computer?.microvmId && microvmId !== computer.microvmId) {
+        return json(403, { error: "microvmId does not belong to this account" });
+      }
+      const expirationInMinutes = Math.min(Math.max(body.expirationInMinutes ?? 30, 1), 60);
+      const port = body.port ?? 8080;
+      try {
+        const out = await microvms.send(
+          new CreateMicrovmAuthTokenCommand({
+            microvmIdentifier: microvmId,
+            expirationInMinutes,
+            allowedPorts: [{ port }],
+          }),
+        );
+        const token = (out.authToken as Record<string, string> | undefined)?.["X-aws-proxy-auth"];
+        if (!token) return json(500, { error: "token mint returned no auth token" });
+        return json(200, { microvmId, authToken: token, expirationInMinutes });
+      } catch (err) {
+        console.error("[wayfind-api] token mint failed:", err);
+        return json(502, { error: "microvm token mint failed" });
+      }
+    }
+
     if (path.endsWith("/chat/message")) {
       return json(501, {
         error: "chat runtime arrives in Phase 4 (chat + model). Your Bots, account and Computer request are real; no work was run.",

@@ -5,14 +5,17 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { WORKSPACE_DIR } from './config.js';
 import { guarded, type GuardOpts } from './guard.js';
 
 interface McpServerConfig {
-  command: string[];
+  command?: string[];
   environment?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
 }
 
 interface McpJson {
@@ -85,16 +88,22 @@ export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<ty
   const servers = parsed.mcpServers ?? {};
   const tools: Array<ReturnType<typeof tool>> = [];
   for (const [serverName, cfg] of Object.entries(servers)) {
-    if (!cfg?.command?.length) {
-      console.error(`MCP server "${serverName}" has no command — skipping`);
-      continue;
-    }
-    try {
-      const transport = new StdioClientTransport({
+    let transport;
+    if (cfg?.url) {
+      transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
+        requestInit: { headers: cfg.headers ?? {} },
+      });
+    } else if (cfg?.command?.length) {
+      transport = new StdioClientTransport({
         command: cfg.command[0],
         args: cfg.command.slice(1),
         env: { ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined) as [string, string][]), ...(cfg.environment ?? {}) },
       });
+    } else {
+      console.error(`MCP server "${serverName}" needs command[] or url — skipping`);
+      continue;
+    }
+    try {
       const client = new Client({ name: 'wayfind-computer', version: '0.1.0' });
       await client.connect(transport);
       const listed = await client.listTools();

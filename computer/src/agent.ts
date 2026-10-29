@@ -16,6 +16,8 @@ const BASE_INSTRUCTIONS =
   'You have a workspace with files, a shell, and skills. Do the task, ' +
   'show your work briefly, and ask before anything irreversible ' +
   '(sending, paying, deleting, publishing). Keep replies short. ' +
+  'If the request needs no tools, answer immediately without calling any. ' +
+  'Never explore the workspace unprompted — only read or list when the task requires it. ' +
   'For independent work streams, spawn parallel `task` subagents instead of doing everything serially.';
 
 export interface AgentSelection {

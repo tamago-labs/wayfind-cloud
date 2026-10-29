@@ -74,10 +74,10 @@ export interface ResolvedModel {
 
 export function resolveModel(providerId?: string, modelId?: string): ResolvedModel {
   const catalog = loadCatalog();
-  const pid = providerId ?? catalog.defaults?.provider ?? 'openrouter';
-  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'xingchen-agi/xing4.0-29b-a4b:free';
+  const pid = providerId ?? catalog.defaults?.provider ?? 'meta';
+  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'muse-spark-1.3-contributor';
   const entry = catalog.providers?.[pid];
-  const baseURL = entry?.baseURL ?? process.env.PROVIDER_BASE_URL ?? 'https://openrouter.ai/api/v1';
+  const baseURL = entry?.baseURL ?? process.env.PROVIDER_BASE_URL ?? 'https://api.meta.ai/v1';
   const client = providerClient(pid, entry ?? { baseURL });
   const meta = entry?.models?.[mid];
   return {

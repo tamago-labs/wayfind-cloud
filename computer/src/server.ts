@@ -2,6 +2,7 @@
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './config.js';
+import { permissionMode } from './guard.js';
 import { initProvider } from './provider.js';
 import { getRun, listPendingApprovals, listRuns, resolveApproval, startRun } from './runner.js';
 import { maskedKeys, writeKey } from './keystore.js';
@@ -67,6 +68,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void json(res, 200, {
       ok: true,
       workspace: WORKSPACE_DIR,
+      permissionMode: permissionMode(),
       provider: { baseURL: PROVIDER_BASE_URL, model: PROVIDER_MODEL },
       runs: listRuns().map((r) => ({ id: r.id, done: r.done, startedAt: r.startedAt })),
     });

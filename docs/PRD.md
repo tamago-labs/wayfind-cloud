@@ -127,7 +127,7 @@ teach-by-demonstration, public Bot template marketplace.
 | Concept | Meaning |
 |---|---|
 | **Bot / Finder** | A named teammate: avatar (Finder mascot), one primary job, own memory + conversations. Data: `Bot` |
-| **Computer** | The account's one cloud computer (MicroVM sandbox), shared by all Bots: files, browser, terminal, logins. Data: `Computer` |
+| **Computer** | The account's one cloud computer (MicroVM sandbox), shared by all Bots: files, terminal, logins. Data: `Computer` |
 | **Chat** | A conversation with one Bot (or a group). Messages + tool activity + approval cards + files, in one transcript. Data: `Conversation`, `Message` |
 | **Connect app** | An account-wide connected service (Gmail, Slack…). Tokens on our backend, never in the computer/chat. Data: `ConnectedApp` |
 | **Memory** | Per-Bot durable facts/preferences/summaries; edited by messaging. Data: `Bot.memory` + `MemoryItem` |
@@ -148,7 +148,7 @@ templates aligned to the four Finders.
 ### 6.1 Landing (marketing — MeetMotes-pattern, light theme, §9)
 
 Current sections (owner-built): Hero → Problem → **How / the Computer**
-(3 animated tabs, v7: ① Teach a Bot by browser recording, ② Work together
+(3 animated tabs, v7: 1. Teach a Bot (post-v1 concept, Teach deferred), ② Work together
 on shared files, ③ Backed up & resumable — snapshots, status, restore) →
 **Models as a table** (1 included default model + BYOK providers:
 provider / model / best for / access) → **Connectors** (the old Trust
@@ -251,17 +251,17 @@ Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
 
 ### 8.1 Computer implementation plan (v7 — what the VM actually contains)
 
-- **Image:** managed AL2023 base + Node + Python + **Chromium/Playwright**
-  (browser is in v1, owner-decided) + the **wayfind CLI agent**
-  (`wayfind chat|run|skill|backup|status`) + HTTP agent server on its
+- **Image:** slim managed AL2023 base + Node + the **wayfind CLI agent**
+ (`wayfind chat|run|skill|backup|status`, no browser in v1 - v7.3)
+ + HTTP agent server on its
   endpoint. Workspace at `/workspace` (durable; everything else is
   replaceable). Hooks: `/ready` health · `/run` mint per-Computer
   identity (never at build time, §8) + pull workspace from S3 ·
   `/suspend` sync workspace → S3 + write backup record · `/terminate`
   final sync attempt.
-- **Tools the CLI gives a Bot:** shell, browser (Playwright), files,
-  `skills/<name>/SKILL.md` loader/runner. No other magic: if it isn't a
-  tool call in the transcript, it didn't happen.
+- **Tools the CLI gives a Bot:** shell, files,
+ `skills/<name>/SKILL.md` loader/runner. No other magic: if it isn't a
+ tool call in the transcript, it didn't happen.
 - **Inference:** direct from the VM (§7 box). The VM holds model keys
  in its keystore (included key provisioned at `/run`, BYOK pushed via
  the privileged backend channel); connector OAuth tokens stay on the
@@ -274,15 +274,8 @@ Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
   run history with per-run cost. Restore = point the Computer at a
   snapshot and re-sync down; restores are explicit user actions, never
   automatic.
-- **Teach (owner-decided: browser recording):** v1 records the **Bot's**
-  browser session (Playwright trace + structured action log) while it
-  performs a task. The user reviews the recording in chat and clicks
-  "Turn into skill" → compiler emits `skills/<name>/SKILL.md` (steps,
-  selectors, decision points, approval boundaries) + a replayable script
-  → test run on a safe input → user approves the skill. **Recording the
-  user demonstrating** needs interactive screen streaming and is Teach
-  v2, explicitly out of scope until then. Do not market v1 as "watch me
-  and learn" — it is "watch the Bot, keep the recipe".
+- **Teach: deferred.** v1 has no browser, so there is nothing to
+ record. Teach returns post-v1 if/when browser lands.
 - **Dropped:** browser "Sign in with Google" (and any in-VM web sign-in
   flow). Replacement is Connect Apps OAuth (§10): tokens on the backend,
   Bots never see them. Sensitive-step takeover (SSO/passkey/CAPTCHA
@@ -473,8 +466,7 @@ wired is labelled demo/illustrative on sight, or hidden.
 Near-term order (v7): **Phase 4/M0** landing honesty + fixes (Models table,
 Trust→Connectors, Enterprise tier, delete Google-sign-in tab/copy) and
 real-or-labelled app chat → **M1** MicroVM spike → **M2** Computer v1
-(CLI + direct-in-VM inference + backup panel) → **M3** browser tasks + Teach
-recording → skills. Provisioning steps for M1+ are owner/dev-run
+(CLI + direct-in-VM inference + backup panel) → **M3** skills on the Computer (Teach deferred - no browser in v1). Provisioning steps for M1+ are owner/dev-run
 (`docs/DEV-HANDOFF.md`); code lands here phase by phase and is reviewed
 before anything claims it works.
 **M0 status: DONE 2026-10-27** — Models is a table, Trust section is now
@@ -553,7 +545,7 @@ tokens never appear in chat or the Computer.
   verified; hello image → run/suspend/resume/terminate; suspend/resume
   latency + running-vs-suspended cost measured; $5 math re-derived or
   re-priced. Kill/re-scope criteria are written down before M2 starts.
-- **M2 Computer v1:** CLI agent + browser/files/terminal (§8.1),
+- **M2 Computer v1:** CLI agent + shell/files/skills (§8.1),
  direct-in-VM inference with keystore + SSE transport (v7.2, no model
  relay), gatekeeper provisioning through `computer-manager`, S3 backup
   (suspend/interval/manual) + Computer panel: status, last backup,
@@ -561,9 +553,9 @@ tokens never appear in chat or the Computer.
   Acceptance: a Repo Coder Bot works an issue to a draft PR on the
   Computer, suspends idle, resumes with state, and its workspace
   survives a terminate via backup restore.
-- **M3 Teach & skills on the Computer:** browser-session recording →
-  SKILL.md compiler → test run → approve (§8.1), then Phase 7 routines
-  may target Computer skills.
+- **M3 Skills on the Computer:** skill save/test/approve from CLI
+ sessions, then Phase 7 routines may target Computer skills.
+ (Teach browser-recording deferred - no browser in v1, §8.1.)
 
 ### Phase 7 — Skills & routines
 Save skill from a finished chat task; routines (schedule + Slack/GitHub
@@ -581,16 +573,21 @@ record billing + credit enforcement, cohort rollout by region.
 
 - [x] v7 owner decisions (2026-10-27): VM inference via cloud router —
  **superseded by v7.2 below** (kept for history);
- Teach = browser recording (Bot-session v1, user-demo v2);
+   Teach = browser recording (Bot-session v1, user-demo v2) — SUPERSEDED
+ by v7.3 (no browser in v1, Teach deferred);
  "Sign in with Google" feature dropped → Connect Apps OAuth;
- browser (Chromium/Playwright) in the VM from v1; Models section =
+ browser in the VM (Chromium/Playwright) — DROPPED entirely in v7.3; Models section =
  table with 1 included model + BYOK; Enterprise = Custom/talk-to-us;
  backups frontend-visible with snapshot restore.
 - [x] v7.2 owner decision (2026-10-29): VM-first inference — CLI calls
  providers directly from the VM (skills/MCP/keystore inside, Claude-Code-style);
  browser→VM direct SSE with API-minted tokens; no model relay;
  BYOK keys pushed to the VM keystore via the privileged channel;
- backups per-user encrypted since the keystore is in the workspace.
+  backups per-user encrypted since the keystore is in the workspace.
+- [x] v7.3 owner decision (2026-10-29): no browser in v1 — no Chromium,
+ no relay, no browser tooling. Bots work through shell, files, skills
+ and Connect Apps. Teach browser-recording deferred post-v1. Slim
+ image keeps snapshots small and resume fast.
 - [ ] Included default model identity + quota for the Models table
       (landing currently says "Muse Glimmer" — confirm or replace).
 - [ ] Owner review: landing v3 + app shell (desktop + mobile) — visual gate.
@@ -621,6 +618,11 @@ record billing + credit enforcement, cohort rollout by region.
   2026-10-27") — re-verify before any public comparison.
 
 ## 15. Changelog
+
+- 2026-10-29 (v7.3): **No browser in v1** (owner decision): no Chromium,
+ no relay, no browser tooling or Teach recording. Bots work through
+ shell, files, skills and Connect Apps. Image stays slim for fast
+ snapshots/resume. M3 re-scoped to skills (Teach deferred post-v1).
 
 - 2026-10-29 (v7.2): **VM-first inference** (owner decision, supersedes
  the v7 cloud router): CLI calls providers directly from the VM with a

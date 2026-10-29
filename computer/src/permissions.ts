@@ -1,8 +1,9 @@
 // Permissions, opencode Ruleset-lite: allow|deny|ask with wildcard patterns,
 // loaded from workspace/permissions.json (defaults below). Two ask modes:
 // - CLI (interactive): prompt on stdin (allow once / always / deny).
-// - Server (non-interactive): emit an approval event on the run stream and
-//   deny for now — pause/resume lands in P2.
+// - Server (non-interactive): permissive mode auto-allows and logs;
+//   enforcing parks until POST /approvals/:id decides (needs hang-proof
+//   resume; v1 default is permissive).
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';

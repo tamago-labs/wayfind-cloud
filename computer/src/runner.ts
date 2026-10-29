@@ -1,16 +1,17 @@
 // Run manager: background runs with chat-further SSE shapes
 // ({chunk}/{agent}/{approval}/{done}), JSONL transcript, usage metering,
-// pause/resume approvals, and child runs for `task` fan-out. Guard context
+// approvals (permissive auto-allow in v1; enforcing parks), and child runs
+// for `task` fan-out. Guard context
 // isolates concurrent runs; interactive=false (server) parks asks until
 // POST /approvals/:id decides.
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run } from '@openai/agents';
 import { PROVIDER_MODEL, WORKSPACE_DIR } from './config.js';
 import { createTriageAgent, type AgentSelection } from './agent.js';
 import { clearRunLog, runWithContext, toolCallCount, type ApprovalRequest, type GuardOpts } from './guard.js';
-import { resolveModel } from './providers.js';
+import { resolveModel, resolveSmallModel } from './providers.js';
 import { reportUsage } from './usage.js';
 
 export interface RunEvent {
@@ -20,6 +21,7 @@ export interface RunEvent {
   approvalId?: string;
   permission?: string;
   target?: string;
+  auto?: boolean;
   decision?: 'approve' | 'reject';
   output?: string;
   error?: string;
@@ -45,6 +47,29 @@ export interface PendingApproval extends ApprovalRequest {
 const runs = new Map<string, Run>();
 const pendingApprovals = new Map<string, { approval: PendingApproval; resolve: (d: 'approve' | 'reject') => void }>();
 
+/** Fan-out cap: max concurrent child runs (task tool). Extras queue. */
+const MAX_CHILD_RUNS = Number(process.env.MAX_CHILD_RUNS ?? 4);
+let activeChildren = 0;
+const childQueue: Array<() => void> = [];
+
+function acquireChildSlot(): Promise<() => void> {
+  if (activeChildren < MAX_CHILD_RUNS) {
+    activeChildren += 1;
+    return Promise.resolve(releaseChildSlot);
+  }
+  return new Promise((resolve) => {
+    childQueue.push(() => {
+      activeChildren += 1;
+      resolve(releaseChildSlot);
+    });
+  });
+}
+
+function releaseChildSlot(): void {
+  activeChildren -= 1;
+  childQueue.shift()?.();
+}
+
 const convoPath = () => join(WORKSPACE_DIR, 'conversations.jsonl');
 
 function appendTranscript(runId: string, role: string, text: string, parentId?: string): void {
@@ -55,7 +80,7 @@ function appendTranscript(runId: string, role: string, text: string, parentId?: 
   );
 }
 
-function loadHistory(limit = 20): Array<{ role: 'user' | 'assistant'; content: string }> {
+function loadHistory(limit = 20): unknown[] {
   if (!existsSync(convoPath())) return [];
   const lines = readFileSync(convoPath(), 'utf8').trim().split('\n').filter(Boolean);
   return lines
@@ -68,7 +93,15 @@ function loadHistory(limit = 20): Array<{ role: 'user' | 'assistant'; content: s
       }
     })
     .filter((m): m is { role: string; text: string } => !!m && (m.role === 'user' || m.role === 'assistant'))
-    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.text }));
+    .map((m) => ({
+      type: 'message',
+      role: m.role,
+      content: [{ type: m.role === 'user' ? 'input_text' : 'output_text', text: m.text }],
+    }));
+}
+
+function userMessage(text: string): unknown {
+  return { type: 'message', role: 'user', content: [{ type: 'input_text', text }] };
 }
 
 export function getRun(id: string): Run | undefined {
@@ -102,7 +135,7 @@ export interface StartRunOpts {
   approvalTimeoutMs?: number;
 }
 
-const APPROVAL_TIMEOUT_MS = 10 * 60_000;
+const APPROVAL_TIMEOUT_MS = Number(process.env.APPROVAL_TIMEOUT_MS ?? 10 * 60_000);
 
 function wireGuard(runId: string, opts: StartRunOpts): GuardOpts {
   return {
@@ -113,6 +146,7 @@ function wireGuard(runId: string, opts: StartRunOpts): GuardOpts {
         approvalId: a.id,
         permission: a.permission,
         target: a.target,
+        auto: a.auto ?? false,
       });
       opts.onApproval?.({ ...a, runId, requestedAt: new Date().toISOString() });
     },
@@ -144,13 +178,16 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
       { provider: opts.provider, model: opts.model },
       (childText) => runToCompletion(childText, { ...opts, parentId: runState.id }),
     );
-    const input = [...loadHistory(), { role: 'user', content: text }] as never;
+    const input = [...loadHistory(), userMessage(text)] as never;
     const stream = await runWithContext(runState.id, () => run(agent, input, { stream: true, maxTurns: 20 }));
+    const seenTypes = process.env.WAYFIND_DEBUG_EVENTS === '1' ? new Set<string>() : null;
     for await (const event of stream as unknown as Iterable<{
       type: string;
       agent?: { name: string };
       data?: { type: string; delta?: string };
+      response?: { usage?: unknown };
     }>) {
+      seenTypes?.add(event.type);
       if (event.type === 'raw_model_stream_event' && event.data?.type === 'output_text_delta' && event.data.delta) {
         runState.events.push({ type: 'chunk', chunk: event.data.delta });
       }
@@ -164,6 +201,7 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     runState.toolCalls = toolCallCount(runState.id);
     runState.events.push({ type: 'done', output: textOut });
     appendTranscript(runState.id, 'assistant', textOut, runState.parentId);
+    if (seenTypes) console.log(`[debug] stream event types: ${[...seenTypes].join(', ')}`);
     await reportUsage({
       runId: runState.id,
       model: runState.model,
@@ -187,6 +225,7 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
 }
 
 export async function startRun(text: string, opts: StartRunOpts): Promise<Run> {
+  await compactIfNeeded(opts);
   const runState: Run = {
     id: randomUUID(),
     parentId: opts.parentId,
@@ -206,18 +245,53 @@ export async function startRun(text: string, opts: StartRunOpts): Promise<Run> {
 
 /** Blocking child run for the `task` tool — returns the final output. */
 export async function runToCompletion(text: string, opts: StartRunOpts): Promise<string> {
-  const runState: Run = {
-    id: randomUUID(),
-    parentId: opts.parentId,
-    model: opts.model ?? PROVIDER_MODEL,
-    provider: opts.provider ?? 'default',
-    events: [],
-    done: false,
-    output: '',
-    toolCalls: 0,
-    startedAt: new Date().toISOString(),
-  };
-  runs.set(runState.id, runState);
-  appendTranscript(runState.id, 'user', text, runState.parentId);
-  return executeRun(runState, text, opts);
+  const release = await acquireChildSlot();
+  try {
+    const runState: Run = {
+      id: randomUUID(),
+      parentId: opts.parentId,
+      model: opts.model ?? PROVIDER_MODEL,
+      provider: opts.provider ?? 'default',
+      events: [],
+      done: false,
+      output: '',
+      toolCalls: 0,
+      startedAt: new Date().toISOString(),
+    };
+    runs.set(runState.id, runState);
+    appendTranscript(runState.id, 'user', text, runState.parentId);
+    return await executeRun(runState, text, opts);
+  } finally {
+    release();
+  }
+}
+
+/** Summarize-then-trim the transcript when it grows past budget. */
+const COMPACT_AT_CHARS = Number(process.env.COMPACT_AT_CHARS ?? 60_000);
+
+async function compactIfNeeded(opts: StartRunOpts): Promise<void> {
+  let raw: string;
+  try {
+    raw = readFileSync(convoPath(), 'utf8');
+  } catch {
+    return;
+  }
+  if (raw.length < COMPACT_AT_CHARS) return;
+  const lines = raw.trim().split('\n');
+  const keep = Math.max(10, Math.floor(lines.length * 0.3));
+  const old = lines.slice(0, lines.length - keep).join('\n');
+  const small = resolveSmallModel();
+  const summary = await runToCompletion(
+    `Summarize this agent transcript in 10 bullet lines or fewer. Keep: user goals, key findings, files changed, pending work. Transcript:\n${old.slice(0, 30_000)}`,
+    { ...opts, provider: small.providerId, model: small.modelId, parentId: undefined },
+  );
+  const kept = lines.slice(lines.length - keep);
+  writeFileSync(
+    convoPath(),
+    JSON.stringify({ runId: 'compaction', role: 'system', text: `Summary of earlier work:\n${summary}`, at: new Date().toISOString() }) +
+      '\n' +
+      kept.join('\n') +
+      '\n',
+  );
+  console.log(`[compact] transcript ${raw.length} → summary + ${keep} recent lines`);
 }

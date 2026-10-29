@@ -10,6 +10,8 @@ export interface ApprovalRequest {
   id: string;
   permission: string;
   target: string;
+  /** True when auto-allowed in permissive mode (v1 default) — audit only. */
+  auto?: boolean;
 }
 
 export interface GuardOpts {
@@ -23,6 +25,13 @@ export interface GuardOpts {
 const runStore = new AsyncLocalStorage<string>();
 const callLogs = new Map<string, Array<{ tool: string; target: string }>>();
 const sessionAllows: Array<{ permission: string; pattern: string }> = [];
+
+/** v1 default: permissive — asks auto-allow and are logged for audit.
+ * Set PERMISSION_MODE=enforcing to park on asks (requires a resume
+ * transport that survives provider idle timeouts — not yet built). */
+export function permissionMode(): 'permissive' | 'enforcing' {
+  return process.env.PERMISSION_MODE === 'enforcing' ? 'enforcing' : 'permissive';
+}
 
 function wildcard(pattern: string, value: string): boolean {
   const rx = new RegExp(`^${pattern.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
@@ -55,7 +64,11 @@ export function guarded<TArgs, TResult>(
       throw new Error(`Denied by policy: ${permission} "${target}"`);
     }
     if (action === 'ask') {
-      if (opts.interactive) {
+      if (permissionMode() === 'permissive') {
+        // v1: audit only — log the ask and allow. Flip with
+        // PERMISSION_MODE=enforcing (needs a hang-proof resume transport).
+        opts.onApproval?.({ id: randomUUID(), permission, target, auto: true });
+      } else if (opts.interactive) {
         const answer = await askCli(permission, target);
         if (answer === 'deny') throw new Error(`Denied by user: ${permission} "${target}"`);
         if (answer === 'always') sessionAllows.push({ permission, pattern: target });
@@ -66,7 +79,7 @@ export function guarded<TArgs, TResult>(
         if (decision !== 'approve') throw new Error(`Rejected: ${permission} "${target}"`);
       } else {
         opts.onApproval?.({ id: randomUUID(), permission, target });
-        throw new Error(`Needs approval — denied for now (pause/resume lands in P2): ${permission} "${target}"`);
+        throw new Error(`Needs approval (permissive mode is off and no resume channel): ${permission} "${target}"`);
       }
     }
     const runId = runStore.getStore() ?? 'cli';

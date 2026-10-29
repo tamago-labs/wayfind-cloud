@@ -85,9 +85,9 @@ Source pages: `lambda/latest/dg/microvms-getting-started`,
 - Supported **regions** (our backend is `ap-southeast-1`) and quotas.
 - **Maximum run duration** and maximum suspended duration (design assumes
   a cap exists → S3 checkpoint + relaunch regardless).
-- CPU architecture constraints for images/Chromium (ARM vs x86).
+- CPU architecture constraints for images (ARM vs x86).
 - Exact per-minute pricing → re-derive the $5 Starter math.
-- Suspend/resume **latency** with a Chromium-sized snapshot.
+- Suspend/resume **latency** with the slim real image.
 - Locked-down connector names/ARNs for minimum ingress + allowlisted
   egress; whether shell/SSH connectors exist and should stay disabled.
 - Whether the endpoint suits long streaming responses from the in-VM
@@ -115,18 +115,18 @@ and record every output in §8 of this file:
 6. Record: region used, image ARN/version, timings, any quota errors,
    and observed cost after 24h of mostly-suspended time.
 
-Only after step 6 do we commit to the real image (§5). If Chromium
-can't run or resume latency kills chat UX, M2 re-scopes to
-terminal/files first — that decision goes in §8 + PRD changelog.
+Only after step 6 do we commit to the real image (§5). Browser is out
+of v1 by decision (PRD v7.3) — no Chromium spike needed; the remaining
+M1 question is slim-image resume latency vs chat UX.
 
 ## 5. Computer image + CLI — repo-owned spec (build after M1)
 
-- `computer/` (new top-level dir): `Dockerfile` (FROM node + python +
-  Chromium/Playwright on the managed base), `agent/` (HTTP server:
-  task in → transcript events/artifacts/approval-requests out),
-  `cli/` (the `wayfind` CLI: `chat`, `run`, `skill list|run|save`,
-  `backup now|list`, `status`), `hooks/` (`ready/run/suspend/terminate`
-  handlers), `workspace/` seed (empty `/workspace` layout + README).
+- `computer/` (new top-level dir): `Dockerfile` (slim: Node + CLI on
+ the managed base — no browser in v1), `agent/` (HTTP server:
+ task in → transcript events/artifacts/approval-requests out),
+ `cli/` (the `wayfind` CLI: `chat`, `run`, `skill list|run|save`,
+ `backup now|list`, `status`), `hooks/` (`ready/run/suspend/terminate`
+ handlers), `workspace/` seed (empty `/workspace` layout + README).
 - Identity: minted in `/run` only — per-Computer token (Secrets
   Manager), computerId, ownerId injected by `computer-manager` at
   `run-microvm` time. Nothing per-user baked into the image, ever.
@@ -148,8 +148,8 @@ terminal/files first — that decision goes in §8 + PRD changelog.
   `CreditLedger` rows are written from those events. Enforceable
   because users have no shell of their own; server-side anomaly flags
   later, not hard gates now.
-- Tools exposed to the model: shell (in-VM), browser (Playwright),
-  filesystem (`/workspace`), skills. Tool activity streams to chat as
+- Tools exposed to the model: shell (in-VM), filesystem (`/workspace`),
+ skills. Tool activity streams to chat as
   transcript events; consequential actions return an **approval
   request** and block until the user decides (approval state lives
   outside the VM in `Approval`/`Run` data).
@@ -157,11 +157,11 @@ terminal/files first — that decision goes in §8 + PRD changelog.
   scripts). SKILL.md front-matter: name, whenToUse, inputs, steps,
   validation, output, approvalBoundaries. The DB `Skill` row points at
   the file; the file is the source of truth inside the Computer.
-- Teach v1: agent runs browser tasks under Playwright **trace +
-  action log**. "Turn into skill" (chat button on a finished session)
-  → compiler drafts SKILL.md + replay script → user reviews →
-  test run → approve → skill enabled. Recording a *human* demo needs
-  screen streaming: **not v1, do not build**.
+- Teach: deferred — v1 has no browser, so there is nothing to record.
+ Teach returns post-v1 if/when browser lands (then: record the Bot's
+ session → "Turn into skill" → compiler drafts SKILL.md + replay
+ script → user reviews → test run → approve). Recording a *human*
+ demo needs screen streaming: explicitly out of scope.
 
 ## 6. Backup & frontend tracking (M2)
 
@@ -178,8 +178,7 @@ terminal/files first — that decision goes in §8 + PRD changelog.
 - Restore must be tested in M2 acceptance: terminate a VM, restore
   from backup on a fresh one, files intact. Backups contain workspace
   files including the keystore — so backup buckets are encrypted
-  per-user (KMS); restores rehydrate keys. Browser profile state only
-  if M2 explicitly opts in (default: out).
+  per-user (KMS); restores rehydrate keys.
 
 ## 7. Near phases — what "cover" realistically means
 
@@ -188,8 +187,8 @@ terminal/files first — that decision goes in §8 + PRD changelog.
 | M0 honesty + landing | Models table, Trust→Connectors, Enterprise tier, remove Google-sign-in tab/copy, label/park simulated chat, add prod Google callback URLs note | No backend feature work |
 | **M0 status: DONE 2026-10-27** (`npm run build` green; `/` 150 kB, `/app` 239 kB). Remaining from M0 scope: prod Google callback URLs still localhost-only in `amplify/auth/resource.ts` — needs the real domain from the owner, code change is 2 lines when known. | | |
 | M1 spike | §4 checklist, §8 results table filled, kill/re-scope decision | No product code |
-| M2 Computer v1 | Image+CLI (§5), `computer-manager` Lambda (provision/suspend/resume/meter), gatekeeper→provisioning, backup+panel (§6), direct-in-VM inference + SSE transport | Browser *tasks* beyond smoke test; Teach; routines on Computer |
-| M3 Browser + Teach | Playwright task tools hardened, session recording → SKILL.md → test/approve, Library tab shows skills/files | Human-demo recording; takeover UI; group-chat orchestration on Computer |
+| M2 Computer v1 | Image+CLI (§5), `computer-manager` Lambda (provision/suspend/resume/meter), gatekeeper→provisioning, backup+panel (§6), direct-in-VM inference + SSE transport | Browser (none in v1); Teach (deferred); routines on Computer |
+| M3 Skills on the Computer | Skill save/test/approve from CLI sessions, Library tab shows skills/files, routine hooks land | Browser; human-demo recording; takeover UI; group-chat orchestration on Computer |
 | Later | Routines targeting the Computer, Connect Apps (OAuth) tokens brokered to CLI as tools, group chats/handoffs, billing enforcement | Scheduled only when the phase above is proven |
 
 Schema additions when their phase starts (not before): `Skill`,
@@ -207,13 +206,13 @@ routes on `wayfind-api`.
 | Question (§3) | Result | Date |
 |---|---|---|
 | Region used / available regions | `ap-southeast-1` works end-to-end (create/run/curl/suspend/resume/terminate/delete). Other regions not probed. | 2026-10-29 |
-| Image arch (Chromium ok?) | Not yet — hello image used SDK defaults (no `cpuConfigurations` set). Arch + Chromium still open. | 2026-10-29 |
-| Cold run / resume latency | Hello-world (tiny snapshot): PENDING→RUNNING **10.6s**; explicit suspend **10.5s**; explicit resume→RUNNING **10.2s**; app answered 200 after resume. Chromium-sized snapshot will be slower — re-measure on the real image. | 2026-10-29 |
+| Image arch | Hello image used SDK defaults (no `cpuConfigurations` set). No browser in v1 — no Chromium question. | 2026-10-29 |
+| Cold run / resume latency | Hello-world (tiny snapshot): PENDING→RUNNING **10.6s**; explicit suspend **10.5s**; explicit resume→RUNNING **10.2s**; app answered 200 after resume. Slim real image will be slower — re-measure then. | 2026-10-29 |
 | Max run / suspended durations observed | Not hit: test VM capped at `maximumDurationInSeconds: 14400` (4h), `suspendedDurationSeconds: 300` expiry not observed. | 2026-10-29 |
 | Cost: 1h running vs 24h suspended | Not yet — needs a ~24h mostly-suspended observation. | |
 | Connector ARNs used (ingress/egress) | Managed defaults work in `ap-southeast-1`: `arn:aws:lambda:ap-southeast-1:aws:network-connector:aws-network-connector:ALL_INGRESS` + `INTERNET_EGRESS`. | 2026-10-29 |
 | Quota limits hit | None (single tiny VM). Account memory quota for concurrent VMs still unknown. | 2026-10-29 |
-| $5-tier math still holds? (Y/N, new numbers) | Too early — needs Chromium-image resume latency + real cost numbers. | |
+| $5-tier math still holds? (Y/N, new numbers) | Too early — needs real-image resume latency + cost numbers. Slim image (no browser) helps. | |
 
 Provisioning outputs to record here when they exist: artifact bucket,
 build role ARN, image name/ARN + version, region, connector ARNs.

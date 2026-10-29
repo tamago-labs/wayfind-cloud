@@ -45,17 +45,22 @@ doom-loop guard (3× identical call stops) · keystore
 providers catalog (`providers.json`: baseURL, key source, per-model
 context + $/1M) with true per-agent providers (`OpenAIProvider`;
 Research runs the `small` entry) · key rotation (keystore arrays,
-round-robin) · `task` tool spawning linked child runs (parallel lanes
-when the model emits several calls) · pause/resume approvals (server
-parks the tool call, emits `{type:'approval', approvalId}`, `POST
-/approvals/:id` decides, 10-min timeout → reject; `GET /approvals`
-lists pending) · strict MCP schemas (JSON-Schema→zod converter) ·
-usage events carry model + cost rates (token counts need raw provider
-usage — P3).
+round-robin) · `task` tool spawning linked child runs, capped at
+`MAX_CHILD_RUNS` (default 4, extras queue) · approvals: **v1 default
+is permissive** (`PERMISSION_MODE`) — asks auto-allow and log
+`{type:'approval', auto:true}` for audit, so nothing hangs; enforcing
+mode parks (emits id, `POST /approvals/:id` decides) but needs a
+hang-proof resume transport (SDK-native, not yet built) · strict MCP schemas (JSON-Schema→zod converter; stdio +
+remote streamable-HTTP servers) · usage events with spend math when
+tokens + rates are present (this SDK surface exposes no token counts —
+run-level stats until raw provider usage is tapped) · `wayfind models`
+(OpenRouter discovery), `skill run|save`, `backup now|list` (local
+tarball; S3 sync is M2) · transcript compaction past `COMPACT_AT_CHARS`
+(small-model summary + recent tail).
 
 ## P3 next (not in this scaffold)
 
-parallel fan-out policy caps · token-level spend math · providers
-`modelsApiUrl` auto-discovery · remote MCP transports (SSE/streamable
-HTTP) · browser tool (Playwright) · backup sync (`/suspend` hook +
-timer) · Teach recording → SKILL.md.
+parallel fan-out policy beyond caps (budgets, lane priorities) ·
+provider `modelsApiUrl` auto-discovery into the catalog · remote MCP
+OAuth · `skill test` runs · S3 backup sync (`/suspend` hook + timer) ·
+browser-free Teach alternative (CLI session → SKILL.md compiler).
