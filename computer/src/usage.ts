@@ -5,9 +5,13 @@
 export interface UsageEvent {
   runId: string;
   model: string;
+  provider?: string;
   durationMs: number;
   outputChars: number;
   toolCalls: number;
+  /** $/1M tokens from providers.json. Token counts need provider raw
+   usage (P3) — until then this records the rate, not the spend. */
+  costPer1M?: { input: number; output: number };
   at: string;
 }
 

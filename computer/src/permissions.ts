@@ -19,6 +19,7 @@ const DEFAULTS: Rule[] = [
   { permission: 'read', pattern: '*', action: 'allow' },
   { permission: 'list', pattern: '*', action: 'allow' },
   { permission: 'skill', pattern: '*', action: 'allow' },
+  { permission: 'task', pattern: '*', action: 'allow' },
   { permission: 'shell', pattern: 'ls *', action: 'allow' },
   { permission: 'shell', pattern: 'cat *', action: 'allow' },
   { permission: 'shell', pattern: 'echo *', action: 'allow' },

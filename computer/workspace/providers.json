@@ -1,0 +1,13 @@
+{
+  "defaults": { "provider": "default", "model": "LongCat-2.0" },
+  "small": { "provider": "default", "model": "LongCat-2.0" },
+  "providers": {
+    "default": {
+      "baseURL": "https://api.longcat.ai/openai/v1",
+      "key": { "env": "PROVIDER_API_KEY", "keystore": "PROVIDER_API_KEY" },
+      "models": {
+        "LongCat-2.0": { "context": 128000, "cost": { "input": 0, "output": 0 } }
+      }
+    }
+  }
+}

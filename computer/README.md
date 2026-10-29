@@ -40,8 +40,22 @@ now) · usage events (log + optional `WAYFIND_API_URL` post) ·
 doom-loop guard (3× identical call stops) · keystore
 (`workspace/.wayfind/keys.json`, `wayfind keys set|list`, `POST /keys`).
 
-## P2 next (not in this scaffold)
+## P2 (shipped)
 
-parallel fan-out over sub-agents · pause/resume approvals · strict MCP
-input schemas · token-level cost accounting · key rotation · providers
-catalog (`providers.json` + per-agent model override).
+providers catalog (`providers.json`: baseURL, key source, per-model
+context + $/1M) with true per-agent providers (`OpenAIProvider`;
+Research runs the `small` entry) · key rotation (keystore arrays,
+round-robin) · `task` tool spawning linked child runs (parallel lanes
+when the model emits several calls) · pause/resume approvals (server
+parks the tool call, emits `{type:'approval', approvalId}`, `POST
+/approvals/:id` decides, 10-min timeout → reject; `GET /approvals`
+lists pending) · strict MCP schemas (JSON-Schema→zod converter) ·
+usage events carry model + cost rates (token counts need raw provider
+usage — P3).
+
+## P3 next (not in this scaffold)
+
+parallel fan-out policy caps · token-level spend math · providers
+`modelsApiUrl` auto-discovery · remote MCP transports (SSE/streamable
+HTTP) · browser tool (Playwright) · backup sync (`/suspend` hook +
+timer) · Teach recording → SKILL.md.

@@ -3,7 +3,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './config.js';
 import { initProvider } from './provider.js';
-import { getRun, listRuns, startRun } from './runner.js';
+import { getRun, listPendingApprovals, listRuns, resolveApproval, startRun } from './runner.js';
 import { maskedKeys, writeKey } from './keystore.js';
 import { loadSkills } from './skills.js';
 
@@ -74,10 +74,32 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/task' && method === 'POST') {
     try {
-      const { text } = JSON.parse(await readBody(req)) as { text?: string };
-      if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text: string }' });
-      const r = await startRun(text, { interactive: false });
+      const { text, provider, model } = JSON.parse(await readBody(req)) as {
+        text?: string;
+        provider?: string;
+        model?: string;
+      };
+      if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
+      const r = await startRun(text, { interactive: false, provider, model });
       return void json(res, 202, { runId: r.id });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  if (pathname === '/approvals' && method === 'GET') {
+    return void json(res, 200, { approvals: listPendingApprovals() });
+  }
+
+  const approvalMatch = pathname.match(/^\/approvals\/([A-Za-z0-9-]+)$/);
+  if (approvalMatch && method === 'POST') {
+    try {
+      const { decision } = JSON.parse(await readBody(req)) as { decision?: string };
+      if (decision !== 'approve' && decision !== 'reject') {
+        return void json(res, 400, { error: 'Body must be { decision: "approve" | "reject" }' });
+      }
+      const ok = resolveApproval(approvalMatch[1], decision);
+      return void json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'unknown approval' });
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
     }

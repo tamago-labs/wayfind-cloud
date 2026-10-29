@@ -1,30 +1,34 @@
 // Specialist sub-agents (chat-further handoffs pattern). The triage agent
 // hands off; each specialist runs with a narrower toolset and reports back.
-// True parallel fan-out (Promise.all over runs) lands in P2.
+// Research runs on the catalog `small` model (cheap); overrides flow through.
 import { Agent } from '@openai/agents';
-import { PROVIDER_MODEL } from './config.js';
 import type { GuardOpts } from './guard.js';
+import { resolveModel, resolveSmallModel } from './providers.js';
 import { createBuiltinTools } from './tools/builtin.js';
+import type { AgentSelection } from './agent.js';
 
-export function createResearchAgent(opts: GuardOpts): InstanceType<typeof Agent> {
-  const [read, list, shell] = createBuiltinTools(opts).filter((t) =>
-    ['read', 'list', 'shell'].includes((t as { name: string }).name),
-  );
+async function specialistModel(sel: AgentSelection, useSmall: boolean): Promise<never> {
+  const resolved = useSmall && !sel.provider && !sel.model ? resolveSmallModel() : resolveModel(sel.provider, sel.model);
+  return (await resolved.get()) as never;
+}
+
+export async function createResearchAgent(opts: GuardOpts, sel: AgentSelection = {}): Promise<InstanceType<typeof Agent>> {
+  const allowed = new Set(['read', 'list', 'shell']);
   return new Agent({
     name: 'Research',
-    model: PROVIDER_MODEL,
+    model: await specialistModel(sel, true),
     instructions:
       'You are a research specialist. Gather facts from files and the shell, ' +
       'summarize findings crisply with sources (file paths, commands run). ' +
       'You cannot write files — report back so the lead agent can act.',
-    tools: [read, list, shell].filter(Boolean),
+    tools: createBuiltinTools(opts).filter((t) => allowed.has((t as { name: string }).name)),
   });
 }
 
-export function createMcpSetupAgent(opts: GuardOpts): InstanceType<typeof Agent> {
+export async function createMcpSetupAgent(opts: GuardOpts, sel: AgentSelection = {}): Promise<InstanceType<typeof Agent>> {
   return new Agent({
     name: 'McpSetup',
-    model: PROVIDER_MODEL,
+    model: await specialistModel(sel, false),
     instructions:
       'You are an MCP setup specialist. Install and configure MCP servers: ' +
       'inspect workspace/mcp.json, add server entries, verify with list. ' +
@@ -33,6 +37,6 @@ export function createMcpSetupAgent(opts: GuardOpts): InstanceType<typeof Agent>
   });
 }
 
-export function triageHandoffs(opts: GuardOpts): Array<InstanceType<typeof Agent>> {
-  return [createResearchAgent(opts), createMcpSetupAgent(opts)];
+export async function triageHandoffs(opts: GuardOpts, sel: AgentSelection = {}): Promise<Array<InstanceType<typeof Agent>>> {
+  return [await createResearchAgent(opts, sel), await createMcpSetupAgent(opts, sel)];
 }
