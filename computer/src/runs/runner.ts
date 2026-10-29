@@ -8,10 +8,10 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run } from '@openai/agents';
-import { PROVIDER_MODEL, WORKSPACE_DIR } from './config.js';
-import { createTriageAgent, type AgentSelection } from './agent.js';
-import { clearRunLog, runWithContext, toolCallCount, type ApprovalRequest, type GuardOpts } from './guard.js';
-import { resolveModel, resolveSmallModel } from './providers.js';
+import { PROVIDER_MODEL, WORKSPACE_DIR } from '../core/config.js';
+import { createTriageAgent, type AgentSelection } from '../agent/agent.js';
+import { clearRunLog, runWithContext, toolCallCount, type ApprovalRequest, type GuardOpts } from '../core/guard.js';
+import { resolveModel, resolveSmallModel } from '../providers/providers.js';
 import { reportUsage } from './usage.js';
 
 export interface RunEvent {

@@ -4,12 +4,12 @@ import { createInterface } from 'node:readline';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PORT, PROVIDER_API_KEY, PROVIDER_BASE_URL, WORKSPACE_DIR, requireApiKey } from './config.js';
-import { initProvider } from './provider.js';
-import { createTriageAgent } from './agent.js';
-import { maskedKeys, writeKey } from './keystore.js';
-import { loadSkills } from './skills.js';
-import { startRun } from './runner.js';
+import { PORT, PROVIDER_API_KEY, PROVIDER_BASE_URL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
+import { initProvider } from './providers/provider.js';
+import { createTriageAgent } from './agent/agent.js';
+import { maskedKeys, writeKey } from './providers/keystore.js';
+import { loadSkills } from './agent/skills.js';
+import { startRun } from './runs/runner.js';
 import { run } from '@openai/agents';
 
 const AGENT_URL = process.env.AGENT_URL ?? `http://localhost:${PORT}`;

@@ -6,9 +6,9 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { dirname, join, resolve } from 'node:path';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { WORKSPACE_DIR } from '../config.js';
-import { guarded, type GuardOpts } from '../guard.js';
+import { WORKSPACE_DIR } from '../../core/config.js';
 
+import { guarded, type GuardOpts } from '../../core/guard.js';
 const ROOT = resolve(WORKSPACE_DIR);
 const MAX_OUTPUT = 20_000;
 

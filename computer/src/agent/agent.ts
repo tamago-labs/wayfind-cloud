@@ -3,9 +3,9 @@
 // specialists, and the skill catalog in the prompt. Model is resolved per
 // agent via the providers catalog (true per-agent providers, no globals).
 import { Agent } from '@openai/agents';
-import type { GuardOpts } from './guard.js';
+import type { GuardOpts } from '../core/guard.js';
 import { loadMcpTools } from './mcp.js';
-import { resolveModel, type ResolvedModel } from './providers.js';
+import { resolveModel, type ResolvedModel } from '../providers/providers.js';
 import { createSkillTool, loadSkills, skillCatalogPrompt } from './skills.js';
 import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';

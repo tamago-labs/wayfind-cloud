@@ -8,9 +8,9 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { WORKSPACE_DIR } from './config.js';
-import { guarded, type GuardOpts } from './guard.js';
+import { WORKSPACE_DIR } from '../core/config.js';
 
+import { guarded, type GuardOpts } from '../core/guard.js';
 interface McpServerConfig {
   command?: string[];
   environment?: Record<string, string>;

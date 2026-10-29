@@ -1,12 +1,12 @@
 // Agent HTTP + SSE server. Serves the browser direct (SSE) and the
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './config.js';
-import { permissionMode } from './guard.js';
-import { initProvider } from './provider.js';
-import { getRun, listPendingApprovals, listRuns, resolveApproval, startRun } from './runner.js';
-import { maskedKeys, writeKey } from './keystore.js';
-import { loadSkills } from './skills.js';
+import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
+import { permissionMode } from './core/guard.js';
+import { initProvider } from './providers/provider.js';
+import { getRun, listPendingApprovals, listRuns, resolveApproval, startRun } from './runs/runner.js';
+import { maskedKeys, writeKey } from './providers/keystore.js';
+import { loadSkills } from './agent/skills.js';
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });

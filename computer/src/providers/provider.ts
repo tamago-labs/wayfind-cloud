@@ -2,7 +2,7 @@
 // pointed at env instead of Amplify secrets).
 import OpenAI from 'openai';
 import { setDefaultOpenAIClient, setTracingDisabled } from '@openai/agents';
-import { PROVIDER_API_KEY, PROVIDER_BASE_URL } from './config.js';
+import { PROVIDER_API_KEY, PROVIDER_BASE_URL } from '../core/config.js';
 
 let ready = false;
 

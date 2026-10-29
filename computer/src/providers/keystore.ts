@@ -3,7 +3,7 @@
 // machine) or POST /keys (privileged backend channel only — P2 adds auth).
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { WORKSPACE_DIR } from './config.js';
+import { WORKSPACE_DIR } from '../core/config.js';
 
 export const KEYSTORE_PATH = join(WORKSPACE_DIR, '.wayfind', 'keys.json');
 

@@ -5,9 +5,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { WORKSPACE_DIR } from './config.js';
-import { guarded, type GuardOpts } from './guard.js';
+import { WORKSPACE_DIR } from '../core/config.js';
 
+import { guarded, type GuardOpts } from '../core/guard.js';
 export interface Skill {
   name: string;
   description: string;

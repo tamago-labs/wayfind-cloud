@@ -5,12 +5,12 @@ POST + SSE so the browser talks to the VM directly (PRD v7.2).
 
 ## Layout
 
-- `src/agent.ts` — triage agent (single env model, P0)
-- `src/tools/builtin.ts` — shell/read/write/list (permission gating in P1)
-- `src/runner.ts` — background runs, chat-further SSE shapes, JSONL transcript
-- `src/server.ts` — HTTP: `/task`, `/stream/:runId`, `/status`, `/ready`, `/hooks/*`
-- `src/cli.ts` — `wayfind chat|run|status`
-- `workspace/` — seed: `skills/example/SKILL.md`, `mcp.json` (P1 wires both)
+- `src/server.ts`, `src/cli.ts` — entry points (HTTP/SSE runtime, operator CLI)
+- `src/core/` — `config.ts`, `guard.ts`, `permissions.ts` (env, approval context, prompt rules)
+- `src/agent/` — `agent.ts`, `subagents.ts`, `skills.ts`, `mcp.ts`, `tools/` (builtins, `task`)
+- `src/providers/` — `provider.ts`, `providers.ts`, `keystore.ts` (model access + keys)
+- `src/runs/` — `runner.ts`, `usage.ts` (run lifecycle + metering)
+- `workspace/` — seed: `skills/example/SKILL.md`, `mcp.json`
 
 ## Run locally
 

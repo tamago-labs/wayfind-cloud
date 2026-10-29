@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OpenAIProvider } from '@openai/agents-openai';
-import { WORKSPACE_DIR } from './config.js';
+import { WORKSPACE_DIR } from '../core/config.js';
 import { drawKey } from './keystore.js';
 
 export interface ModelCost {

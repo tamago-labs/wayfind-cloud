@@ -2,8 +2,8 @@
 // hands off; each specialist runs with a narrower toolset and reports back.
 // Research runs on the catalog `small` model (cheap); overrides flow through.
 import { Agent } from '@openai/agents';
-import type { GuardOpts } from './guard.js';
-import { resolveModel, resolveSmallModel } from './providers.js';
+import type { GuardOpts } from '../core/guard.js';
+import { resolveModel, resolveSmallModel } from '../providers/providers.js';
 import { createBuiltinTools } from './tools/builtin.js';
 import type { AgentSelection } from './agent.js';
 

@@ -3,7 +3,7 @@
 // step they execute concurrently — that is the parallel fan-out.
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { guarded, type GuardOpts } from '../guard.js';
+import { guarded, type GuardOpts } from '../../core/guard.js';
 
 export type RunChild = (text: string) => Promise<string>;
 
