@@ -1,0 +1,12 @@
+// Minimal HTTP server — listens on port 8080
+// (from https://docs.aws.amazon.com/lambda/latest/dg/microvms-getting-started.html)
+const http = require('http');
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ok', path: req.url }));
+});
+
+server.listen(8080, () => {
+  console.log('Listening on port 8080');
+});

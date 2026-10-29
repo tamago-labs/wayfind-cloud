@@ -6,7 +6,7 @@ without reading chat history. Product truth and phase gates live in
 `docs/PRD.md` (v7). This file is the engineering companion: update it as
 facts land (especially M1 spike results), and tick items off here.
 
-Last updated: 2026-10-27 · Companion to PRD v7
+Last updated: 2026-10-29 · Companion to PRD v7
 **AWS Lambda / MicroVM provisioning is done separately by the owner/dev.**
 Nothing in this repo has been run against a real MicroVM yet.
 
@@ -191,17 +191,24 @@ routes on `wayfind-api`.
 
 | Question (§3) | Result | Date |
 |---|---|---|
-| Region used / available regions | | |
-| Image arch (Chromium ok?) | | |
-| Cold run / resume latency | | |
-| Max run / suspended durations observed | | |
-| Cost: 1h running vs 24h suspended | | |
-| Connector ARNs used (ingress/egress) | | |
-| Quota limits hit | | |
-| $5-tier math still holds? (Y/N, new numbers) | | |
+| Region used / available regions | `ap-southeast-1` works end-to-end (create/run/curl/suspend/resume/terminate/delete). Other regions not probed. | 2026-10-29 |
+| Image arch (Chromium ok?) | Not yet — hello image used SDK defaults (no `cpuConfigurations` set). Arch + Chromium still open. | 2026-10-29 |
+| Cold run / resume latency | Hello-world (tiny snapshot): PENDING→RUNNING **10.6s**; explicit suspend **10.5s**; explicit resume→RUNNING **10.2s**; app answered 200 after resume. Chromium-sized snapshot will be slower — re-measure on the real image. | 2026-10-29 |
+| Max run / suspended durations observed | Not hit: test VM capped at `maximumDurationInSeconds: 14400` (4h), `suspendedDurationSeconds: 300` expiry not observed. | 2026-10-29 |
+| Cost: 1h running vs 24h suspended | Not yet — needs a ~24h mostly-suspended observation. | |
+| Connector ARNs used (ingress/egress) | Managed defaults work in `ap-southeast-1`: `arn:aws:lambda:ap-southeast-1:aws:network-connector:aws-network-connector:ALL_INGRESS` + `INTERNET_EGRESS`. | 2026-10-29 |
+| Quota limits hit | None (single tiny VM). Account memory quota for concurrent VMs still unknown. | 2026-10-29 |
+| $5-tier math still holds? (Y/N, new numbers) | Too early — needs Chromium-image resume latency + real cost numbers. | |
 
 Provisioning outputs to record here when they exist: artifact bucket,
 build role ARN, image name/ARN + version, region, connector ARNs.
+
+Recorded 2026-10-29 (hello-world spike, since cleaned up):
+- Account `057386374967`, region `ap-southeast-1`
+- Bucket `wayfind-microvm-artifacts-ap-southeast-1`, key `microvm-artifacts/wayfind-hello.zip` (762 bytes)
+- Image `arn:aws:lambda:ap-southeast-1:057386374967:microvm-image:wayfind-hello` v1.0 (build: CREATING→CREATED across two 15s polls)
+- Test VM `microvm-43ae7eb8-0053-3da7-92cc-872fa43a198d`, endpoint `*.lambda-microvm.ap-southeast-1.on.aws`, terminated + image deleted after
+- SDK notes: `GetMicrovmImage`/`DeleteMicrovmImage` require the full ARN (bare name → `ValidationException`); deleted images/terminated VMs 404 on get (treat as done — scripts handle both).
 
 ## 9. Guardrails (apply to every phase)
 
