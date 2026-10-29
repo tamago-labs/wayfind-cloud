@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import Markdown from './Markdown';
 import type { Msg, SeedBot } from './seed';
 
 interface ThreadProps {
@@ -66,7 +67,7 @@ export default function Thread({ bot, onApprove }: ThreadProps) {
           if (m.t === 'b') {
             return (
               <div key={i} className="msg-in max-w-[85%] rounded-2xl rounded-bl-sm bg-white px-4 py-2.5 text-navy shadow-sm">
-                {m.x}
+                <Markdown text={m.x} />
               </div>
             );
           }

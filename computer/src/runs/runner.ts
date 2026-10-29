@@ -189,7 +189,7 @@ export interface StartRunOpts {
   depth?: number;
   /** Conversation scope (frontend Bot id). Isolates transcript history per bot. */
   conversationId?: string;
-  /** System brief for a fresh conversation (bot role/job). Sent once. */
+  /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
   onApproval?: (approval: PendingApproval) => void;
   approvalTimeoutMs?: number;
@@ -247,19 +247,14 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     };
     const agent = await createTriageAgent(guardOpts, { provider: opts.provider, model: opts.model }, runChild);
     // History isolation: children get ONLY their prompt. Top-level runs load
-    // their conversation's history; a `system` brief is prepended once for
-    // fresh conversations and persisted so later turns keep it.
+    // their conversation's history. The bot brief (`opts.system`) is prepended
+    // to the live input on EVERY turn (bracketed context) but never persisted,
+    // so the transcript and /history stay clean. (A system-role message was
+    // tried; the model refuses system-assigned identity but accepts the same
+    // brief as user-turn context.)
     const history = runState.parentId ? [] : loadHistory(opts.conversationId);
-    if (!runState.parentId && opts.system && history.length === 0) {
-      const sys = {
-        type: 'message',
-        role: 'system',
-        content: [{ type: 'input_text', text: opts.system }],
-      } as never;
-      history.unshift(sys);
-      appendTranscript(runState.id, 'system', opts.system, undefined, opts.conversationId);
-    }
-    const input = (runState.parentId ? [userMessage(text)] : [...history, userMessage(text)]) as never;
+    const liveText = !runState.parentId && opts.system ? `[${opts.system}]\n\n${text}` : text;
+    const input = (runState.parentId ? [userMessage(text)] : [...history, userMessage(liveText)]) as never;
     const stream = await runWithContext(runState.id, () => run(agent, input, { stream: true, maxTurns: 20 }));
     const seenTypes = process.env.WAYFIND_DEBUG_EVENTS === '1' ? new Set<string>() : null;
     for await (const event of stream as unknown as Iterable<{

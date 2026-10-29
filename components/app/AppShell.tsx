@@ -266,7 +266,7 @@ export default function AppShell() {
             </button>
           </div>
         </main>
-        <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} />
+        <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} taken={bots.map((b) => b.name)} />
       </div>
     );
   }
@@ -340,7 +340,7 @@ export default function AppShell() {
         onSave={saveBotEdits}
         onDelete={deleteBot}
       />
-      <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} />
+      <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} taken={bots.map((b) => b.name)} />
     </div>
   );
 }

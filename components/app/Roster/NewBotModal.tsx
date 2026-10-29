@@ -8,18 +8,43 @@ interface NewBotModalProps {
   open: boolean;
   onClose: () => void;
   onCreate: (name: string) => Promise<string | null>;
+  taken?: string[];
 }
 
-export default function NewBotModal({ open, onClose, onCreate }: NewBotModalProps) {
+/** Theme-flavored name pool (nature + color tokens from the landing palette). */
+const NAME_POOL = [
+  'Amber',
+  'Moss',
+  'Lagoon',
+  'Ash',
+  'Reef',
+  'Dune',
+  'Bay',
+  'Kelp',
+  'Fern',
+  'Tide',
+  'Wren',
+  'Nimbus',
+];
+
+function randomName(taken: string[]): string {
+  const lower = new Set(taken.map((t) => t.toLowerCase()));
+  const free = NAME_POOL.filter((n) => !lower.has(n.toLowerCase()));
+  const pool = free.length > 0 ? free : NAME_POOL;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+export default function NewBotModal({ open, onClose, onCreate, taken = [] }: NewBotModalProps) {
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setName('');
+      setName(randomName(taken));
       setError(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
@@ -69,17 +94,28 @@ export default function NewBotModal({ open, onClose, onCreate }: NewBotModalProp
             <div className="p-5">
               <h3 className="font-brico text-lg font-bold text-navy">Name your Bot</h3>
               <p className="mt-1 text-sm text-heroslate">Give it a name — you&rsquo;ll define its job in your first message.</p>
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void create();
-                }}
-                placeholder="e.g. Amber"
-                maxLength={40}
-                className="mt-4 w-full rounded-xl border border-navy/15 bg-ice px-4 py-2.5 text-sm text-navy outline-none placeholder:text-heroslate/60 focus:border-cta"
-              />
+              <div className="mt-4 flex gap-2">
+                <input
+                  autoFocus
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void create();
+                  }}
+                  placeholder="e.g. Amber"
+                  maxLength={40}
+                  className="min-w-0 flex-1 rounded-xl border border-navy/15 bg-ice px-4 py-2.5 text-sm text-navy outline-none placeholder:text-heroslate/60 focus:border-cta"
+                />
+                <button
+                  type="button"
+                  onClick={() => setName(randomName(taken))}
+                  title="Suggest another name"
+                  aria-label="Suggest another name"
+                  className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-xl border border-navy/15 bg-ice text-lg text-navy hover:border-cta"
+                >
+                  🎲
+                </button>
+              </div>
               {error && (
                 <p className="mt-2 text-sm font-medium text-red-600" role="alert">
                   {error}

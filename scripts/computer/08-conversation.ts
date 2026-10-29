@@ -36,6 +36,26 @@ async function main(): Promise<void> {
   assert(textsB.includes('beta-berry'), 'history B contains its own turns');
   assert(!textsB.includes('alpha-apple'), 'history B has no bleed from A');
 
+  // Name injection: the bot brief rides as bracketed user-turn context
+  // (the model refuses system-assigned identity). Same stamp, new conversation.
+  const convC = `test-conv-c-${stamp}`;
+  const c1 = await runToDone('Reply with exactly: ready', 600_000, 3, {
+    conversationId: convC,
+    system: 'You are TestBot. Role: kitchen helper.',
+  });
+  assert(c1.output.trim() === 'ready', `name-brief turn exact (got ${JSON.stringify(c1.output.trim())})`);
+  const c2 = await runToDone('What is your name? Reply with only the name.', 600_000, 3, {
+    conversationId: convC,
+    system: 'You are TestBot. Role: kitchen helper.',
+  });
+  assert(c2.output.trim() === 'TestBot', `bot knows its name (got ${JSON.stringify(c2.output.trim())})`);
+  // Transcript stays clean: no bracketed brief persisted.
+  const histC = await getHistory(convC);
+  assert(
+    histC.every((m) => !m.text.startsWith('[')),
+    'history has no persisted brief prefix',
+  );
+
   console.log('08-conversation: PASS');
 }
 
