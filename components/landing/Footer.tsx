@@ -19,7 +19,7 @@ export default function Footer() {
           illustrative until real Bots are running. Planned pricing is not on sale yet. Nothing here
           promises an always-on computer — it suspends when idle and checkpoints its work.
         </p>
-        <p className="text-[12px] text-heroslate mt-3">© 2026 Tamago Labs · Wayfind Cloud</p>
+        <p className="text-[12px] text-heroslate mt-3">© 2026 Tamago Labs</p>
       </div>
     </footer>
   );

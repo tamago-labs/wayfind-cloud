@@ -63,12 +63,12 @@ function AuthHeader() {
   const { tokens } = useTheme();
   return (
     <View textAlign="center" padding={tokens.space.large}>
-      <Link href="/" aria-label="Back to Wayfind Cloud home">
+      <Link href="/" aria-label="Back to Wayfind home">
       <View style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
         <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-[#0E1B2C]">
-          <Mascot color="white" size="xs" motion="none" label="Wayfind Cloud mascot" />
+          <Mascot color="white" size="xs" motion="none" label="Wayfind mascot" />
         </span>
-        <span className="font-brico text-lg font-bold text-navy">Wayfind Cloud</span>
+        <span className="font-brico text-lg font-bold text-navy">Wayfind</span>
       </View>
       </Link>
       <Text color="#38506B" marginTop={tokens.space.small}>Sign in to meet your Bots.</Text>

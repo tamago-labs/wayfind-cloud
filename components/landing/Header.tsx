@@ -8,7 +8,7 @@ import Mascot from '@/components/Mascot';
 
 // Nav anchors: #how #models #connectors #pricing #faq (plus #problem section, unlinked).
 const navLinks = [
-  { href: '/#how', label: 'How it works' },
+  { href: '/#how', label: 'The Computer' },
   { href: '/#models', label: 'Models' },
   { href: '/#connectors', label: 'Connectors' },
   { href: '/#pricing', label: 'Pricing' },
@@ -19,10 +19,10 @@ export function Logo() {
   return (
     <Link href="/" className="flex items-center gap-2.5 shrink-0">
       <span className="grid h-9 w-9 place-items-center rounded-lg bg-navy">
-        <Mascot color="white" size="xs"  motion="none" label="Wayfind Cloud mascot" />
+        <Mascot color="white" size="xs"  motion="none" label="Wayfind mascot" />
       </span>
       <span className="font-brico text-lg font-bold text-navy">
-        Wayfind Cloud
+        Wayfind
       </span>
     </Link>
   );
