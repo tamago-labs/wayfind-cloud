@@ -1,17 +1,22 @@
-// Run manager: starts agent runs in the background, collects the
-// chat-further SSE event shapes ({chunk}/{agent}/{done}), persists the
-// transcript as JSONL. P1 adds usage events + approvals on top.
+// Run manager: starts agent runs in the background, collects chat-further
+// SSE event shapes ({chunk}/{agent}/{approval}/{done}), persists the
+// transcript as JSONL, and reports usage. Guard context isolates concurrent
+// runs; interactive=false (server) turns asks into approval events.
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { run } from '@openai/agents';
 import { PROVIDER_MODEL, WORKSPACE_DIR } from './config.js';
 import { createTriageAgent } from './agent.js';
+import { clearRunLog, runWithContext, toolCallCount, type GuardOpts } from './guard.js';
+import { reportUsage } from './usage.js';
 
 export interface RunEvent {
-  type: 'chunk' | 'agent' | 'done' | 'error';
+  type: 'chunk' | 'agent' | 'approval' | 'done' | 'error';
   chunk?: string;
   agent?: string;
+  permission?: string;
+  target?: string;
   output?: string;
   error?: string;
 }
@@ -22,6 +27,7 @@ export interface Run {
   events: RunEvent[];
   done: boolean;
   output: string;
+  toolCalls: number;
   startedAt: string;
 }
 
@@ -57,17 +63,41 @@ export function listRuns(): Run[] {
   return [...runs.values()].slice(-20);
 }
 
-export async function startRun(text: string): Promise<Run> {
+export interface StartRunOpts {
+  interactive: boolean;
+  onApproval?: (permission: string, target: string) => void;
+}
+
+export async function startRun(text: string, opts: StartRunOpts): Promise<Run> {
   const id = randomUUID();
-  const runState: Run = { id, model: PROVIDER_MODEL, events: [], done: false, output: '', startedAt: new Date().toISOString() };
+  const startedAt = Date.now();
+  const guardOpts: GuardOpts = {
+    interactive: opts.interactive,
+    onApproval: (permission, target) => {
+      const r = runs.get(id);
+      r?.events.push({ type: 'approval', permission, target });
+      opts.onApproval?.(permission, target);
+    },
+  };
+  const runState: Run = {
+    id,
+    model: PROVIDER_MODEL,
+    events: [],
+    done: false,
+    output: '',
+    toolCalls: 0,
+    startedAt: new Date(startedAt).toISOString(),
+  };
   runs.set(id, runState);
   appendTranscript(id, 'user', text);
 
   void (async () => {
     try {
-      const agent = createTriageAgent();
+      const agent = await createTriageAgent(guardOpts);
       const input = [...loadHistory(), { role: 'user', content: text }] as never;
-      const stream = await run(agent, input, { stream: true, maxTurns: 20 });
+      const stream = await runWithContext(id, () =>
+        run(agent, input, { stream: true, maxTurns: 20 }),
+      );
       for await (const event of stream as unknown as Iterable<{
         type: string;
         agent?: { name: string };
@@ -83,14 +113,24 @@ export async function startRun(text: string): Promise<Run> {
       const output = (stream as unknown as { finalOutput?: unknown }).finalOutput;
       const textOut = typeof output === 'string' ? output : JSON.stringify(output ?? '');
       runState.output = textOut;
+      runState.toolCalls = toolCallCount(id);
       runState.events.push({ type: 'done', output: textOut });
       appendTranscript(id, 'assistant', textOut);
+      await reportUsage({
+        runId: id,
+        model: PROVIDER_MODEL,
+        durationMs: Date.now() - startedAt,
+        outputChars: textOut.length,
+        toolCalls: runState.toolCalls,
+        at: new Date().toISOString(),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       runState.events.push({ type: 'error', error: msg });
       appendTranscript(id, 'system', `error: ${msg}`);
     } finally {
       runState.done = true;
+      clearRunLog(id);
     }
   })();
 

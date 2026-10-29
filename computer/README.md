@@ -30,8 +30,18 @@ $run = Invoke-RestMethod -Method Post -Uri http://localhost:8080/task `
 curl.exe -N "http://localhost:8080/stream/$($run.runId)"
 ```
 
-## P1 next (not in this scaffold)
+## P1 (shipped)
 
-handoffs sub-agents · skills loader · MCP stdio client · allow/deny/ask
-permissions + approval events · usage events → `POST /runs/:id/usage` ·
-doom-loop guard · keystore (`workspace/.wayfind/keys.json`).
+handoffs sub-agents (Research, McpSetup) · skills loader (`SKILL.md`
+catalog + `skill` tool) · MCP stdio client (workspace/mcp.json, open
+input schemas) · allow/deny/ask permissions (`permissions.json`) +
+approval events on the stream (CLI prompts inline; server denies for
+now) · usage events (log + optional `WAYFIND_API_URL` post) ·
+doom-loop guard (3× identical call stops) · keystore
+(`workspace/.wayfind/keys.json`, `wayfind keys set|list`, `POST /keys`).
+
+## P2 next (not in this scaffold)
+
+parallel fan-out over sub-agents · pause/resume approvals · strict MCP
+input schemas · token-level cost accounting · key rotation · providers
+catalog (`providers.json` + per-agent model override).

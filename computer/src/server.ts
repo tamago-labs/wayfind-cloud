@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './config.js';
 import { initProvider } from './provider.js';
 import { getRun, listRuns, startRun } from './runner.js';
+import { maskedKeys, writeKey } from './keystore.js';
+import { loadSkills } from './skills.js';
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -74,11 +76,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       const { text } = JSON.parse(await readBody(req)) as { text?: string };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text: string }' });
-      const r = await startRun(text);
+      const r = await startRun(text, { interactive: false });
       return void json(res, 202, { runId: r.id });
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
     }
+  }
+
+  // Privileged key-write channel (backend only in production — P2 adds auth).
+  if (pathname === '/keys' && method === 'POST') {
+    try {
+      const { name, value } = JSON.parse(await readBody(req)) as { name?: string; value?: string };
+      if (!name || !value) return void json(res, 400, { error: 'Body must be { name, value }' });
+      writeKey(name, value);
+      return void json(res, 200, { ok: true, keys: maskedKeys() });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  if (pathname === '/skills' && method === 'GET') {
+    return void json(res, 200, {
+      skills: loadSkills().map((s) => ({ name: s.name, description: s.description })),
+    });
   }
 
   const streamMatch = pathname.match(/^\/stream\/([A-Za-z0-9-]+)$/);
