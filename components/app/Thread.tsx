@@ -73,9 +73,16 @@ export default function Thread({ bot, onApprove, onAnswer }: ThreadProps) {
             );
           }
           if (m.t === 'tool') {
+            const dot = m.x.endsWith('failed')
+              ? 'bg-red-500'
+              : m.x.endsWith('finished')
+                ? 'bg-blagoon'
+                : m.x.endsWith('started')
+                  ? 'bg-bamber animate-pulse'
+                  : 'bg-blagoon';
             return (
               <div key={i} className="msg-in flex items-center gap-2 px-1 text-xs font-semibold text-heroslate">
-                <i className="h-1.5 w-1.5 rounded-full bg-blagoon" />
+                <i className={`h-1.5 w-1.5 rounded-full ${dot}`} />
                 <span>{m.x}</span>
               </div>
             );

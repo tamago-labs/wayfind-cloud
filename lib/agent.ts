@@ -6,7 +6,7 @@
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
 
 export interface HistoryMessage {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   text: string;
   at: string;
 }
@@ -80,7 +80,11 @@ export async function streamRun(runId: string, handlers: StreamHandlers, timeout
         } else if (e.type === 'agent' && typeof e.agent === 'string') {
           handlers.onAgent?.(e.agent);
         } else if (e.type === 'approval' && typeof e.approvalId === 'string') {
-          handlers.onApproval?.({ approvalId: e.approvalId as string });
+          handlers.onApproval?.({
+            approvalId: e.approvalId as string,
+            permission: typeof e.permission === 'string' ? (e.permission as string) : undefined,
+            target: typeof e.target === 'string' ? (e.target as string) : undefined,
+          });
         } else if (e.type === 'question' && typeof e.qid === 'string' && Array.isArray(e.questions)) {
           handlers.onQuestion?.({
             qid: e.qid as string,

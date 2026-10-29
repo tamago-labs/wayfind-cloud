@@ -162,7 +162,9 @@ interface HistoryLine {
   at: string;
 }
 
-/** Transcript lines for one conversation (user/assistant only). Display log. */
+/** Transcript lines for one conversation (user/assistant/tool only).
+ * Child runs (parentId set) are internal — their oriented prompts and raw
+ * outputs stay in the raw JSONL for audit but never render as chat. */
 export function getHistory(conversationId: string): HistoryLine[] {
   let raw: string;
   try {
@@ -179,9 +181,11 @@ export function getHistory(conversationId: string): HistoryLine[] {
         text?: string;
         at?: string;
         conversationId?: string;
+        parentId?: string;
       };
       if (m.conversationId !== conversationId) continue;
-      if ((m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string') {
+      if (m.parentId !== undefined) continue; // child run — internal
+      if ((m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && typeof m.text === 'string') {
         out.push({ role: m.role, text: m.text, at: m.at ?? '' });
       }
     } catch {
@@ -191,11 +195,13 @@ export function getHistory(conversationId: string): HistoryLine[] {
   return out;
 }
 
-/** Seed a fresh session from the existing display transcript (upgrade path). */
+/** Seed a fresh session from the existing display transcript (upgrade path).
+ * Tool-activity rows are display-only — never fed back as model input. */
 function seedFor(conversationId: string | undefined): unknown[] {
   if (!conversationId || seeded.has(conversationId)) return [];
   seeded.add(conversationId);
   return getHistory(conversationId)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
     .slice(-20)
     .map((m) => ({
       type: 'message',
@@ -282,10 +288,16 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
   return true;
 }
 
-/** Audit hook: permissive auto-allows surface as approval events. */
+/** Audit hook: permissive auto-allows are logged server-side only (never
+ * surfaced as approval cards — there is nothing to decide). Enforcing
+ * interruptions arrive as real approval events via driveStream. */
 function auditTo(runId: string): GuardOpts {
   return {
     onApproval: (a) => {
+      if (a.auto) {
+        console.log(`[auto-allow] run ${runId}: ${a.permission} "${a.target}"`);
+        return;
+      }
       runs.get(runId)?.events.push({
         type: 'approval',
         approvalId: a.id,
@@ -361,7 +373,8 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
         `Prefer your read/list/glob/grep/skill tools over shell for inspection. Report paths tried plus the result.\n\nTask:\n\n${req.prompt}`
       : req.prompt;
     const label = req.description;
-    runState.events.push({ type: 'agent', agent: `task:${req.subagentType} ${label} ${fresh ? 'started' : 'resumed'}` });
+    runState.events.push({ type: 'agent', agent: `Subagent · ${label} — ${fresh ? 'started' : 'resumed'}` });
+    appendTranscript(runState.id, 'tool', `Subagent · ${label} — ${fresh ? 'started' : 'resumed'}`, runState.parentId, runState.conversationId);
     try {
       const { output, taskId } = await runToCompletion(text, {
         provider: runState.sel.provider,
@@ -372,10 +385,12 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
         subagentType: req.subagentType,
         resumeTaskId: fresh ? undefined : req.taskId,
       });
-      runState.events.push({ type: 'agent', agent: `task:${req.subagentType} ${label} finished` });
+      runState.events.push({ type: 'agent', agent: `Subagent · ${label} — finished` });
+      appendTranscript(runState.id, 'tool', `Subagent · ${label} — finished`, runState.parentId, runState.conversationId);
       return { output, taskId };
     } catch (err) {
-      runState.events.push({ type: 'agent', agent: `task:${req.subagentType} ${label} failed` });
+      runState.events.push({ type: 'agent', agent: `Subagent · ${label} — failed` });
+      appendTranscript(runState.id, 'tool', `Subagent · ${label} — failed`, runState.parentId, runState.conversationId);
       throw err;
     }
   };
@@ -399,6 +414,7 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
     }
     if (event.type === 'agent_updated_stream_event' && event.agent) {
       runState.events.push({ type: 'agent', agent: event.agent.name });
+      appendTranscript(runState.id, 'tool', event.agent.name, runState.parentId, runState.conversationId);
     }
   }
   const result = stream as unknown as {

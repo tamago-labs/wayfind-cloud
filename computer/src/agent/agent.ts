@@ -35,6 +35,9 @@ export interface AgentSelection {
 /** Tools unavailable to read-only research subagents. */
 const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question']);
 
+/** Logged once per process so a boot line proves which code is live. */
+let loggedTools = false;
+
 export async function createTriageAgent(
   opts: GuardOpts,
   sel: AgentSelection = {},
@@ -50,10 +53,13 @@ export async function createTriageAgent(
   }
   if (ask) tools.push(createQuestionTool(opts, ask));
   if (runChild) tools.push(createTaskTool(runChild, opts));
-  if (process.env.WAYFIND_DEBUG_EVENTS === '1') {
-    console.log(`[agent] tools: ${tools.map((t) => (t as { name: string }).name).join(', ')} (search key: ${hasSearchKey() ? 'yes' : 'no'})`);
+  const names = tools.map((t) => (t as { name: string }).name);
+  if (!loggedTools) {
+    loggedTools = true;
+    console.log(`[agent] tools: ${names.join(', ')} (variant: ${sel.variant ?? 'full'}, search key: ${hasSearchKey() ? 'yes' : 'no'})`);
+  } else if (process.env.WAYFIND_DEBUG_EVENTS === '1') {
+    console.log(`[agent] tools: ${names.join(', ')} (search key: ${hasSearchKey() ? 'yes' : 'no'})`);
   }
-  if (runChild) tools.push(createTaskTool(runChild, opts));
   return new Agent({
     name: 'Wayfind',
     model: (await resolved.get()) as never,

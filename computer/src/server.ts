@@ -195,11 +195,19 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
 requireApiKey();
 initProvider();
-createServer((req, res) => {
+const server = createServer((req, res) => {
   void handle(req, res).catch((err: unknown) => {
     console.error('request failed:', err);
     if (!res.headersSent) json(res, 500, { error: 'internal error' });
   });
-}).listen(PORT, () => {
+});
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`port ${PORT} is already in use — an old server is still running. Kill it first (it keeps serving STALE code).`);
+    process.exit(1);
+  }
+  throw err;
+});
+server.listen(PORT, () => {
   console.log(`wayfind agent listening on :${PORT} (workspace ${WORKSPACE_DIR})`);
 });

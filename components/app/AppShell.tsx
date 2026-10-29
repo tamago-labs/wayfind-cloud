@@ -76,14 +76,20 @@ export default function AppShell() {
       try {
         const history = await getHistory(b.id as string);
         if (!alive || history.length === 0) return;
-        patchBot(cur, (prev) =>
-          prev.msgs.length > 0
-            ? prev
-            : {
-                ...prev,
-                msgs: history.map((m) => ({ t: m.role === 'assistant' ? ('b' as const) : ('u' as const), x: m.text })),
-              },
-        );
+          patchBot(cur, (prev) =>
+            prev.msgs.length > 0
+              ? prev
+              : {
+                  ...prev,
+                  msgs: history.map((m) =>
+                    m.role === 'assistant'
+                      ? { t: 'b' as const, x: m.text }
+                      : m.role === 'tool'
+                        ? { t: 'tool' as const, x: m.text }
+                        : { t: 'u' as const, x: m.text },
+                  ),
+                },
+          );
       } catch (err) {
         // history stays empty; the thread shows the greeting
         console.error('[AppShell] history fetch failed:', err);
@@ -126,7 +132,7 @@ export default function AppShell() {
           onAgent: (name) =>
             patchBot(targetIndex, (b) => {
               const msgs = b.msgs.filter((m) => m.t !== 'typing');
-              const row: Msg = { t: 'tool', x: `Using the computer · ${name}` };
+              const row: Msg = { t: 'tool', x: `Using the tool · ${name}` };
               const last = msgs[msgs.length - 1];
               if (last && last.t === 'tool') msgs[msgs.length - 1] = row;
               else msgs.push(row);
