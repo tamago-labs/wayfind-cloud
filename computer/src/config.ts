@@ -21,8 +21,8 @@ function keystore(): Record<string, string> {
 
 const keys = keystore();
 
-export const PROVIDER_BASE_URL = process.env.PROVIDER_BASE_URL ?? 'https://api.longcat.ai/openai/v1';
-export const PROVIDER_MODEL = process.env.PROVIDER_MODEL ?? 'LongCat-2.0';
+export const PROVIDER_BASE_URL = process.env.PROVIDER_BASE_URL ?? 'https://openrouter.ai/api/v1';
+export const PROVIDER_MODEL = process.env.PROVIDER_MODEL ?? 'xingchen-agi/xing4.0-29b-a4b:free';
 export const PROVIDER_API_KEY = process.env.PROVIDER_API_KEY ?? keys.PROVIDER_API_KEY ?? '';
 
 export const PORT = Number(process.env.PORT ?? 8080);
