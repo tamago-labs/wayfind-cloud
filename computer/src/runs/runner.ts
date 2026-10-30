@@ -252,7 +252,17 @@ function describeTarget(toolName: string, argsText: string): string {
   try {
     const args = JSON.parse(argsText) as Record<string, unknown>;
     const first =
-      args.command ?? args.path ?? args.description ?? args.name ?? args.source ?? args.target ?? args.input ?? argsText;
+      args.command ??
+      args.path ??
+      args.description ??
+      args.name ??
+      args.source ??
+      (Array.isArray(args.sources)
+        ? `${args.sources.length} skills (${String(args.sources[0])}${args.sources.length > 1 ? ', …' : ''})`
+        : undefined) ??
+      args.target ??
+      args.input ??
+      argsText;
     const s = typeof first === 'string' ? first : JSON.stringify(first);
     return s.length > 160 ? s.slice(0, 160) + '…' : s;
   } catch {

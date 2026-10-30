@@ -8,7 +8,8 @@
 // `needsApproval` is always false — asking the user IS the approval.
 import { tool } from '@openai/agents';
 import { z } from 'zod';
-import { approvalPolicy, guarded, type GuardOpts } from '../../core/guard.js';
+import { check, loadRules } from '../../core/permissions.js';
+import type { GuardOpts } from '../../core/guard.js';
 
 export interface QuestionOption {
   label: string;
@@ -41,7 +42,7 @@ export function formatAnswers(questions: QuestionPrompt[], answers: string[][]):
   return `User has answered your questions: ${formatted}. You can now continue with the user's answers in mind.`;
 }
 
-export function createQuestionTool(opts: GuardOpts, ask: AskHook): ReturnType<typeof tool> {
+export function createQuestionTool(_opts: GuardOpts, ask: AskHook): ReturnType<typeof tool> {
   return tool({
     name: 'question',
     description:
@@ -51,7 +52,13 @@ export function createQuestionTool(opts: GuardOpts, ask: AskHook): ReturnType<ty
     parameters: z.object({
       questions: z.array(QuestionSchema).describe('Questions to ask (max 3)'),
     }),
-    execute: guarded('question', () => 'ask-user', async (a: { questions: QuestionPrompt[] }) => {
+    // No guarded() wrapper here: its audit event renders as a ghost
+    // Approve/Not-now card on top of the real question card. Deny policy
+    // is honored explicitly; the question UI itself is the checkpoint.
+    execute: async (a: { questions: QuestionPrompt[] }) => {
+      if (check(loadRules(), 'question', 'ask-user') === 'deny') {
+        throw new Error('Denied by policy: question "ask-user"');
+      }
       const list = a.questions.slice(0, 3).map((q) => ({
         question: q.question,
         header: q.header,
@@ -59,7 +66,7 @@ export function createQuestionTool(opts: GuardOpts, ask: AskHook): ReturnType<ty
       }));
       const answers = await ask(list);
       return formatAnswers(list, answers);
-    }, opts),
+    },
     // Inherently user-directed — never gated by permission rules.
     needsApproval: async () => false,
   });

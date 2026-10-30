@@ -430,68 +430,99 @@ export async function resolveSkillSource(input: string): Promise<ResolveResult> 
   };
 }
 
-function formatPreview(p: SkillPreview): string {
-  const fileList = p.files.map((f) => `  - ${f.path}`).join('\n');
-  const warnings = validateSkillPreview(p);
-  return (
-    `Skill preview (NOT installed yet):\n` +
-    `  name: ${p.name}\n` +
-    `  description: ${p.description}\n` +
-    `  source: ${p.source}\n` +
-    `  files:\n${fileList}\n` +
-    (warnings.length > 0 ? `  note: ${warnings.join(' ')}\n` : '') +
-    `Show this preview to the user, then call import_skill again with save:true to install — ` +
-    `the approval card is the user's confirm step, so do NOT ask again with the question tool.` +
-    (warnings.length > 0 ? ` If the user approved replacing, pass overwrite:true.` : '')
-  );
-}
-
 /**
  * Chat-driven skill importer. Two-step by design: preview first (read-only,
- * no approval), save only after the user confirms via the question tool.
- * The save step writes under workspace/skills/ and IS approval-gated.
+ * no approval), save only after the approval card. One call can carry a
+ * whole batch — the single approval card lists everything upfront,
+ * Approve-all style. The save step intentionally does NOT wrap in
+ * guarded(): the needsApproval gate below is the single checkpoint
+ * (its grant key is (tool-name, full-args) as derived by driveStream,
+ * while guarded() would key ('write', 'skills/') — that miss emits a
+ * ghost approval card that blocks nothing and confuses).
+ * Deny policy is still honored explicitly.
  */
 export function createSkillImportTool(_opts: GuardOpts): ReturnType<typeof tool> {
-  // NOTE: the save step intentionally does NOT wrap in guarded(). The
-  // needsApproval gate above is the single checkpoint: its grant key is
-  // (tool-name, full-args) as derived by driveStream, while guarded() would
-  // key ('write', 'skills/') — the miss emits a ghost approval card that
-  // blocks nothing and confuses. Deny policy is still honored explicitly.
   const saveNow = async (preview: SkillPreview, overwrite: boolean): Promise<string> => {
     if (check(loadRules(), 'write', 'skills/') === 'deny') {
-      return 'Cannot install: saving to skills/ is denied by policy.';
+      return `Cannot install "${preview.name}": saving to skills/ is denied by policy.`;
     }
     const errors = validateSkillPreview(preview, { allowOverwrite: overwrite });
-    if (errors.length > 0) return `Cannot install: ${errors.join(' ')}`;
+    if (errors.length > 0) return `Cannot install "${preview.name}": ${errors.join(' ')}`;
     const dir = saveSkillPreview(preview);
-    return (
-      `Installed skill "${preview.name}" from ${preview.source} ` +
-      `(${preview.files.length} file(s) to ${dir}). ` +
-      `It is available to all bots immediately — no restart needed. ` +
-      `Briefly confirm what it does and suggest trying it.`
-    );
+    return `Installed "${preview.name}" from ${preview.source} (${preview.files.length} file(s)).`;
   };
 
   return tool({
     name: 'import_skill',
     description:
-      'Import a skill from a GitHub repo or link, a direct SKILL.md URL, or an `npx skills add owner/repo[/path]` spec. ' +
-      'ALWAYS call first with save:false to get a preview, show it to the user and confirm via the question tool, ' +
-      'then call again with save:true to install. Pass overwrite:true only if the user confirmed replacing an existing skill.',
+      'Import skills from GitHub repos/links, direct SKILL.md URLs, or `npx skills add owner/repo[/path]` specs. ' +
+      'ALWAYS call first with save:false to preview, show the preview to the user, ' +
+      'then call again with save:true to install — the approval card is the confirm step. ' +
+      'Pass several sources at once via sources:[...] (e.g. every skill the user picked from a multi-skill repo): ' +
+      'one approval covers the whole batch. Pass overwrite:true only if replacing was confirmed.',
     parameters: z.object({
-      source: z.string().describe('GitHub URL, SKILL.md URL, or npx skills add spec'),
-      save: z.boolean().default(false).describe('false = preview only; true = install after user confirmation'),
-      overwrite: z.boolean().default(false).describe('Replace an already-installed skill of the same name'),
+      source: z.string().optional().describe('GitHub URL, SKILL.md URL, or npx skills add spec (single install)'),
+      sources: z
+        .array(z.string())
+        .optional()
+        .describe('Several sources at once — one approval covers the whole batch'),
+      save: z.boolean().default(false).describe('false = preview only; true = install'),
+      overwrite: z.boolean().default(false).describe('Replace already-installed skills of the same name'),
     }),
-    execute: async (args: { source: string; save?: boolean; overwrite?: boolean }) => {
+    execute: async (args: { source?: string; sources?: string[]; save?: boolean; overwrite?: boolean }) => {
       const save = args.save ?? false;
-      const result = await resolveSkillSource(args.source);
-      if (!result.ok) return result.error;
-      if ('choices' in result) {
-        return `${result.hint}\nChoices:\n${result.choices.map((c) => `  - ${c}`).join('\n')}`;
+      const overwrite = args.overwrite ?? false;
+      const list = args.sources?.length ? args.sources : args.source ? [args.source] : [];
+      if (list.length === 0) {
+        return 'Usage: import_skill with source:"..." or sources:["...", ...], save:false to preview, save:true to install.';
       }
-      if (!save) return formatPreview(result.preview);
-      return saveNow(result.preview, args.overwrite ?? false);
+      if (list.length > 30) {
+        return `Batch capped at 30 sources per call — got ${list.length}. Split it up.`;
+      }
+      const results = await Promise.all(list.map(async (s) => ({ s, r: await resolveSkillSource(s) })));
+      const problems = results.filter(({ r }) => !r.ok);
+      const choiceLists = results.filter(({ r }) => r.ok && 'choices' in r);
+      const previews = results.filter(({ r }) => r.ok && 'preview' in r);
+      if (!save) {
+        const lines: string[] = [];
+        for (const { r } of previews) {
+          const p = (r as { preview: SkillPreview }).preview;
+          const warnings = validateSkillPreview(p);
+          lines.push(
+            `- ${p.name}: ${p.description} (from ${p.source}${warnings.length > 0 ? ` — note: ${warnings.join(' ')}` : ''})`,
+          );
+        }
+        for (const { s, r } of choiceLists) {
+          const c = (r as { choices: string[]; hint: string }).choices;
+          lines.push(`- ${s}: holds ${c.length} skills — ask the user which to install: ${c.join(', ')}`);
+        }
+        for (const { s, r } of problems) {
+          lines.push(`- ${s}: FAILED — ${(r as { error: string }).error}`);
+        }
+        return (
+          `Skill preview (${previews.length} installable, NOT installed yet):\n${lines.join('\n')}\n` +
+          `Show this to the user, then call import_skill again with the same sources and save:true — ` +
+          `the approval card is the confirm step, so do NOT add a question-tool confirm on top. ` +
+          `For choices lists, use the question tool so the user can pick (a genuine fork, not a confirm).` +
+          (previews.some(({ r }) => validateSkillPreview((r as { preview: SkillPreview }).preview).length > 0)
+            ? ` If replacing was confirmed, pass overwrite:true.`
+            : '')
+        );
+      }
+      const done: string[] = [];
+      const failed: string[] = [];
+      for (const { r } of previews) {
+        const msg = await saveNow((r as { preview: SkillPreview }).preview, overwrite);
+        (msg.startsWith('Installed') ? done : failed).push(msg);
+      }
+      for (const { s, r } of [...choiceLists, ...problems]) {
+        failed.push(`${s}: ${'hint' in r ? (r as { hint: string }).hint : (r as { error: string }).error}`);
+      }
+      return (
+        `Batch install: ${done.length} installed, ${failed.length} failed.\n` +
+        [...done, ...failed].map((m) => `- ${m}`).join('\n') +
+        `\nInstalled skills are available to all bots immediately — no restart needed.`
+      );
     },
     // Preview (and failed resolves) never park: only the file-writing save
     // step interrupts for approval, mirroring the write tool.
@@ -527,8 +558,12 @@ export function createSkillScanTool(): ReturnType<typeof tool> {
 
 /** How chat import works — appended to the agent instructions. */
 export const SKILL_IMPORT_GUIDANCE =
-  ' Skill imports: when the user shares a GitHub skill link, a SKILL.md URL, or an `npx skills add ...` command — ' +
+  ' Skill imports: when the user shares GitHub skill links, SKILL.md URLs, or `npx skills add ...` commands — ' +
   'or asks to find skills in the workspace/repo (use scan_skills for that) — ' +
   'call import_skill with save:false to preview, show the preview, then call import_skill with save:true. ' +
-  'The approval card is the confirm step — never ask again with the question tool. ' +
+  'When the user picks SEVERAL skills (e.g. "all 20"), pass every source in ONE call via sources:[...] — ' +
+  'a single approval card covers the whole batch. ' +
+  'The approval card is the confirm step — do not add a question-tool confirm on top. ' +
+  'But when a source holds several skills and the user has not chosen yet, use the question tool ' +
+  'so they can pick (a genuine fork, not a confirm). ' +
   'Never execute bundled scripts; skills are markdown only.';

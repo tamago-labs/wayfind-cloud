@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Markdown from './Markdown';
 import type { Msg, SeedBot } from './seed';
 
@@ -10,8 +10,49 @@ interface ThreadProps {
   onAnswer?: (msgIndex: number, answers: string[][]) => void;
 }
 
-function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; onOk: () => void; onNo: () => void }) {
+/** Free-text answer row inside a question card. Sends the typed text as the answer. */
+function CustomAnswer({ onSend }: { onSend: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded-xl border border-dashed border-navy/25 px-3.5 py-2 text-left text-sm font-semibold text-heroslate hover:border-cta hover:text-cta"
+      >
+        Other… (type your own)
+      </button>
+    );
+  }
   return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const v = text.trim();
+        if (v) onSend(v);
+      }}
+      className="flex gap-2"
+    >
+      <input
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- user explicitly opened this row
+        autoFocus
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Type your answer…"
+        className="min-w-0 flex-1 rounded-xl border border-navy/20 bg-white px-3 py-2 text-sm text-navy outline-none focus:border-cta"
+      />
+      <button
+        type="submit"
+        disabled={!text.trim()}
+        className="shrink-0 rounded-xl bg-cta px-4 py-2 text-sm font-bold text-white hover:bg-ctahover disabled:opacity-50"
+      >
+        Send
+      </button>
+    </form>
+  );
+}
+
+function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; onOk: () => void; onNo: () => void }) {  return (
     <div className="msg-in rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <p className="font-bold text-navy">{msg.title}</p>
       <p className="mt-1 text-heroslate">{msg.x}</p>
@@ -96,7 +137,7 @@ export default function Thread({ bot, onApprove, onAnswer }: ThreadProps) {
                     {q.header && <p className="text-xs font-bold uppercase tracking-wide text-cta">{q.header}</p>}
                     <p className="mt-0.5 font-bold text-navy">{q.question}</p>
                     {!answered && (
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      <div className="mt-2 flex flex-col gap-1.5">
                         {q.options.map((o) => (
                           <button
                             key={o.label}
@@ -105,15 +146,24 @@ export default function Thread({ bot, onApprove, onAnswer }: ThreadProps) {
                               const answers = m.questions.map((qq, j) => (j === qi ? [o.label] : []));
                               onAnswer?.(i, answers);
                             }}
-                            title={o.description}
-                            className="rounded-full border border-navy/20 px-4 py-1.5 text-sm font-semibold text-navy hover:border-cta hover:text-cta"
+                            className="rounded-xl border border-navy/20 px-3.5 py-2 text-left hover:border-cta hover:bg-cta/5"
                           >
-                            {o.label}
+                            <span className="block text-sm font-bold text-navy">{o.label}</span>
+                            {o.description && (
+                              <span className="mt-0.5 block text-xs text-heroslate">{o.description}</span>
+                            )}
                           </button>
                         ))}
+                        <CustomAnswer
+                          key={`custom-${qi}`}
+                          onSend={(text) => {
+                            const answers = m.questions.map((qq, j) => (j === qi ? [text] : []));
+                            onAnswer?.(i, answers);
+                          }}
+                        />
                         <button
                           onClick={() => onAnswer?.(i, m.questions.map(() => []))}
-                          className="rounded-full px-4 py-1.5 text-sm font-semibold text-heroslate hover:bg-slate-50"
+                          className="rounded-xl px-3.5 py-1.5 text-left text-sm font-semibold text-heroslate hover:bg-slate-50"
                         >
                           Skip
                         </button>
