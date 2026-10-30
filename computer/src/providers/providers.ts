@@ -23,6 +23,8 @@ export interface CatalogProvider {
   baseURL: string;
   key?: { env?: string; keystore?: string };
   models?: Record<string, CatalogModel>;
+  /** Hosted grounded search (Meta web_search). Only for Responses-API providers that support it. */
+  grounding?: boolean;
 }
 
 export interface Catalog {
@@ -39,6 +41,15 @@ export function loadCatalog(): Catalog {
   } catch {
     console.error('providers.json is not valid JSON — ignoring');
     return {};
+  }
+}
+
+export function providerGrounding(providerId?: string): boolean {
+  if (!providerId) return false;
+  try {
+    return loadCatalog().providers?.[providerId]?.grounding === true;
+  } catch {
+    return false;
   }
 }
 

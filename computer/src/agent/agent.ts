@@ -2,10 +2,10 @@
 // toolset: guarded builtins + skill tool + MCP tools + task tool, handoff
 // specialists, and the skill catalog in the prompt. Model is resolved per
 // agent via the providers catalog (true per-agent providers, no globals).
-import { Agent } from '@openai/agents';
+import { Agent, webSearchTool } from '@openai/agents';
 import type { GuardOpts } from '../core/guard.js';
 import { loadMcpTools } from './mcp.js';
-import { resolveModel, type ResolvedModel } from '../providers/providers.js';
+import { providerGrounding, resolveModel, type ResolvedModel } from '../providers/providers.js';
 import { createEditTool } from './tools/edit.js';
 import { createSearchTools } from './tools/search.js';
 import { createWebTools, hasSearchKey } from './tools/web.js';
@@ -24,6 +24,9 @@ const BASE_INSTRUCTIONS =
   '(sending, paying, deleting, publishing). Match the user\'s energy: ' +
   'quick confirmations for simple chat, natural full replies otherwise — ' +
   'talk like a teammate, not a status line. ' +
+  'You have built-in grounded web search for current or external facts — it runs automatically. ' +
+  'Whenever you use it, end your answer with a \'Sources:\' markdown list of the URLs you relied on. ' +
+  'Use the websearch tool only when you need an explicit result list with snippets. ' +
   'If the request needs no tools, answer immediately without calling any. ' +
   'Never explore the workspace unprompted — only read or list when the task requires it. ' +
   'For independent work streams, spawn parallel `task` subagents instead of doing everything serially.' +
@@ -56,6 +59,12 @@ export async function createTriageAgent(
   const [mcpTools] = await Promise.all([loadMcpTools(opts)]);
   const resolved: ResolvedModel = resolveModel(sel.provider, sel.model);
   let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), createSkillImportTool(opts), createSkillScanTool(), ...mcpTools, ...createWebTools(opts)];
+  // Hosted grounded search (Meta web_search): provider-side, no extra key,
+  // runs automatically when the model needs current/external facts.
+  // No approval card — it has no local side effects.
+  if (providerGrounding(resolved.providerId)) {
+    tools.push(webSearchTool({ searchContextSize: 'medium' }) as never);
+  }
   if (sel.variant === 'research') {
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
   }

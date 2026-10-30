@@ -468,6 +468,7 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
   }
   const result = stream as unknown as {
     finalOutput?: unknown;
+    rawResponses?: unknown;
     interruptions?: Array<{
       rawItem: { callId?: string; name?: string; arguments?: string };
       agent?: { name?: string };
@@ -500,17 +501,24 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
   }
   const output = result.finalOutput;
   const textOut = typeof output === 'string' ? output : JSON.stringify(output ?? '');
-  runState.output = textOut;
+  // Grounded-search citations arrive as url_citation annotations on the raw
+  // response items — fold them into a Sources block so they survive in chat.
+  const sources = extractWebSources(result.rawResponses);
+  const withSources =
+    sources.length > 0 && !/sources:/i.test(textOut)
+      ? `${textOut}\n\nSources:\n${sources.map((s) => `- [${s.title}](${s.url})`).join('\n')}`
+      : textOut;
+  runState.output = withSources;
   runState.toolCalls = toolCallCount(runState.id);
-  runState.events.push({ type: 'done', output: textOut, toolCalls: runState.toolCalls });
-  appendTranscript(runState.id, 'assistant', textOut, runState.parentId, runState.conversationId);
+  runState.events.push({ type: 'done', output: withSources, toolCalls: runState.toolCalls });
+  appendTranscript(runState.id, 'assistant', withSources, runState.parentId, runState.conversationId);
   if (seenTypes) console.log(`[debug] stream event types: ${[...seenTypes].join(', ')}`);
   await reportUsage({
     runId: runState.id,
     model: runState.model,
     provider: runState.provider,
     durationMs: Date.now() - startedAt,
-    outputChars: textOut.length,
+    outputChars: withSources.length,
     toolCalls: runState.toolCalls,
     costPer1M: resolveModel(runState.sel.provider, runState.sel.model).cost,
     at: new Date().toISOString(),
@@ -518,7 +526,34 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
   runState.done = true;
   runState.parked = false;
   clearRunLog(runState.id);
-  return textOut;
+  return withSources;
+}
+
+/** Pull url_citation annotations out of raw Responses-API output items. */
+function extractWebSources(raw: unknown): Array<{ title: string; url: string }> {
+  const out: Array<{ title: string; url: string }> = [];
+  const seen = new Set<string>();
+  const responses = Array.isArray(raw) ? raw : [];
+  for (const r of responses) {
+    const items = (r as { output?: unknown })?.output;
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      const content = (item as { content?: unknown })?.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        const annotations = (block as { annotations?: unknown })?.annotations;
+        if (!Array.isArray(annotations)) continue;
+        for (const a of annotations) {
+          const ann = a as { type?: string; url?: string; title?: string };
+          if (ann?.type === 'url_citation' && ann.url && !seen.has(ann.url)) {
+            seen.add(ann.url);
+            out.push({ title: ann.title ?? ann.url, url: ann.url });
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {

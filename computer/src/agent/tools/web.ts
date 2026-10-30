@@ -141,7 +141,7 @@ export function createWebTools(opts: GuardOpts): Array<ReturnType<typeof tool>> 
   const websearch = tool({
     name: 'websearch',
     description:
-      'Search the web (Exa) and return titles, URLs, and snippets. Use when the answer needs current or external information. Needs an EXA_API_KEY to run.',
+      'Explicit web search (Exa) returning titles, URLs, and snippets. Use when you need a raw result list; built-in grounded search already runs automatically for current or external facts. Needs an EXA_API_KEY to run.',
     parameters: z.object({
       query: z.string().describe('search query'),
       numResults: z.number().optional().describe('number of results (default 8, max 10)'),

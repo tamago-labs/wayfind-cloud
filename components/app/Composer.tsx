@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowUp, Mic } from 'lucide-react';
+import { Send, Mic, Plus } from 'lucide-react';
 import SkillsPopover from './SkillsPopover';
 import VoiceModal from './VoiceModal';
 
@@ -47,9 +47,9 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           aria-label="Composer actions"
           aria-expanded={plusOpen}
           onClick={() => setPlusOpen((o) => !o)}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-xl text-heroslate hover:bg-slate-200"
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200"
         >
-          +
+          <Plus className="h-[18px] w-[18px]" strokeWidth={2.2} />
         </button>
         <input
           value={draft}
@@ -71,7 +71,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           aria-label="Send"
           className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-cta text-white hover:bg-ctahover"
         >
-          <ArrowUp className="h-[18px] w-[18px]" strokeWidth={2.4} />
+          <Send className="h-[18px] w-[18px]" strokeWidth={2.4} />
         </button>
       </form>
       {voiceOpen && (
