@@ -21,6 +21,8 @@ export interface ApprovalRequest {
 
 export interface GuardOpts {
   onApproval?: (approval: ApprovalRequest) => void;
+  /** Per-bot skill allowlist. Undefined = all installed skills enabled; [] = none. */
+  allowedSkills?: string[];
 }
 
 interface RunCtx {

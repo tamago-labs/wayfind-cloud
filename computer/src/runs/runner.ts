@@ -51,6 +51,8 @@ export interface Run {
   /** Paused on SDK interruptions, awaiting POST /approvals/:id. */
   parked: boolean;
   interruptions: PendingApproval[];
+  /** Per-bot skill allowlist, mirrored from the start request so resume rebuilds the same agent. */
+  allowedSkills?: string[];
   stateJson?: string;
   output: string;
   toolCalls: number;
@@ -250,7 +252,7 @@ function describeTarget(toolName: string, argsText: string): string {
   try {
     const args = JSON.parse(argsText) as Record<string, unknown>;
     const first =
-      args.command ?? args.path ?? args.description ?? args.name ?? args.target ?? args.input ?? argsText;
+      args.command ?? args.path ?? args.description ?? args.name ?? args.source ?? args.target ?? args.input ?? argsText;
     const s = typeof first === 'string' ? first : JSON.stringify(first);
     return s.length > 160 ? s.slice(0, 160) + '…' : s;
   } catch {
@@ -262,9 +264,10 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
   const runState = [...runs.values()].find((r) => r.parked && r.interruptions.some((a) => a.id === id));
   if (!runState || !runState.stateJson) return false;
   const agent = await createTriageAgent(
-    auditTo(runState.id),
+    auditTo(runState.id, runState.allowedSkills),
     runState.sel,
     makeRunChild(runState),
+    makeQuestionHook(runState),
   );
   let state: Awaited<ReturnType<typeof RunState.fromString>>;
   try {
@@ -323,8 +326,9 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
 /** Audit hook: permissive auto-allows are logged server-side only (never
  * surfaced as approval cards — there is nothing to decide). Enforcing
  * interruptions arrive as real approval events via driveStream. */
-function auditTo(runId: string): GuardOpts {
+function auditTo(runId: string, allowedSkills?: string[]): GuardOpts {
   return {
+    allowedSkills,
     onApproval: (a) => {
       if (a.auto) {
         console.log(`[auto-allow] run ${runId}: ${a.permission} "${a.target}"`);
@@ -349,6 +353,8 @@ export interface StartRunOpts {
   depth?: number;
   /** Conversation scope (frontend Bot id). One SDK session per id. */
   conversationId?: string;
+  /** Per-bot skill allowlist (Bot.skillsEnabled). Undefined = all enabled; [] = none. */
+  allowedSkills?: string[];
   /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
   /** Subagent variant for `task` children. */
@@ -414,6 +420,7 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
         parentId: runState.id,
         depth: fresh ? depth + 1 : depth,
         conversationId: runState.conversationId,
+        allowedSkills: runState.allowedSkills,
         subagentType: req.subagentType,
         resumeTaskId: fresh ? undefined : req.taskId,
       });
@@ -507,7 +514,7 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   try {
-    const agent = await createTriageAgent(auditTo(runState.id), runState.sel, makeRunChild(runState), makeQuestionHook(runState));
+    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills), runState.sel, makeRunChild(runState), makeQuestionHook(runState));
     // History isolation: children get ONLY their prompt. Top-level input is
     // the live turn (plus JSONL seed on first contact); the session carries
     // everything else. The brief rides bracketed every turn, never persisted.
@@ -555,6 +562,7 @@ function newRunState(opts: StartRunOpts): Run {
       ...(opts.subagentType ? { variant: opts.subagentType === 'research' ? ('research' as const) : ('full' as const) } : {}),
     },
     conversationId: opts.conversationId,
+    allowedSkills: opts.allowedSkills,
     depth: opts.depth ?? 0,
     events: [],
     done: false,

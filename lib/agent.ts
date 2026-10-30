@@ -21,11 +21,16 @@ export async function decideApproval(approvalId: string, decision: 'approve' | '
   return res.ok;
 }
 
-export async function postTask(text: string, conversationId?: string, system?: string): Promise<string> {
+export async function postTask(
+  text: string,
+  conversationId?: string,
+  system?: string,
+  allowedSkills?: string[],
+): Promise<string> {
   const res = await fetch(`${AGENT_URL}/task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, conversationId, system }),
+    body: JSON.stringify({ text, conversationId, system, allowedSkills }),
   });
   if (!res.ok) throw new Error(`agent /task → ${res.status}`);
   const { runId } = (await res.json()) as { runId: string };
@@ -240,4 +245,58 @@ export async function setProviderKey(name: string, value: string): Promise<void>
     body: JSON.stringify({ name, value }),
   });
   if (!res.ok) throw new Error(`agent /keys → ${res.status}`);
+}
+
+export interface InstalledSkill {
+  name: string;
+  description: string;
+  source: string;
+  files: number;
+}
+
+/** Installed skill catalog for the Settings list + per-bot picker. */
+export async function getSkills(): Promise<InstalledSkill[]> {
+  const res = await fetch(`${AGENT_URL}/skills`);
+  if (!res.ok) throw new Error(`agent /skills → ${res.status}`);
+  return ((await res.json()) as { skills: InstalledSkill[] }).skills;
+}
+
+export type SkillResolveResult =
+  | { preview: { name: string; description: string; source: string; files: string[] } }
+  | { choices: string[]; hint: string };
+
+/** Preview a chat-provided source without installing anything. */
+export async function resolveSkill(source: string): Promise<SkillResolveResult> {
+  const res = await fetch(`${AGENT_URL}/skills/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source }),
+  });
+  const body = (await res.json()) as {
+    preview?: { name: string; description: string; source: string; files: string[] };
+    choices?: string[];
+    hint?: string;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(body.error ?? `agent /skills/resolve → ${res.status}`);
+  if (body.preview) return { preview: body.preview };
+  return { choices: body.choices ?? [], hint: body.hint ?? '' };
+}
+
+/** Install a resolved source. Throws with the validation message on conflict. */
+export async function installSkill(source: string, overwrite = false): Promise<InstalledSkill[]> {
+  const res = await fetch(`${AGENT_URL}/skills/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source, overwrite }),
+  });
+  const body = (await res.json()) as { skills?: InstalledSkill[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `agent /skills/install → ${res.status}`);
+  return body.skills ?? [];
+}
+
+/** Remove an installed skill. Returns false when unknown. */
+export async function removeSkill(name: string): Promise<boolean> {
+  const res = await fetch(`${AGENT_URL}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  return res.ok;
 }

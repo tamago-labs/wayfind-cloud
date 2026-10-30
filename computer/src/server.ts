@@ -10,7 +10,7 @@ import { loadCatalog, resolveApiKey, saveCatalog, undoCatalog, canUndoCatalog } 
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingQuestions, listRuns, resolveApproval, answerQuestion, startRun } from './runs/runner.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
-import { loadSkills } from './agent/skills.js';
+import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
 
 /** Browser origin for local dev (Amplify dev server). Loosen only for local. */
 const CORS_ORIGIN = process.env.AGENT_CORS_ORIGIN ?? '*';
@@ -106,18 +106,22 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/task' && method === 'POST') {
     try {
-      const { text, conversationId, system, provider, model } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
         provider?: string;
         model?: string;
+        allowedSkills?: string[];
       };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
       if (conversationId !== undefined && typeof conversationId !== 'string') {
         return void json(res, 400, { error: 'conversationId must be a string' });
       }
-      const r = startRun(text, { provider, model, conversationId, system });
+      if (allowedSkills !== undefined && (!Array.isArray(allowedSkills) || allowedSkills.some((s) => typeof s !== 'string'))) {
+        return void json(res, 400, { error: 'allowedSkills must be string[]' });
+      }
+      const r = startRun(text, { provider, model, conversationId, system, allowedSkills });
       return void json(res, 202, { runId: r.id });
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
@@ -184,10 +188,61 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
 
+  // Skills: installed catalog (Settings list), chat-importer endpoints,
+  // and workspace discovery. Reloaded on every run — no restart needed.
   if (pathname === '/skills' && method === 'GET') {
-    return void json(res, 200, {
-      skills: loadSkills().map((s) => ({ name: s.name, description: s.description })),
-    });
+    return void json(res, 200, { skills: listInstalledSkills() });
+  }
+
+  if (pathname === '/skills/resolve' && method === 'POST') {
+    try {
+      const { source } = JSON.parse(await readBody(req)) as { source?: string };
+      if (!source || typeof source !== 'string') {
+        return void json(res, 400, { error: 'Body must be { source }' });
+      }
+      const result = await resolveSkillSource(source);
+      if (!result.ok) return void json(res, 422, { error: result.error });
+      if ('choices' in result) return void json(res, 200, { choices: result.choices, hint: result.hint });
+      return void json(res, 200, {
+        preview: {
+          name: result.preview.name,
+          description: result.preview.description,
+          source: result.preview.source,
+          files: result.preview.files.map((f) => f.path),
+        },
+      });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  if (pathname === '/skills/install' && method === 'POST') {
+    try {
+      const { source, overwrite } = JSON.parse(await readBody(req)) as { source?: string; overwrite?: boolean };
+      if (!source || typeof source !== 'string') {
+        return void json(res, 400, { error: 'Body must be { source, overwrite? }' });
+      }
+      const result = await resolveSkillSource(source);
+      if (!result.ok) return void json(res, 422, { error: result.error });
+      if ('choices' in result) return void json(res, 200, { choices: result.choices, hint: result.hint });
+      const errors = validateSkillPreview(result.preview, { allowOverwrite: overwrite === true });
+      if (errors.length > 0) return void json(res, 409, { error: errors.join(' ') });
+      saveSkillPreview(result.preview);
+      return void json(res, 200, { ok: true, skills: listInstalledSkills() });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  const skillMatch = pathname.match(/^\/skills\/([A-Za-z0-9-]+)$/);
+  if (skillMatch && method === 'DELETE') {
+    const ok = removeSkill(skillMatch[1]);
+    if (!ok) return void json(res, 404, { error: 'unknown skill' });
+    return void json(res, 200, { ok: true, skills: listInstalledSkills() });
+  }
+
+  if (pathname === '/skills/scan' && method === 'GET') {
+    return void json(res, 200, { found: scanLocalSkills() });
   }
 
   // Settings: permissions rule list (the rules ARE the grants — flipping a

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { KeyRound, ShieldCheck } from 'lucide-react';
+import { KeyRound, ShieldCheck, Sparkles } from 'lucide-react';
 import {
   getPermissions,
   setPermissions,
@@ -12,11 +12,16 @@ import {
   setProviders,
   undoProviders,
   setProviderKey,
+  getSkills,
+  resolveSkill,
+  installSkill,
+  removeSkill,
   type PermissionRule,
   type ProvidersState,
+  type InstalledSkill,
 } from '@/lib/agent';
 
-type Tab = 'permissions' | 'providers';
+type Tab = 'permissions' | 'providers' | 'skills';
 
 const ACTIONS = ['allow', 'ask', 'deny'] as const;
 
@@ -403,6 +408,199 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
+function SkillsTab() {
+  const [skills, setSkills] = useState<InstalledSkill[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [source, setSource] = useState('');
+  const [preview, setPreview] = useState<{
+    name: string;
+    description: string;
+    source: string;
+    files: string[];
+  } | null>(null);
+  const [choices, setChoices] = useState<{ choices: string[]; hint: string } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getSkills()
+      .then((s) => {
+        if (alive) setSkills(s);
+      })
+      .catch((err) => {
+        if (alive) setError(err instanceof Error ? err.message : 'Failed to load skills.');
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const refresh = async () => setSkills(await getSkills());
+
+  const onPreview = async () => {
+    const input = source.trim();
+    if (!input || busy) return;
+    setBusy(true);
+    setError(null);
+    setPreview(null);
+    setChoices(null);
+    try {
+      const r = await resolveSkill(input);
+      if ('preview' in r) setPreview(r.preview);
+      else setChoices({ choices: r.choices, hint: r.hint });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not resolve that source.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onInstall = async (overwrite = false) => {
+    const input = source.trim();
+    if (!input || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await installSkill(input, overwrite);
+      setPreview(null);
+      setChoices(null);
+      setSource('');
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Install failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRemove = async (name: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await removeSkill(name);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Remove failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error && !skills) {
+    return <p className="p-5 text-sm font-medium text-red-600">{error}</p>;
+  }
+  if (!skills) {
+    return <p className="p-5 text-sm text-heroslate">Loading skills…</p>;
+  }
+
+  return (
+    <div className="space-y-4 p-5">
+      <p className="text-sm text-heroslate">
+        Paste a GitHub link or an <code className="font-mono text-xs">npx skills add owner/repo</code> command to
+        preview, then install — new skills join every bot. To enable per bot, click + in the message box → Skills.
+      </p>
+      <div className="flex gap-2">
+        <input
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void onPreview();
+          }}
+          placeholder="github.com/owner/repo or npx skills add owner/repo/path"
+          className="min-w-0 flex-1 rounded-lg border border-navy/15 bg-white px-2.5 py-1.5 font-mono text-xs text-navy outline-none focus:border-cta"
+        />
+        <button
+          onClick={() => void onPreview()}
+          disabled={busy || !source.trim()}
+          className="rounded-full bg-cta px-4 py-1.5 text-xs font-bold text-white hover:bg-ctahover disabled:opacity-50"
+        >
+          Preview
+        </button>
+      </div>
+      {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+      {choices && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <p className="text-sm font-semibold text-navy">That repo holds several skills — pick one:</p>
+          <ul className="mt-2 space-y-1">
+            {choices.choices.map((c) => (
+              <li key={c}>
+                <button
+                  onClick={() => {
+                    setSource(c);
+                    setChoices(null);
+                  }}
+                  className="font-mono text-xs text-cta hover:underline"
+                >
+                  {c}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {preview && (
+        <div className="rounded-xl border border-navy/10 bg-ice p-4">
+          <h4 className="font-brico text-sm font-bold text-navy">{preview.name}</h4>
+          <p className="mt-1 text-sm text-heroslate">{preview.description}</p>
+          <p className="mt-1 font-mono text-[11px] text-heroslate">{preview.source}</p>
+          <p className="mt-1 font-mono text-[11px] text-heroslate">{preview.files.join(', ')}</p>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => void onInstall(false)}
+              disabled={busy}
+              className="rounded-full bg-cta px-4 py-1.5 text-xs font-bold text-white hover:bg-ctahover disabled:opacity-50"
+            >
+              Install
+            </button>
+            {skills.some((s) => s.name === preview.name) && (
+              <button
+                onClick={() => void onInstall(true)}
+                disabled={busy}
+                className="rounded-full border border-navy/15 px-4 py-1.5 text-xs font-bold text-navy hover:bg-ice disabled:opacity-50"
+              >
+                Overwrite
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {skills.length === 0 ? (
+        <p className="text-sm text-heroslate">No skills installed yet.</p>
+      ) : (
+        <ul className="space-y-2">
+          {skills.map((s) => (
+              <li key={s.name} className="rounded-xl border border-navy/10 bg-ice p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h4 className="font-brico text-sm font-bold text-navy">{s.name}</h4>
+                  <p className="mt-0.5 line-clamp-2 text-sm text-heroslate" title={s.description}>
+                    {s.description}
+                  </p>
+                  <p className="mt-1 truncate font-mono text-[11px] text-heroslate" title={s.source}>
+                    {s.source} · {s.files} file{s.files === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void onRemove(s.name)}
+                  disabled={busy}
+                  className="shrink-0 rounded-full border border-red-200 px-3 py-1 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-heroslate">
+        To hide a skill from every bot, set <code className="font-mono">skill:&lt;name&gt;</code> → deny under
+        Permissions.
+      </p>
+    </div>
+  );
+}
+
 export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const [tab, setTab] = useState<Tab>('permissions');
 
@@ -418,6 +616,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
   const tabs: Array<{ id: Tab; label: string; icon: typeof ShieldCheck }> = [
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
     { id: 'providers', label: 'Providers', icon: KeyRound },
+    { id: 'skills', label: 'Skills', icon: Sparkles },
   ];
 
   return createPortal(
@@ -435,7 +634,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.97, opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className="flex max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-xl"
+            className="flex max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -457,7 +656,7 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               ))}
             </div>
             <div className="min-w-0 flex-1 overflow-y-auto">
-              {tab === 'permissions' ? <PermissionsTab /> : <ProvidersTab />}
+              {tab === 'permissions' ? <PermissionsTab /> : tab === 'providers' ? <ProvidersTab /> : <SkillsTab />}
             </div>
           </motion.div>
         </motion.div>

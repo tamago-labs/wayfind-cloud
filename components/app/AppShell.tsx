@@ -9,6 +9,7 @@ import Mascot, { type MascotColor, type MascotShape } from '@/components/Mascot'
 import Roster from './Roster';
 import NewBotModal from './Roster/NewBotModal';
 import BotPanel, { type BotEdits } from './BotPanel';
+import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
 import { answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
@@ -22,7 +23,7 @@ const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
 const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
 const GREETING: Msg = { t: 'b', x: 'Hi! Give me my role in your first message: what to do, what never to do, and what to remember.' };
 
-type ViewBot = SeedBot & { id: string | null; isChiefOfStaff: boolean };
+type ViewBot = SeedBot & { id: string | null; isChiefOfStaff: boolean; skillsEnabled: string[] | null };
 
 export default function AppShell() {
   const { user } = useAuthenticator();
@@ -34,6 +35,7 @@ export default function AppShell() {
   const [draft, setDraft] = useState('');
   const [botModalOpen, setBotModalOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const newCount = useRef(0);
 
   // Roster comes from the database; seed.ts stays as shape reference only.
@@ -51,6 +53,7 @@ export default function AppShell() {
             name: b.name,
             role: b.role ?? '',
             isChiefOfStaff: b.isChiefOfStaff ?? false,
+            skillsEnabled: (b.skillsEnabled as string[] | null | undefined) ?? null,
             color: validColors.includes(b.color as MascotColor) ? (b.color as MascotColor) : 'amber',
             shape: validShapes.includes(b.shape as MascotShape) ? (b.shape as MascotShape) : 'blob',
             busy: false,
@@ -115,6 +118,7 @@ export default function AppShell() {
     const targetName = bot.name;
     const targetRole = bot.role;
     const targetIsChief = bot.isChiefOfStaff;
+    const targetSkills = bot.skillsEnabled;
     setDraft('');
     patchBot(targetIndex, (b) => ({ ...b, busy: true, msgs: [...b.msgs, { t: 'u', x: v }, { t: 'typing' }] }));
     void (async () => {
@@ -125,7 +129,7 @@ export default function AppShell() {
             ? `You are "${targetName}". Role: ${targetRole}.`
             : `You are "${targetName}". Your role is not defined yet.`
           : undefined;
-        const runId = await postTask(v, targetId ?? undefined, system);
+        const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined);
         await streamRun(runId, {
           onChunk: (delta) =>
             patchBot(targetIndex, (b) => {
@@ -232,6 +236,19 @@ export default function AppShell() {
   };
 
   // Returns an error message on failure, null on success.
+  const saveBotSkills = (enabled: string[] | null) => {
+    const target = bots[cur];
+    if (!target) return;
+    patchBot(cur, (b) => ({ ...b, skillsEnabled: enabled }));
+    // Backend may lag the schema push — apply locally first, sync best-effort.
+    if (target.id) {
+      void dataClient.models.Bot.update({ id: target.id, skillsEnabled: enabled }).catch((err) =>
+        console.error('[AppShell] skills sync failed (applies next sandbox push):', err),
+      );
+    }
+  };
+
+  // Returns an error message on failure, null on success.
   const saveBotEdits = async (edits: BotEdits): Promise<string | null> => {    const target = bots[cur];
     if (!target) return 'No Bot selected.';
     // Chief always carries the chief role unless the user wrote something else.
@@ -320,7 +337,7 @@ export default function AppShell() {
       }
       console.log('[AppShell] bot created:', data.id);
       setBots((prev) => [
-        { id: data.id, name, role: isChief ? 'Chief of staff' : '', isChiefOfStaff: isChief, color, shape, busy: false, msgs: [] },
+        { id: data.id, name, role: isChief ? 'Chief of staff' : '', isChiefOfStaff: isChief, skillsEnabled: null, color, shape, busy: false, msgs: [] },
         ...prev,
       ]);
       setCur(0);
@@ -422,7 +439,7 @@ export default function AppShell() {
           Local dev — replies come from your computer server. Make sure it’s running on :8080.
         </div>
         <Thread bot={bot} onApprove={approve} onAnswer={answer} />
-        <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} />
+        <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} onOpenSkills={() => setSkillsOpen(true)} />
       </main>
 
       <BotPanel
@@ -440,6 +457,13 @@ export default function AppShell() {
         onDelete={deleteBot}
       />
       <NewBotModal open={botModalOpen} onClose={() => setBotModalOpen(false)} onCreate={createBot} taken={bots.map((b) => b.name)} />
+      <SkillsPickerModal
+        open={skillsOpen}
+        onClose={() => setSkillsOpen(false)}
+        botName={bot.name}
+        enabled={bot.skillsEnabled}
+        onSave={saveBotSkills}
+      />
     </div>
   );
 }

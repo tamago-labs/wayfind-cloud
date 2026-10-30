@@ -9,7 +9,8 @@ import { resolveModel, type ResolvedModel } from '../providers/providers.js';
 import { createEditTool } from './tools/edit.js';
 import { createSearchTools } from './tools/search.js';
 import { createWebTools, hasSearchKey } from './tools/web.js';
-import { createSkillTool, loadSkills, skillCatalogPrompt } from './skills.js';
+import { createSkillTool, createSkillImportTool, createSkillScanTool, filterSkills, loadSkills, skillCatalogPrompt, SKILL_IMPORT_GUIDANCE } from './skills.js';
+import { check, loadRules } from '../core/permissions.js';
 import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';
 import { createQuestionTool, type AskHook } from './tools/question.js';
@@ -25,7 +26,8 @@ const BASE_INSTRUCTIONS =
   'talk like a teammate, not a status line. ' +
   'If the request needs no tools, answer immediately without calling any. ' +
   'Never explore the workspace unprompted — only read or list when the task requires it. ' +
-  'For independent work streams, spawn parallel `task` subagents instead of doing everything serially.';
+  'For independent work streams, spawn parallel `task` subagents instead of doing everything serially.' +
+  SKILL_IMPORT_GUIDANCE;
 
 export interface AgentSelection {
   provider?: string;
@@ -35,7 +37,7 @@ export interface AgentSelection {
 }
 
 /** Tools unavailable to read-only research subagents. */
-const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question']);
+const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill']);
 
 /** Logged once per process so a boot line proves which code is live. */
 let loggedTools = false;
@@ -46,10 +48,14 @@ export async function createTriageAgent(
   runChild?: RunChild,
   ask?: AskHook,
 ): Promise<InstanceType<typeof Agent>> {
-  const skills = loadSkills();
+  // Per-bot allowlist first, then the global kill switch: a deny rule on
+  // skill:<name> hides it from every bot (Settings documents this).
+  const skills = filterSkills(loadSkills(), opts.allowedSkills).filter(
+    (s) => check(loadRules(), 'skill', s.name) !== 'deny',
+  );
   const [mcpTools] = await Promise.all([loadMcpTools(opts)]);
   const resolved: ResolvedModel = resolveModel(sel.provider, sel.model);
-  let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), ...mcpTools, ...createWebTools(opts)];
+  let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), createSkillImportTool(opts), createSkillScanTool(), ...mcpTools, ...createWebTools(opts)];
   if (sel.variant === 'research') {
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
   }
