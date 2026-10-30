@@ -16,7 +16,8 @@ import { PROVIDER_MODEL, WORKSPACE_DIR } from '../core/config.js';
 import { createTriageAgent, type AgentSelection } from '../agent/agent.js';
 import type { QuestionPrompt } from '../agent/tools/question.js';
 import type { ChildRequest, ChildResult } from '../agent/tools/task.js';
-import { clearRunLog, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
+import { clearRunLog, grantForRun, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
+import { check, loadRules, saveRules } from '../core/permissions.js';
 import { resolveModel } from '../providers/providers.js';
 import { reportUsage } from './usage.js';
 
@@ -200,14 +201,28 @@ export function getHistory(conversationId: string): HistoryLine[] {
 function seedFor(conversationId: string | undefined): unknown[] {
   if (!conversationId || seeded.has(conversationId)) return [];
   seeded.add(conversationId);
+  // Shape notes (verified against the SDK's own schema + converter):
+  // - user: plain string content is accepted everywhere.
+  // - assistant: MUST be an array of output parts AND carry status — the
+  //   RunState serializer requires it and the Responses converter calls
+  //   content.map on it. Anything else breaks parking (enforcing mode).
   return getHistory(conversationId)
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .slice(-20)
-    .map((m) => ({
-      type: 'message',
-      role: m.role,
-      content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.text }],
-    }));
+    .map((m) =>
+      m.role === 'assistant'
+        ? {
+            type: 'message' as const,
+            role: 'assistant' as const,
+            status: 'completed' as const,
+            content: [{ type: 'output_text' as const, text: m.text }],
+          }
+        : {
+            type: 'message' as const,
+            role: 'user' as const,
+            content: m.text,
+          },
+    );
 }
 
 function userMessage(text: string): unknown {
@@ -272,7 +287,24 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
   if (decision === 'approve') state.approve(item);
   else state.reject(item);
   runState.events.push({ type: 'approval-resolved', approvalId: id, decision });
+  const decided = runState.interruptions.find((a) => a.id === id);
   runState.interruptions = runState.interruptions.filter((a) => a.id !== id);
+  // Per-run grant: approving once auto-passes the same permission+target
+  // for the rest of this run — the user doesn't re-click every call.
+  // Persistent grant: an approval also writes an allow rule for the exact
+  // target, so future runs don't ask for it again. The rules file is the
+  // memory — clearing it resets everything (undo restores the backup).
+  if (decision === 'approve' && decided) {
+    grantForRun(runState.id, decided.permission, decided.target);
+    try {
+      const rules = loadRules();
+      if (check(rules, decided.permission, decided.target) !== 'allow') {
+        saveRules([{ permission: decided.permission, pattern: decided.target, action: 'allow' }, ...rules]);
+      }
+    } catch (err) {
+      console.error('[approvals] persistent grant failed:', err instanceof Error ? err.message : String(err));
+    }
+  }
   // Resume carries its own session linkage inside the serialized state —
   // passing session again conflicts ("exactly one server-managed
   // conversation owner") and fails the resume.

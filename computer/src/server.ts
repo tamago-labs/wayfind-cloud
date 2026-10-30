@@ -6,6 +6,8 @@ import { PORT, PROVIDER_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DI
 import { permissionMode } from './core/guard.js';
 import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider } from './providers/provider.js';
+import { loadCatalog, resolveApiKey, saveCatalog, undoCatalog, canUndoCatalog } from './providers/providers.js';
+import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingQuestions, listRuns, resolveApproval, answerQuestion, startRun } from './runs/runner.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
 import { loadSkills } from './agent/skills.js';
@@ -16,7 +18,7 @@ const CORS_ORIGIN = process.env.AGENT_CORS_ORIGIN ?? '*';
 function corsHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': CORS_ORIGIN,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
 }
@@ -186,6 +188,70 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void json(res, 200, {
       skills: loadSkills().map((s) => ({ name: s.name, description: s.description })),
     });
+  }
+
+  // Settings: permissions rule list (the rules ARE the grants — flipping a
+  // rule to deny is the revoke path). Reloaded on every run, no restart.
+  if (pathname === '/permissions' && method === 'GET') {
+    return void json(res, 200, { rules: loadRules(), canUndo: canUndoRules() });
+  }
+
+  if (pathname === '/permissions/undo' && method === 'POST') {
+    const rules = undoRules();
+    if (!rules) return void json(res, 404, { error: 'nothing to undo' });
+    return void json(res, 200, { ok: true, rules, canUndo: canUndoRules() });
+  }
+
+  if (pathname === '/permissions' && method === 'PUT') {
+    try {
+      const { rules } = JSON.parse(await readBody(req)) as { rules?: unknown };
+      saveRules(rules as never);
+      return void json(res, 200, { ok: true, rules: loadRules() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return void json(res, 400, { error: msg });
+    }
+  }
+
+  // Settings: provider catalog minus secrets. Key values are never returned
+  // (only keyConfigured flags); key writes go through POST /keys.
+  if (pathname === '/providers' && method === 'GET') {
+    const catalog = loadCatalog();    const providers: Record<string, { baseURL: string; keyConfigured: boolean; keystore: string; models: string[] }> = {};
+    for (const [pid, p] of Object.entries(catalog.providers ?? {})) {
+      const key = resolveApiKey(p);
+      providers[pid] = {
+        baseURL: p.baseURL,
+        keyConfigured: key !== '' && key !== 'missing-key',
+        keystore: p.key?.keystore ?? 'PROVIDER_API_KEY',
+        models: Object.keys(p.models ?? {}),
+      };
+    }
+    return void json(res, 200, { defaults: catalog.defaults ?? null, providers, canUndo: canUndoCatalog() });
+  }
+
+  if (pathname === '/providers/undo' && method === 'POST') {
+    const catalog = undoCatalog();
+    if (!catalog) return void json(res, 404, { error: 'nothing to undo' });
+    return void json(res, 200, { ok: true, defaults: catalog.defaults ?? null, canUndo: canUndoCatalog() });
+  }
+
+  if (pathname === '/providers' && method === 'PUT') {
+    try {
+      const patch = JSON.parse(await readBody(req)) as {
+        defaults?: { provider?: string; model?: string };
+        providers?: Record<string, { baseURL?: string; models?: Record<string, unknown> }>;
+      };
+      if (typeof patch !== 'object' || patch === null) return void json(res, 400, { error: 'Body must be an object' });
+      const next = saveCatalog(patch);
+      const providers: Record<string, { baseURL: string; models: string[] }> = {};
+      for (const [pid, p] of Object.entries(next.providers ?? {})) {
+        providers[pid] = { baseURL: p.baseURL, models: Object.keys(p.models ?? {}) };
+      }
+      return void json(res, 200, { ok: true, defaults: next.defaults ?? null, providers });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return void json(res, 400, { error: msg });
+    }
   }
 
   const streamMatch = pathname.match(/^\/stream\/([A-Za-z0-9-]+)$/);

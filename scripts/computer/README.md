@@ -25,7 +25,7 @@ PASS/FAIL (shapes, states, files — never model-output quality).
 | `02-task-text` | minimal round-trip: exact-echo output, chunk events, no approval |
 | `03-tools-readonly` | read/list/allow-listed shell; no permission blocks |
 | `04-skills` | skill catalog inject + `skill` tool load |
-| `05-approval-flow` | write parks with `{type:'approval'}` → approve resumes to `done` (+file written); reject terminates without writing. **SKIPs on permissive servers**; needs `PERMISSION_MODE=enforcing`. Interrupt/resume is SDK-native (RunState), so no provider hang |
+| `05-approval-flow` | write parks with `{type:'approval'}` → approve resumes to `done` (+file written); reject terminates without writing. **SKIPs on permissive servers** (`PERMISSION_MODE=permissive`; enforcing is the default). Interrupt/resume is SDK-native (RunState), so no provider hang |
 | `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
 | `06-cli-backup` | `backup now` writes one tarball, `backup list` shows it (no server needed; cleans up) |
 | `07-subagents` | `task` fan-out (one subagent per file, `toolCalls >= 3`), child failure surfaces as `done`, recursive delegation completes, `task_id` resume recalls prior child state (4-deep cap is code-verified; watch it with `WAYFIND_DEBUG_EVENTS=1`) |

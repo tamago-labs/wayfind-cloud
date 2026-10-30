@@ -3,7 +3,7 @@
 // order per provider: env key → keystore key (arrays rotate). Models are
 // resolved to SDK Model objects via OpenAIProvider — true per-agent
 // providers with no global-client race.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OpenAIProvider } from '@openai/agents-openai';
 import { WORKSPACE_DIR } from '../core/config.js';
@@ -92,4 +92,53 @@ export function resolveModel(providerId?: string, modelId?: string): ResolvedMod
 export function resolveSmallModel(): ResolvedModel {
   const catalog = loadCatalog();
   return resolveModel(catalog.small?.provider, catalog.small?.model);
+}
+
+/**
+ * Persist catalog edits (defaults, baseURLs, model lists). Key material is
+ * never accepted here — keys only go through POST /keys. Throws on invalid
+ * shape. Keeps a timestamped backup.
+ */
+export function saveCatalog(patch: {
+  defaults?: { provider?: string; model?: string };
+  providers?: Record<string, { baseURL?: string; models?: Record<string, unknown> }>;
+}): Catalog {
+  const path = join(WORKSPACE_DIR, 'providers.json');
+  const current = loadCatalog();
+  const next: Catalog = JSON.parse(JSON.stringify(current)) as Catalog;
+  if (patch.defaults !== undefined) {
+    if (typeof patch.defaults !== 'object' || patch.defaults === null) throw new Error('defaults must be an object');
+    next.defaults = { ...next.defaults, ...patch.defaults } as Catalog['defaults'];
+  }
+  if (patch.providers !== undefined) {
+    if (typeof patch.providers !== 'object' || patch.providers === null) throw new Error('providers must be an object');
+    next.providers = next.providers ?? {};
+    for (const [pid, p] of Object.entries(patch.providers)) {
+      if (typeof p !== 'object' || p === null) throw new Error(`provider "${pid}" must be an object`);
+      if (p.baseURL !== undefined && typeof p.baseURL !== 'string') throw new Error(`provider "${pid}".baseURL must be a string`);
+      if (p.models !== undefined && (typeof p.models !== 'object' || p.models === null)) {
+        throw new Error(`provider "${pid}".models must be an object`);
+      }
+      next.providers[pid] = { ...(next.providers[pid] ?? { baseURL: '' }), ...p } as CatalogProvider;
+    }
+  }
+  if (existsSync(path)) {
+    copyFileSync(path, `${path}.bak`);
+  }
+  writeFileSync(path, JSON.stringify(next, null, 2) + '\n', 'utf8');
+  return next;
+}
+
+/** Restore the last saved catalog. Returns null when there is no backup. */
+export function undoCatalog(): Catalog | null {
+  const path = join(WORKSPACE_DIR, 'providers.json');
+  const bak = `${path}.bak`;
+  if (!existsSync(bak)) return null;
+  copyFileSync(bak, path);
+  return loadCatalog();
+}
+
+/** True when an undo backup exists. */
+export function canUndoCatalog(): boolean {
+  return existsSync(join(WORKSPACE_DIR, 'providers.json.bak'));
 }

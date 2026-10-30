@@ -134,9 +134,110 @@ export async function summarizeRole(text: string): Promise<string> {
     return '';
   }
 }
-
-export async function getHistory(conversationId: string): Promise<HistoryMessage[]> {  const res = await fetch(`${AGENT_URL}/history/${conversationId}`);
+export async function getHistory(conversationId: string): Promise<HistoryMessage[]> {
+  const res = await fetch(`${AGENT_URL}/history/${conversationId}`);
   if (!res.ok) throw new Error(`agent /history → ${res.status}`);
   const { messages } = (await res.json()) as { messages: HistoryMessage[] };
   return messages;
+}
+
+/** Server status: workspace, permission mode, search key, provider. */
+export async function getServerStatus(): Promise<{
+  permissionMode: 'permissive' | 'enforcing';
+  provider: { baseURL: string; model: string };
+}> {
+  const res = await fetch(`${AGENT_URL}/status`);
+  if (!res.ok) throw new Error(`agent /status → ${res.status}`);
+  return (await res.json()) as {
+    permissionMode: 'permissive' | 'enforcing';
+    provider: { baseURL: string; model: string };
+  };
+}
+
+// ---- Settings (permissions + providers) ----
+
+export interface PermissionRule {
+  permission: string;
+  pattern: string;
+  action: 'allow' | 'ask' | 'deny';
+}
+
+export async function getPermissions(): Promise<{ rules: PermissionRule[]; canUndo: boolean }> {
+  const res = await fetch(`${AGENT_URL}/permissions`);
+  if (!res.ok) throw new Error(`agent /permissions → ${res.status}`);
+  return (await res.json()) as { rules: PermissionRule[]; canUndo: boolean };
+}
+
+export async function setPermissions(rules: PermissionRule[]): Promise<PermissionRule[]> {
+  const res = await fetch(`${AGENT_URL}/permissions`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rules }),
+  });
+  if (!res.ok) {
+    const { error } = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(error ?? `agent /permissions → ${res.status}`);
+  }
+  const { rules: saved } = (await res.json()) as { rules: PermissionRule[] };
+  return saved;
+}
+
+/** Restore permissions to before the last save. Returns null when nothing to undo. */
+export async function undoPermissions(): Promise<{ rules: PermissionRule[]; canUndo: boolean } | null> {
+  const res = await fetch(`${AGENT_URL}/permissions/undo`, { method: 'POST' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`agent /permissions/undo → ${res.status}`);
+  return (await res.json()) as { rules: PermissionRule[]; canUndo: boolean };
+}
+
+export interface ProviderInfo {
+  baseURL: string;
+  keyConfigured: boolean;
+  keystore: string;
+  models: string[];
+}
+
+export interface ProvidersState {
+  defaults: { provider?: string; model?: string } | null;
+  providers: Record<string, ProviderInfo>;
+  canUndo: boolean;
+}
+
+export async function getProviders(): Promise<ProvidersState> {
+  const res = await fetch(`${AGENT_URL}/providers`);
+  if (!res.ok) throw new Error(`agent /providers → ${res.status}`);
+  return (await res.json()) as ProvidersState;
+}
+
+export async function setProviders(patch: {
+  defaults?: { provider?: string; model?: string };
+  providers?: Record<string, { baseURL?: string; models?: Record<string, unknown> }>;
+}): Promise<void> {
+  const res = await fetch(`${AGENT_URL}/providers`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const { error } = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(error ?? `agent /providers → ${res.status}`);
+  }
+}
+
+/** Restore providers to before the last save. Returns null when nothing to undo. */
+export async function undoProviders(): Promise<ProvidersState | null> {
+  const res = await fetch(`${AGENT_URL}/providers/undo`, { method: 'POST' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`agent /providers/undo → ${res.status}`);
+  return (await res.json()) as ProvidersState;
+}
+
+/** Store an API key in the server keystore. Values are never readable back. */
+export async function setProviderKey(name: string, value: string): Promise<void> {
+  const res = await fetch(`${AGENT_URL}/keys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, value }),
+  });
+  if (!res.ok) throw new Error(`agent /keys → ${res.status}`);
 }

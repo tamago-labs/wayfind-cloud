@@ -186,10 +186,13 @@ export default function AppShell() {
           })();
         }
       } catch (err) {
-        console.error('[AppShell] agent send failed:', err);
+        // Surface the real failure (e.g. the SDK serialize message) instead
+        // of a generic line — the user can paste it straight back for debug.
+        const detail = err instanceof Error ? err.message : String(err);
+        console.error('[AppShell] agent send failed:', detail);
         finish((b) => ({
           ...b,
-          msgs: [...b.msgs.filter((m) => m.t !== 'typing'), { t: 'b', x: 'Hmm, that run failed. Is the computer server running? Try again.' }],
+          msgs: [...b.msgs.filter((m) => m.t !== 'typing'), { t: 'b', x: `That run failed: ${detail.slice(0, 300)}` }],
         }));
       }
     })();

@@ -1,8 +1,9 @@
 // 05 - approval flow (SDK-native interrupt/resume): force `ask`s (write is
 // ask-by-default), then APPROVE every ask on the first run (must complete and
 // write the file) and REJECT the first ask on the second run (file must NOT
-// be written). Only runs against an enforcing server; SKIPs on permissive.
-// Boot one with: PERMISSION_MODE=enforcing npx tsx src/server.ts  (from computer/)
+// be written). Only runs against an enforcing server; SKIPs on permissive
+// (opt-in via PERMISSION_MODE=permissive — enforcing is the default).
+// Boot one with: npx tsx src/server.ts  (from computer/)
 // Run: npx tsx scripts/computer/05-approval-flow.ts
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -45,7 +46,7 @@ async function approveAll(runId: string, events: Promise<SseEvent[]>): Promise<S
 async function main(): Promise<void> {
   const status = (await (await fetch(`${AGENT_URL}/status`)).json()) as { permissionMode?: string };
   if (status.permissionMode !== 'enforcing') {
-    console.log('05-approval-flow: SKIP (server is permissive; boot with PERMISSION_MODE=enforcing to exercise interrupt/resume)');
+    console.log('05-approval-flow: SKIP (server is permissive; enforcing is the default — unset PERMISSION_MODE)');
     return;
   }
   const stamp = Date.now();

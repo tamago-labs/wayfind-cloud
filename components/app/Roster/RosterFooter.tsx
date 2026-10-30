@@ -9,6 +9,7 @@ import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
+import SettingsModal from './SettingsModal';
 
 const dataClient = generateClient<Schema>();
 
@@ -18,6 +19,7 @@ export default function RosterFooter() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [nameOpen, setNameOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     fetchUserAttributes()
@@ -127,14 +129,14 @@ export default function RosterFooter() {
                 <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />
                 <button
                   role="menuitem"
-                  disabled
-                  aria-disabled="true"
-                  title="Coming soon"
-                  className="flex w-full cursor-not-allowed items-center gap-2.5 px-4 py-2.5 text-left text-sm font-semibold text-heroslate/60"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setSettingsOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm font-semibold text-navy hover:bg-ice"
                 >
                   <Settings className="h-4 w-4" strokeWidth={2.2} />
                   Settings
-                  <span className="ml-auto rounded-full bg-ice px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide">Soon</span>
                 </button>
                 <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />
                 <button
@@ -175,6 +177,7 @@ export default function RosterFooter() {
         initialName={displayName}
         onSaved={setDisplayName}
       />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

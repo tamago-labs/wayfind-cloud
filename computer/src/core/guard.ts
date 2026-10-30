@@ -15,7 +15,7 @@ export interface ApprovalRequest {
   id: string;
   permission: string;
   target: string;
-  /** True when auto-allowed in permissive mode (v1 default) — audit only. */
+  /** True when auto-allowed in permissive mode — audit only. */
   auto?: boolean;
 }
 
@@ -30,12 +30,30 @@ interface RunCtx {
 }
 
 const runStore = new AsyncLocalStorage<RunCtx>();
-const callLogs = new Map<string, Array<{ tool: string; target: string }>>();
+const callLogs = new Map<string, Array<{ tool: string; target: string }>>;
 
-/** v1 default: permissive — asks auto-allow and are logged for audit.
- * Set PERMISSION_MODE=enforcing to pause on asks via SDK interruptions. */
+/**
+ * Per-run approval grants: approving once auto-passes the same
+ * permission+target for the rest of that run. Scoped to the run — a new
+ * run asks again. Cleared with the call log in clearRunLog().
+ */
+const runGrants = new Map<string, Set<string>>();
+const grantKey = (permission: string, target: string): string => `${permission}::${target}`;
+
+export function grantForRun(runId: string, permission: string, target: string): void {
+  const grants = runGrants.get(runId) ?? new Set<string>();
+  grants.add(grantKey(permission, target));
+  runGrants.set(runId, grants);
+}
+
+function hasGrant(runId: string, permission: string, target: string): boolean {
+  return runGrants.get(runId)?.has(grantKey(permission, target)) ?? false;
+}
+
+/** Default: enforcing — asks park until approved. Set
+ * PERMISSION_MODE=permissive to auto-allow asks (audit-logged). */
 export function permissionMode(): 'permissive' | 'enforcing' {
-  return process.env.PERMISSION_MODE === 'enforcing' ? 'enforcing' : 'permissive';
+  return process.env.PERMISSION_MODE === 'permissive' ? 'permissive' : 'enforcing';
 }
 
 function wildcard(pattern: string, value: string): boolean {
@@ -59,7 +77,10 @@ export function approvalPolicy<TArgs>(
   return async (_ctx: unknown, input: TArgs) => {
     if (runStore.getStore()?.child) return false;
     if (permissionMode() !== 'enforcing') return false;
-    return decide(loadRules(), permission, targetOf(input as TArgs)) === 'ask';
+    const target = targetOf(input);
+    // Already approved this run — don't park again.
+    if (hasGrant(runStore.getStore()?.runId ?? '', permission, target)) return false;
+    return decide(loadRules(), permission, target) === 'ask';
   };
 }
 
@@ -84,8 +105,11 @@ export function guarded<TArgs, TResult>(
     if (action === 'ask') {
       // Audit only. The SDK interruption flow (needsApproval) is the sole
       // enforcer in enforcing mode — reaching execute means this call was
-      // approved (fresh resume or auto). Permissive mode auto-allows.
-      opts.onApproval?.({ id: randomUUID(), permission, target, auto: permissionMode() === 'permissive' });
+      // approved (fresh resume, per-run grant, or auto). Permissive mode auto-allows.
+      const ctxRunId = runStore.getStore()?.runId ?? 'cli';
+      if (!hasGrant(ctxRunId, permission, target)) {
+        opts.onApproval?.({ id: randomUUID(), permission, target, auto: permissionMode() === 'permissive' });
+      }
     }
     const runId = runStore.getStore()?.runId ?? 'cli';
     const log = callLogs.get(runId) ?? [];
@@ -101,6 +125,7 @@ export function guarded<TArgs, TResult>(
 
 export function clearRunLog(runId: string): void {
   callLogs.delete(runId);
+  runGrants.delete(runId);
 }
 
 export function toolCallCount(runId: string): number {

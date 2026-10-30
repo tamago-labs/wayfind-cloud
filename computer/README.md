@@ -46,11 +46,11 @@ providers catalog (`providers.json`: baseURL, key source, per-model
 context + $/1M) with true per-agent providers (`OpenAIProvider`;
 Research runs the `small` entry) · key rotation (keystore arrays,
 round-robin) · `task` tool spawning linked child runs, capped at
-`MAX_CHILD_RUNS` (default 4, extras queue) · approvals: **v1 default
-is permissive** (`PERMISSION_MODE`) — asks auto-allow and log
-`{type:'approval', auto:true}` for audit, so nothing hangs; enforcing
-mode parks (emits id, `POST /approvals/:id` decides) but needs a
-hang-proof resume transport (SDK-native, not yet built) · strict MCP schemas (JSON-Schema→zod converter; stdio +
+`MAX_CHILD_RUNS` (default 4, extras queue) · approvals: **default
+is enforcing** (`PERMISSION_MODE`) — asks park (emit id,
+`POST /approvals/:id` decides; SDK-native resume) with a per-run grant so
+one approval covers repeats in the same run; `PERMISSION_MODE=permissive`
+auto-allows and logs `{type:'approval', auto:true}` for audit · strict MCP schemas (JSON-Schema→zod converter; stdio +
 remote streamable-HTTP servers) · usage events with spend math when
 tokens + rates are present (this SDK surface exposes no token counts —
 run-level stats until raw provider usage is tapped) · `wayfind models`
