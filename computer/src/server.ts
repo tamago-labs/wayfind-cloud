@@ -1,7 +1,8 @@
 // Agent HTTP + SSE server. Serves the browser direct (SSE) and the
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
+import OpenAI from 'openai';
+import { PORT, PROVIDER_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
 import { permissionMode } from './core/guard.js';
 import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider } from './providers/provider.js';
@@ -189,6 +190,43 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   const streamMatch = pathname.match(/^\/stream\/([A-Za-z0-9-]+)$/);
   if (streamMatch && method === 'GET') return void sse(res, streamMatch[1]);
+
+  // One cheap model call: compress a user's first message (their bot's job
+  // description) into a short role label. No tools, no session.
+  if (pathname === '/summarize-role' && method === 'POST') {
+    try {
+      const { text } = JSON.parse(await readBody(req)) as { text?: string };
+      if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text }' });
+      const client = new OpenAI({ apiKey: PROVIDER_API_KEY, baseURL: PROVIDER_BASE_URL });
+      // NOTE: muse-spark spends part of the token budget on hidden reasoning
+      // (usage.reasoning_tokens) — a small max_tokens starves the visible
+      // reply and yields null content. Keep the budget generous; the answer
+      // itself is still one short line.
+      const out = await client.chat.completions.create({
+        model: PROVIDER_MODEL,
+        max_tokens: 1000,
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You name AI assistant roles. Compress the user\'s job description into a short role label: 2-6 words, no quotes, no period, no preamble. Examples: "inbox triage", "expense manager", "talent scout". If the text is vague or not a job description, reply exactly: general assistant.',
+          },
+          { role: 'user', content: text.slice(0, 2000) },
+        ],
+      });
+      const role = (out.choices[0]?.message?.content ?? '')
+        .split('\n')[0]
+        .replace(/^["'“”]+|["'“”.]+$/g, '')
+        .trim()
+        .slice(0, 80);
+      return void json(res, 200, { role: role || 'general assistant' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[summarize-role] failed:', msg);
+      return void json(res, 500, { error: 'summarize failed' });
+    }
+  }
 
   return void json(res, 404, { error: 'not found' });
 }

@@ -10,6 +10,7 @@ import DeleteBotModal from './DeleteBotModal';
 export interface BotEdits {
   name: string;
   role: string;
+  isChiefOfStaff: boolean;
   color: MascotColor;
   shape: MascotShape;
 }
@@ -20,6 +21,7 @@ interface BotPanelProps {
   botId: string | null;
   name: string;
   role: string;
+  isChiefOfStaff: boolean;
   color: MascotColor;
   shape: MascotShape;
   synced: boolean;
@@ -27,10 +29,10 @@ interface BotPanelProps {
   onDelete: () => Promise<string | null>;
 }
 
-export default function BotPanel({ open, onClose, botId, name, role, color, shape, synced, onSave, onDelete }: BotPanelProps) {
+export default function BotPanel({ open, onClose, botId, name, role, isChiefOfStaff, color, shape, synced, onSave, onDelete }: BotPanelProps) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const v = { name, role, color, shape };
+  const v = { name, role, isChiefOfStaff, color, shape };
 
   return (
     <div

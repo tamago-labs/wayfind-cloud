@@ -17,7 +17,7 @@ export default function BotPanelBody({ value: v, botId, synced, onEdit }: BotPan
       <button
         onClick={onEdit}
         aria-label="Edit Bot appearance"
-        title="Edit name, color and shape"
+        title="Edit name, role, color and shape"
         className="mx-auto mt-5 rounded-full transition hover:opacity-80"
       >
         <Mascot color={v.color} shape={v.shape} size="lg" motion="none" />
@@ -29,8 +29,11 @@ export default function BotPanelBody({ value: v, botId, synced, onEdit }: BotPan
       )}
 
       <p className="mt-5 truncate text-center text-lg font-bold text-navy">
-        {v.name} <span className="text-sm font-medium text-heroslate">· {v.role}</span>
+        {v.name} <span className="text-sm font-medium text-heroslate">· {v.role || 'No role yet'}</span>
       </p>
+      {v.isChiefOfStaff && (
+        <p className="mt-2 text-center text-xs font-bold uppercase tracking-wider text-cta">Chief of staff</p>
+      )}
       <BotPanelTabs botId={botId} />
     </>
   );

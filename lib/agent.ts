@@ -119,8 +119,23 @@ export async function answerQuestion(qid: string, answers: string[][]): Promise<
   return res.ok;
 }
 
-export async function getHistory(conversationId: string): Promise<HistoryMessage[]> {
-  const res = await fetch(`${AGENT_URL}/history/${conversationId}`);
+/** Compress a first message into a short role label. Returns '' on failure (caller keeps role empty). */
+export async function summarizeRole(text: string): Promise<string> {
+  try {
+    const res = await fetch(`${AGENT_URL}/summarize-role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) return '';
+    const { role } = (await res.json()) as { role?: string };
+    return typeof role === 'string' ? role.trim().slice(0, 80) : '';
+  } catch {
+    return '';
+  }
+}
+
+export async function getHistory(conversationId: string): Promise<HistoryMessage[]> {  const res = await fetch(`${AGENT_URL}/history/${conversationId}`);
   if (!res.ok) throw new Error(`agent /history → ${res.status}`);
   const { messages } = (await res.json()) as { messages: HistoryMessage[] };
   return messages;

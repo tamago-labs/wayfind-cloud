@@ -11,7 +11,7 @@ import NewBotModal from './Roster/NewBotModal';
 import BotPanel, { type BotEdits } from './BotPanel';
 import Thread from './Thread';
 import Composer from './Composer';
-import { answerQuestion, decideApproval, getHistory, postTask, streamRun } from '@/lib/agent';
+import { answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
 import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
@@ -20,9 +20,9 @@ const FOLLOW_UP_NO = 'Okay, I’ve held it. Tell me what to change.';
 
 const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
 const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
-const GREETING: Msg = { t: 'b', x: 'Hi! Give me my job in your first message: what to do, what never to do, and what to remember.' };
+const GREETING: Msg = { t: 'b', x: 'Hi! Give me my role in your first message: what to do, what never to do, and what to remember.' };
 
-type ViewBot = SeedBot & { id: string | null };
+type ViewBot = SeedBot & { id: string | null; isChiefOfStaff: boolean };
 
 export default function AppShell() {
   const { user } = useAuthenticator();
@@ -49,7 +49,8 @@ export default function AppShell() {
           (data ?? []).map((b) => ({
             id: b.id,
             name: b.name,
-            role: b.role,
+            role: b.role ?? '',
+            isChiefOfStaff: b.isChiefOfStaff ?? false,
             color: validColors.includes(b.color as MascotColor) ? (b.color as MascotColor) : 'amber',
             shape: validShapes.includes(b.shape as MascotShape) ? (b.shape as MascotShape) : 'blob',
             busy: false,
@@ -113,12 +114,17 @@ export default function AppShell() {
     const targetId = bot.id;
     const targetName = bot.name;
     const targetRole = bot.role;
+    const targetIsChief = bot.isChiefOfStaff;
     setDraft('');
     patchBot(targetIndex, (b) => ({ ...b, busy: true, msgs: [...b.msgs, { t: 'u', x: v }, { t: 'typing' }] }));
     void (async () => {
       const finish = (fn: (b: ViewBot) => ViewBot) => patchBot(targetIndex, (b) => ({ ...fn(b), busy: false }));
       try {
-        const system = targetId ? `You are "${targetName}". Role: ${targetRole}.` : undefined;
+        const system = targetId
+          ? targetRole
+            ? `You are "${targetName}". Role: ${targetRole}.`
+            : `You are "${targetName}". Your role is not defined yet.`
+          : undefined;
         const runId = await postTask(v, targetId ?? undefined, system);
         await streamRun(runId, {
           onChunk: (delta) =>
@@ -163,6 +169,22 @@ export default function AppShell() {
             })),
         });
         patchBot(targetIndex, (b) => ({ ...b, busy: false }));
+        // First chat defines the role: AI compresses the user's job
+        // description into a short label and saves it (manual edits win —
+        // this only fires while the role is still empty, never for the chief).
+        if (targetId && !targetRole && !targetIsChief) {
+          void (async () => {
+            try {
+              const role = await summarizeRole(v);
+              if (!role) return;
+              const { errors } = await dataClient.models.Bot.update({ id: targetId, role });
+              if (errors?.length) return;
+              patchBot(targetIndex, (b) => (b.role ? b : { ...b, role }));
+            } catch (err) {
+              console.error('[AppShell] role summarize failed:', err);
+            }
+          })();
+        }
       } catch (err) {
         console.error('[AppShell] agent send failed:', err);
         finish((b) => ({
@@ -209,18 +231,31 @@ export default function AppShell() {
   // Returns an error message on failure, null on success.
   const saveBotEdits = async (edits: BotEdits): Promise<string | null> => {    const target = bots[cur];
     if (!target) return 'No Bot selected.';
+    // Chief always carries the chief role unless the user wrote something else.
+    const normalized = edits.isChiefOfStaff && !edits.role.trim() ? { ...edits, role: 'Chief of staff' } : edits;
     if (!target.id) {
-      patchBot(cur, (b) => ({ ...b, ...edits }));
+      patchBot(cur, (b) => ({ ...b, ...normalized }));
       return null;
     }
     try {
-      const { errors } = await dataClient.models.Bot.update({ id: target.id, ...edits });
+      // One chief of staff per user: unset the flag everywhere else first.
+      if (normalized.isChiefOfStaff && !target.isChiefOfStaff) {
+        const others = bots.filter((b) => b.isChiefOfStaff && b.id && b.id !== target.id);
+        for (const o of others) {
+          await dataClient.models.Bot.update({ id: o.id as string, isChiefOfStaff: false });
+        }
+        if (others.length > 0) {
+          const ids = new Set(others.map((o) => o.id));
+          setBots((prev) => prev.map((b) => (b.id && ids.has(b.id) ? { ...b, isChiefOfStaff: false } : b)));
+        }
+      }
+      const { errors } = await dataClient.models.Bot.update({ id: target.id, ...normalized });
       if (errors?.length) {
         const msg = errors.map((e) => e.message).join('; ');
         console.error('[AppShell] bot update failed:', msg);
         return msg;
       }
-      patchBot(cur, (b) => ({ ...b, ...edits }));
+      patchBot(cur, (b) => ({ ...b, ...normalized }));
       return null;
     } catch (err) {
       console.error('[AppShell] bot update failed:', err);
@@ -252,17 +287,25 @@ export default function AppShell() {
   };
 
   // Returns an error message on failure, null on success.
-  const createBot = async (name: string): Promise<string | null> => {
+  const createBot = async (name: string, isChief: boolean): Promise<string | null> => {
     const ownerId = user?.userId;
     if (!ownerId) return 'Not signed in. Please sign in again.';
     const n = newCount.current++;
     const color = newBotColors[n % newBotColors.length];
     const shape = newBotShapes[n % newBotShapes.length];
     try {
+      // One chief of staff per user: unset the flag on the current chief first.
+      if (isChief) {
+        const prev = bots.find((b) => b.isChiefOfStaff && b.id);
+        if (prev?.id) {
+          await dataClient.models.Bot.update({ id: prev.id, isChiefOfStaff: false });
+          patchBot(bots.indexOf(prev), (b) => ({ ...b, isChiefOfStaff: false }));
+        }
+      }
       const { data, errors } = await dataClient.models.Bot.create({
         ownerId,
         name,
-        role: 'No job yet',
+        ...(isChief ? { role: 'Chief of staff', isChiefOfStaff: true } : {}),
         color,
         shape,
         status: 'active',
@@ -273,7 +316,10 @@ export default function AppShell() {
         return msg;
       }
       console.log('[AppShell] bot created:', data.id);
-      setBots((prev) => [{ id: data.id, name, role: 'No job yet', color, shape, busy: false, msgs: [] }, ...prev]);
+      setBots((prev) => [
+        { id: data.id, name, role: isChief ? 'Chief of staff' : '', isChiefOfStaff: isChief, color, shape, busy: false, msgs: [] },
+        ...prev,
+      ]);
       setCur(0);
       setSideOpen(false);
       return null;
@@ -356,7 +402,7 @@ export default function AppShell() {
           >
             <Mascot color={bot.color} shape={bot.shape} size="xs" motion="none" />
             <span>{bot.name}</span>
-            <span className="hidden text-sm font-medium text-heroslate sm:inline">· {bot.role}</span>
+            <span className="hidden text-sm font-medium text-heroslate sm:inline">· {bot.role || 'No role yet'}</span>
           </button>
           <button
             onClick={() => setPanelOpen((o) => !o)}
@@ -383,6 +429,7 @@ export default function AppShell() {
         botId={bot.id}
         name={bot.name}
         role={bot.role}
+        isChiefOfStaff={bot.isChiefOfStaff}
         color={bot.color}
         shape={bot.shape}
         synced={bot.id !== null}

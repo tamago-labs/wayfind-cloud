@@ -90,6 +90,31 @@ export default function BotEditModal({ open, onClose, initial, onSave }: BotEdit
                 className="mt-1.5 w-full rounded-xl border border-navy/15 bg-ice px-4 py-2.5 text-sm text-navy outline-none placeholder:text-heroslate/60 focus:border-cta"
               />
 
+              <label className="mt-4 block text-xs font-bold uppercase tracking-wider text-heroslate">Role</label>
+              <input
+                value={v.role}
+                onChange={(e) => setV({ ...v, role: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void save();
+                }}
+                placeholder="e.g. inbox triage — or leave empty for AI to assign"
+                maxLength={80}
+                className="mt-1.5 w-full rounded-xl border border-navy/15 bg-ice px-4 py-2.5 text-sm text-navy outline-none placeholder:text-heroslate/60 focus:border-cta"
+              />
+
+              <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-navy">
+                <input
+                  type="checkbox"
+                  checked={v.isChiefOfStaff}
+                  onChange={(e) => setV({ ...v, isChiefOfStaff: e.target.checked })}
+                  className="h-4 w-4 accent-[#2F7BFF]"
+                />
+                <span>
+                  <span className="font-semibold">Chief of staff</span>
+                  <span className="text-heroslate"> — my main Bot (only one)</span>
+                </span>
+              </label>
+
               <p className="mt-4 text-xs font-bold uppercase tracking-wider text-heroslate">Color</p>
               <div className="mt-2 flex gap-2">
                 {colors.map((c) => (

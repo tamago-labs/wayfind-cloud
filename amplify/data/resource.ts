@@ -33,7 +33,8 @@ const schema = a.schema({
       userProfileId: a.id(),
       userProfile: a.belongsTo("UserProfile", "userProfileId"),
       name: a.string().required(),
-      role: a.string().required(),
+      role: a.string(), // absent = unassigned; AI assigns after first chat, user can edit
+      isChiefOfStaff: a.boolean(), // at most one per user (enforced client-side)
       description: a.string(), // the durable "your job is…" brief
       color: a.string(),
       shape: a.string(),

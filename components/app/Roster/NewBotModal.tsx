@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 interface NewBotModalProps {
   open: boolean;
   onClose: () => void;
-  onCreate: (name: string) => Promise<string | null>;
+  onCreate: (name: string, isChief: boolean) => Promise<string | null>;
   taken?: string[];
 }
 
@@ -36,12 +36,14 @@ function randomName(taken: string[]): string {
 
 export default function NewBotModal({ open, onClose, onCreate, taken = [] }: NewBotModalProps) {
   const [name, setName] = useState('');
+  const [isChief, setIsChief] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
       setName(randomName(taken));
+      setIsChief(false);
       setError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,7 +63,7 @@ export default function NewBotModal({ open, onClose, onCreate, taken = [] }: New
     if (!v || saving) return;
     setSaving(true);
     setError(null);
-    const err = await onCreate(v);
+    const err = await onCreate(v, isChief);
     setSaving(false);
     if (err) {
       setError(err);
@@ -93,7 +95,7 @@ export default function NewBotModal({ open, onClose, onCreate, taken = [] }: New
           >
             <div className="p-5">
               <h3 className="font-brico text-lg font-bold text-navy">Name your Bot</h3>
-              <p className="mt-1 text-sm text-heroslate">Give it a name — you&rsquo;ll define its job in your first message.</p>
+              <p className="mt-1 text-sm text-heroslate">{isChief ? 'Your main Bot — it coordinates everything else.' : 'Give it a name — you\u2019ll define its role in your first message.'}</p>
               <div className="mt-4 flex gap-2">
                 <input
                   autoFocus
@@ -106,16 +108,19 @@ export default function NewBotModal({ open, onClose, onCreate, taken = [] }: New
                   maxLength={40}
                   className="min-w-0 flex-1 rounded-xl border border-navy/15 bg-ice px-4 py-2.5 text-sm text-navy outline-none placeholder:text-heroslate/60 focus:border-cta"
                 />
-                <button
-                  type="button"
-                  onClick={() => setName(randomName(taken))}
-                  title="Suggest another name"
-                  aria-label="Suggest another name"
-                  className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-xl border border-navy/15 bg-ice text-lg text-navy hover:border-cta"
-                >
-                  🎲
-                </button>
               </div>
+              <label className="mt-4 flex cursor-pointer items-center gap-2.5 text-sm text-navy">
+                <input
+                  type="checkbox"
+                  checked={isChief}
+                  onChange={(e) => setIsChief(e.target.checked)}
+                  className="h-4 w-4 accent-[#2F7BFF]"
+                />
+                <span>
+                  <span className="font-semibold">Chief of staff</span>
+                  <span className="text-heroslate"> — my main Bot (only one)</span>
+                </span>
+              </label>
               {error && (
                 <p className="mt-2 text-sm font-medium text-red-600" role="alert">
                   {error}
