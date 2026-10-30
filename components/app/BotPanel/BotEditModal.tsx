@@ -111,7 +111,7 @@ export default function BotEditModal({ open, onClose, initial, onSave }: BotEdit
                 />
                 <span>
                   <span className="font-semibold">Chief of staff</span>
-                  <span className="text-heroslate"> — my main Bot (only one)</span>
+                  <span className="text-heroslate"> — coordinates your other bots</span>
                 </span>
               </label>
 

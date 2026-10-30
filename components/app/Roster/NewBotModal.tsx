@@ -95,7 +95,7 @@ export default function NewBotModal({ open, onClose, onCreate, taken = [] }: New
           >
             <div className="p-5">
               <h3 className="font-brico text-lg font-bold text-navy">Name your Bot</h3>
-              <p className="mt-1 text-sm text-heroslate">{isChief ? 'Your main Bot — it coordinates everything else.' : 'Give it a name — you\u2019ll define its role in your first message.'}</p>
+              <p className="mt-1 text-sm text-heroslate">{isChief ? 'It talks to your other bots and coordinates them.' : 'Give it a name — you\u2019ll define its role in your first message.'}</p>
               <div className="mt-4 flex gap-2">
                 <input
                   autoFocus
@@ -118,7 +118,7 @@ export default function NewBotModal({ open, onClose, onCreate, taken = [] }: New
                 />
                 <span>
                   <span className="font-semibold">Chief of staff</span>
-                  <span className="text-heroslate"> — my main Bot (only one)</span>
+                  <span className="text-heroslate"> — coordinates your other bots</span>
                 </span>
               </label>
               {error && (

@@ -31,9 +31,6 @@ export default function BotPanelBody({ value: v, botId, synced, onEdit }: BotPan
       <p className="mt-5 truncate text-center text-lg font-bold text-navy">
         {v.name} <span className="text-sm font-medium text-heroslate">· {v.role || 'No role yet'}</span>
       </p>
-      {v.isChiefOfStaff && (
-        <p className="mt-2 text-center text-xs font-bold uppercase tracking-wider text-cta">Chief of staff</p>
-      )}
       <BotPanelTabs botId={botId} />
     </>
   );

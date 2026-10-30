@@ -1,7 +1,7 @@
 import type { SeedBot } from '../seed';
 
 export interface RosterItem {
-  bot: SeedBot;
+  bot: SeedBot & { isChiefOfStaff?: boolean };
   index: number;
 }
 
