@@ -11,6 +11,7 @@ import { loadRules, saveRules, undoRules, canUndoRules } from './core/permission
 import { getRun, getHistory, listPendingApprovals, listPendingQuestions, listRuns, resolveApproval, answerQuestion, startRun } from './runs/runner.js';
 import { maskedKeys, writeKey } from './providers/keystore.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
+import { transcribeWav, VoiceError } from './voice/transcribe.js';
 
 /** Browser origin for local dev (Amplify dev server). Loosen only for local. */
 const CORS_ORIGIN = process.env.AGENT_CORS_ORIGIN ?? '*';
@@ -35,6 +36,24 @@ function readBody(req: IncomingMessage): Promise<string> {
       data += c;
     });
     req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+function readBytes(req: IncomingMessage, max: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > max) {
+        reject(new Error('Body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
@@ -131,6 +150,23 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const historyMatch = pathname.match(/^\/history\/([A-Za-z0-9-]+)$/);
   if (historyMatch && method === 'GET') {
     return void json(res, 200, { messages: getHistory(historyMatch[1]) });
+  }
+
+  // Voice: browser posts raw WAV bytes (audio/wav), we proxy Meta ASR.
+  // User-initiated input like typing — no approval card.
+  if (pathname === '/voice/transcribe' && method === 'POST') {
+    try {
+      const ct = req.headers['content-type'] ?? '';
+      if (!ct.startsWith('audio/')) return void json(res, 400, { error: 'Content-Type must be audio/wav' });
+      const wav = await readBytes(req, 7 * 1024 * 1024);
+      const out = await transcribeWav(wav);
+      return void json(res, 200, out);
+    } catch (err) {
+      if (err instanceof VoiceError) return void json(res, err.status, { error: err.message });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[voice] transcribe failed:', msg);
+      return void json(res, 500, { error: `transcribe failed: ${msg}` });
+    }
   }
 
   if (pathname === '/approvals' && method === 'GET') {

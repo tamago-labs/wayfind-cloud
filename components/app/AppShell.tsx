@@ -116,8 +116,10 @@ export default function AppShell() {
   const patchBot = (index: number, fn: (b: ViewBot) => ViewBot) =>
     setBots((prev) => prev.map((b, i) => (i === index ? fn(b) : b)));
 
-  const send = () => {
-    const v = draft.trim();
+  const send = () => sendText(draft);
+
+  const sendText = (raw: string) => {
+    const v = raw.trim();
     if (!v || !bot || bot.busy) return;
     const targetIndex = cur;
     const targetId = bot.id;
@@ -445,7 +447,7 @@ export default function AppShell() {
           Local dev — replies come from your computer server. Make sure it’s running on :8080.
         </div>
         <Thread bot={bot} onApprove={approve} onAnswer={answer} />
-        <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} onOpenSkills={() => setSkillsOpen(true)} />
+        <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} onVoiceSend={sendText} onOpenSkills={() => setSkillsOpen(true)} />
       </main>
 
       <BotPanel
