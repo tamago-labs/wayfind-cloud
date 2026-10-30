@@ -36,7 +36,6 @@ export default function AppShell() {
   const [botModalOpen, setBotModalOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
-  const newCount = useRef(0);
 
   // Roster comes from the database; seed.ts stays as shape reference only.
   // Re-runs on sign-in and whenever a bot is seeded/changed elsewhere
@@ -116,6 +115,12 @@ export default function AppShell() {
   const patchBot = (index: number, fn: (b: ViewBot) => ViewBot) =>
     setBots((prev) => prev.map((b, i) => (i === index ? fn(b) : b)));
 
+  // Index-stable patching for in-flight runs: roster inserts (chief-created
+  // bots prepend) shift indices mid-stream, so everything after the
+  // synchronous optimistic update patches by bot id.
+  const patchBotById = (id: string, fn: (b: ViewBot) => ViewBot) =>
+    setBots((prev) => prev.map((b) => (b.id === id ? fn(b) : b)));
+
   const send = () => sendText(draft);
 
   const sendText = (raw: string) => {
@@ -129,8 +134,13 @@ export default function AppShell() {
     const targetSkills = bot.skillsEnabled;
     setDraft('');
     patchBot(targetIndex, (b) => ({ ...b, busy: true, msgs: [...b.msgs, { t: 'u', x: v }, { t: 'typing' }] }));
+    // Stable identity for the whole run: roster inserts shift indices, so
+    // every patch below keys on the bot id. Falls back to the captured
+    // index only when the bot has no id yet (local-only, pre-save).
+    const patchTarget = (fn: (b: ViewBot) => ViewBot) =>
+      targetId ? patchBotById(targetId, fn) : patchBot(targetIndex, fn);
     void (async () => {
-      const finish = (fn: (b: ViewBot) => ViewBot) => patchBot(targetIndex, (b) => ({ ...fn(b), busy: false }));
+      const finish = (fn: (b: ViewBot) => ViewBot) => patchTarget((b) => ({ ...fn(b), busy: false }));
       try {
         const system = targetId
           ? targetRole
@@ -149,7 +159,7 @@ export default function AppShell() {
         });
         await streamRun(runId, {
           onChunk: (delta) =>
-            patchBot(targetIndex, (b) => {
+            patchTarget((b) => {
               const msgs = b.msgs.filter((m) => m.t !== 'typing');
               const last = msgs[msgs.length - 1];
               if (last && last.t === 'b') msgs[msgs.length - 1] = { t: 'b', x: last.x + delta };
@@ -157,7 +167,7 @@ export default function AppShell() {
               return { ...b, msgs };
             }),
           onAgent: (name) =>
-            patchBot(targetIndex, (b) => {
+            patchTarget((b) => {
               const msgs = b.msgs.filter((m) => m.t !== 'typing');
               const row: Msg = { t: 'tool', x: `${name}` };
               const last = msgs[msgs.length - 1];
@@ -166,7 +176,7 @@ export default function AppShell() {
               return { ...b, msgs };
             }),
           onQuestion: (q) =>
-            patchBot(targetIndex, (b) => ({
+            patchTarget((b) => ({
               ...b,
               msgs: [
                 ...b.msgs.filter((m) => m.t !== 'typing'),
@@ -174,7 +184,7 @@ export default function AppShell() {
               ],
             })),
           onApproval: (a) =>
-            patchBot(targetIndex, (b) => ({
+            patchTarget((b) => ({
               ...b,
               msgs: [
                 ...b.msgs.filter((m) => m.t !== 'typing'),
@@ -189,7 +199,7 @@ export default function AppShell() {
               ],
             })),
           onBotRequest: (r) =>
-            patchBot(targetIndex, (b) => ({
+            patchTarget((b) => ({
               ...b,
               msgs: [
                 ...b.msgs.filter((m) => m.t !== 'typing'),
@@ -197,7 +207,7 @@ export default function AppShell() {
               ],
             })),
         });
-        patchBot(targetIndex, (b) => ({ ...b, busy: false }));
+        patchTarget((b) => ({ ...b, busy: false }));
         // First chat defines the role: AI compresses the user's job
         // description into a short label and saves it (manual edits win —
         // this only fires while the role is still empty, never for the chief).
@@ -208,7 +218,7 @@ export default function AppShell() {
               if (!role) return;
               const { errors } = await dataClient.models.Bot.update({ id: targetId, role });
               if (errors?.length) return;
-              patchBot(targetIndex, (b) => (b.role ? b : { ...b, role }));
+              patchTarget((b) => (b.role ? b : { ...b, role }));
             } catch (err) {
               console.error('[AppShell] role summarize failed:', err);
             }
@@ -332,12 +342,20 @@ export default function AppShell() {
   };
 
   // Core Bot insert (no navigation). Returns the created id or an error message.
-  const insertBot = async (name: string, isChief: boolean): Promise<{ botId: string | null; error: string | null }> => {
+  const insertBot = async (
+    name: string,
+    isChief: boolean,
+    role?: string,
+    description?: string,
+  ): Promise<{ botId: string | null; error: string | null }> => {
     const ownerId = user?.userId;
     if (!ownerId) return { botId: null, error: 'Not signed in. Please sign in again.' };
-    const n = newCount.current++;
-    const color = newBotColors[n % newBotColors.length];
-    const shape = newBotShapes[n % newBotShapes.length];
+    // Random look, avoiding combos already in the roster so new bots don't twin.
+    const used = new Set(bots.map((b) => `${b.color}/${b.shape}`));
+    const combos = newBotColors.flatMap((color) => newBotShapes.map((shape) => ({ color, shape })));
+    const free = combos.filter((c) => !used.has(`${c.color}/${c.shape}`));
+    const pool = free.length > 0 ? free : combos;
+    const { color, shape } = pool[Math.floor(Math.random() * pool.length)];
     try {
       // One chief of staff per user: unset the flag on the current chief first.
       if (isChief) {
@@ -351,6 +369,8 @@ export default function AppShell() {
         ownerId,
         name,
         ...(isChief ? { role: 'Chief of staff', isChiefOfStaff: true } : {}),
+        ...(!isChief && role ? { role } : {}),
+        ...(!isChief && description ? { description } : {}),
         color,
         shape,
         status: 'active',
@@ -362,7 +382,7 @@ export default function AppShell() {
       }
       console.log('[AppShell] bot created:', data.id);
       setBots((prev) => [
-        { id: data.id, name, role: isChief ? 'Chief of staff' : '', isChiefOfStaff: isChief, skillsEnabled: null, color, shape, busy: false, msgs: [] },
+        { id: data.id, name, role: isChief ? 'Chief of staff' : (role ?? ''), isChiefOfStaff: isChief, skillsEnabled: null, color, shape, busy: false, msgs: [] },
         ...prev,
       ]);
       return { botId: data.id, error: null };
@@ -419,7 +439,7 @@ export default function AppShell() {
       return;
     }
     void (async () => {
-      const { botId, error } = await insertBot(target.name, false);
+      const { botId, error } = await insertBot(target.name, false, target.role, target.description);
       // insertBot prepends to the roster — shift selection so the chief thread stays open.
       setCur((c) => c + 1);
       const done: 'created' | 'cancelled' = botId ? 'created' : 'cancelled';

@@ -443,6 +443,10 @@ export interface StartRunOpts {
   subagentType?: 'general' | 'research';
   /** Resume this child session (task_id) instead of starting fresh. */
   resumeTaskId?: string;
+  /** Delegated run (message_bot): acts under the parent's delegation grant —
+   * tool asks auto-pass audit-logged like `task` children, instead of
+   * parking on approvals nobody can see (only the chief's run streams). */
+  delegated?: boolean;
 }
 
 /** Max `task` delegation depth. At the cap the tool stays visible but asks
@@ -556,6 +560,7 @@ function makeMessageRunner(runState: Run): MessageRunner {
         system,
         allowedSkills: target.skills ?? undefined,
         depth: runState.depth + 1,
+        delegated: true,
       });
       runState.events.push({ type: 'agent', agent: `@${target.name} replied` });
       appendTranscript(runState.id, 'tool', `@${target.name} replied`, runState.parentId, runState.conversationId);
@@ -695,7 +700,7 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
       session = new MemorySession();
       childSessions.set(runState.id, { session, depth: runState.depth });
     }
-    const stream = await runWithContext(runState.id, !!runState.parentId, () =>
+    const stream = await runWithContext(runState.id, !!runState.parentId || !!opts.delegated, () =>
       run(agent, input, {
         stream: true,
         maxTurns: 20,

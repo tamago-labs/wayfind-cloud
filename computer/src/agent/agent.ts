@@ -94,7 +94,8 @@ export async function createTriageAgent(
     : '';
   const teamGuidance = team
     ? rosterDirectory(team.roster) +
-      ' When the user\'s text @mentions a bot by name, or asks you to consult one, call message_bot with that bot\'s name and relay its reply. '
+      ' When the user\'s text @mentions a bot by name, or asks you to consult one, call message_bot with that bot\'s name and relay its reply. ' +
+      'Delegate — do not redo the work yourself while it answers. '
     : '';
   if (ask) tools.push(createQuestionTool(opts, ask));
   if (runChild) tools.push(createTaskTool(runChild, opts));
