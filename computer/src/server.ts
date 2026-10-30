@@ -2,14 +2,13 @@
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import OpenAI from 'openai';
-import { PORT, PROVIDER_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
+import { PORT, MODAL_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
 import { permissionMode } from './core/guard.js';
 import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider } from './providers/provider.js';
-import { loadCatalog, resolveApiKey, saveCatalog, undoCatalog, canUndoCatalog } from './providers/providers.js';
+import { loadCatalog, resolveApiKey } from './providers/providers.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingQuestions, listRuns, resolveApproval, answerQuestion, startRun } from './runs/runner.js';
-import { maskedKeys, writeKey } from './providers/keystore.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
 
@@ -212,18 +211,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
 
-  // Privileged key-write channel (backend only in production — P2 adds auth).
-  if (pathname === '/keys' && method === 'POST') {
-    try {
-      const { name, value } = JSON.parse(await readBody(req)) as { name?: string; value?: string };
-      if (!name || !value) return void json(res, 400, { error: 'Body must be { name, value }' });
-      writeKey(name, value);
-      return void json(res, 200, { ok: true, keys: maskedKeys() });
-    } catch {
-      return void json(res, 400, { error: 'Invalid JSON body' });
-    }
-  }
-
   // Skills: installed catalog (Settings list), chat-importer endpoints,
   // and workspace discovery. Reloaded on every run — no restart needed.
   if (pathname === '/skills' && method === 'GET') {
@@ -304,8 +291,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
 
-  // Settings: provider catalog minus secrets. Key values are never returned
-  // (only keyConfigured flags); key writes go through POST /keys.
+  // Settings: provider catalog minus secrets. Read-only in v1 — the model is
+  // fixed per deployment and keys are provisioned by us (embedded in the
+  // MicroVM, .env locally). Key values are never returned (only
+  // keyConfigured flags).
   if (pathname === '/providers' && method === 'GET') {
     const catalog = loadCatalog();    const providers: Record<string, { baseURL: string; keyConfigured: boolean; keystore: string; models: string[] }> = {};
     for (const [pid, p] of Object.entries(catalog.providers ?? {})) {
@@ -313,36 +302,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       providers[pid] = {
         baseURL: p.baseURL,
         keyConfigured: key !== '' && key !== 'missing-key',
-        keystore: p.key?.keystore ?? 'PROVIDER_API_KEY',
+        keystore: p.key?.keystore ?? 'MODAL_API_KEY',
         models: Object.keys(p.models ?? {}),
       };
     }
-    return void json(res, 200, { defaults: catalog.defaults ?? null, providers, canUndo: canUndoCatalog() });
-  }
-
-  if (pathname === '/providers/undo' && method === 'POST') {
-    const catalog = undoCatalog();
-    if (!catalog) return void json(res, 404, { error: 'nothing to undo' });
-    return void json(res, 200, { ok: true, defaults: catalog.defaults ?? null, canUndo: canUndoCatalog() });
-  }
-
-  if (pathname === '/providers' && method === 'PUT') {
-    try {
-      const patch = JSON.parse(await readBody(req)) as {
-        defaults?: { provider?: string; model?: string };
-        providers?: Record<string, { baseURL?: string; models?: Record<string, unknown> }>;
-      };
-      if (typeof patch !== 'object' || patch === null) return void json(res, 400, { error: 'Body must be an object' });
-      const next = saveCatalog(patch);
-      const providers: Record<string, { baseURL: string; models: string[] }> = {};
-      for (const [pid, p] of Object.entries(next.providers ?? {})) {
-        providers[pid] = { baseURL: p.baseURL, models: Object.keys(p.models ?? {}) };
-      }
-      return void json(res, 200, { ok: true, defaults: next.defaults ?? null, providers });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return void json(res, 400, { error: msg });
-    }
+    return void json(res, 200, { defaults: catalog.defaults ?? null, providers });
   }
 
   const streamMatch = pathname.match(/^\/stream\/([A-Za-z0-9-]+)$/);
@@ -354,7 +318,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       const { text } = JSON.parse(await readBody(req)) as { text?: string };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text }' });
-      const client = new OpenAI({ apiKey: PROVIDER_API_KEY, baseURL: PROVIDER_BASE_URL });
+      const client = new OpenAI({ apiKey: MODAL_API_KEY, baseURL: PROVIDER_BASE_URL });
       // NOTE: muse-spark spends part of the token budget on hidden reasoning
       // (usage.reasoning_tokens) — a small max_tokens starves the visible
       // reply and yields null content. Keep the budget generous; the answer

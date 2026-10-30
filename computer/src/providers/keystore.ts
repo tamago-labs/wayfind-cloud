@@ -1,6 +1,7 @@
 // VM keystore: model keys live here, never in chat/transcripts.
-// File is chmod 0600. Writes come from `wayfind keys set` (owner on the
-// machine) or POST /keys (privileged backend channel only — P2 adds auth).
+// File is chmod 0600. Writes come from `wayfind keys set` (operator CLI) or
+// the deployment itself (embedded in the MicroVM, .env locally) — end users
+// never provide keys.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { WORKSPACE_DIR } from '../core/config.js';

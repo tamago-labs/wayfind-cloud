@@ -260,6 +260,7 @@ function describeTarget(toolName: string, argsText: string): string {
       (Array.isArray(args.sources)
         ? `${args.sources.length} skills (${String(args.sources[0])}${args.sources.length > 1 ? ', …' : ''})`
         : undefined) ??
+      args.query ??
       args.target ??
       args.input ??
       argsText;
@@ -333,24 +334,16 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
   return true;
 }
 
-/** Audit hook: permissive auto-allows are logged server-side only (never
- * surfaced as approval cards — there is nothing to decide). Enforcing
- * interruptions arrive as real approval events via driveStream. */
+/** Audit hook: all tool audits are logged server-side only — approval cards
+ * come solely from real SDK interruptions (driveStream). Emitting cards here
+ * would duplicate every ask (the grant lookup runs on the same target the
+ * interruption already used) and phantom-card child-run calls that already
+ * executed. */
 function auditTo(runId: string, allowedSkills?: string[]): GuardOpts {
   return {
     allowedSkills,
     onApproval: (a) => {
-      if (a.auto) {
-        console.log(`[auto-allow] run ${runId}: ${a.permission} "${a.target}"`);
-        return;
-      }
-      runs.get(runId)?.events.push({
-        type: 'approval',
-        approvalId: a.id,
-        permission: a.permission,
-        target: a.target,
-        auto: a.auto ?? false,
-      });
+      console.log(`[${a.auto ? 'auto-allow' : 'ask-audit'}] run ${runId}: ${a.permission} "${a.target}"`);
     },
   };
 }

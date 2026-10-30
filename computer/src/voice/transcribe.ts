@@ -3,7 +3,7 @@
 // bytes here; we forward to Meta's speech-to-text endpoint and return the
 // transcript. The Model API key is reused from the meta provider entry,
 // so no extra key setup is needed. Errors carry an HTTP status for the route.
-import { loadCatalog, resolveApiKey } from '../providers/providers.js';
+import { metaApiKey } from '../providers/providers.js';
 
 const ASR_URL = 'https://api.meta.ai/v1/asr/transcribe';
 const ASR_MODEL = 'muse-voice-transcribe-1.0';
@@ -36,9 +36,8 @@ export async function transcribeWav(wav: Buffer): Promise<VoiceTranscript> {
   if (wav.length > MAX_BYTES) throw new VoiceError(413, 'Audio too long (max ~2 minutes)');
   if (!isWav(wav)) throw new VoiceError(400, 'Body must be a WAV file (audio/wav)');
 
-  const catalog = loadCatalog();
-  const meta = catalog.providers?.['meta'] ?? { baseURL: 'https://api.meta.ai/v1' };
-  const key = resolveApiKey(meta);
+  // Voice always goes to Meta's ASR — the Meta key, never the chat-model key.
+  const key = metaApiKey();
   if (!key) {
     throw new VoiceError(503, 'Voice transcription needs a Meta API key — add one in Settings → Providers');
   }

@@ -9,9 +9,6 @@ import {
   setPermissions,
   undoPermissions,
   getProviders,
-  setProviders,
-  undoProviders,
-  setProviderKey,
   getSkills,
   removeSkill,
   type PermissionRule,
@@ -213,17 +210,12 @@ function PermissionsTab() {
 function ProvidersTab() {
   const [state, setState] = useState<ProvidersState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [urls, setUrls] = useState<Record<string, string>>({});
-  const [keys, setKeys] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let alive = true;
     getProviders()
       .then((s) => {
-        if (!alive) return;
-        setState(s);
-        setUrls(Object.fromEntries(Object.entries(s.providers).map(([pid, p]) => [pid, p.baseURL])));
+        if (alive) setState(s);
       })
       .catch((err) => {
         if (alive) setError(err instanceof Error ? err.message : 'Failed to load providers.');
@@ -232,74 +224,6 @@ function ProvidersTab() {
       alive = false;
     };
   }, []);
-
-  const refresh = async () => {
-    const s = await getProviders();
-    setState(s);
-    setUrls(Object.fromEntries(Object.entries(s.providers).map(([pid, p]) => [pid, p.baseURL])));
-  };
-
-  const saveDefaults = async (provider: string, model: string) => {
-    setSaving(true);
-    setError(null);
-    try {
-      await setProviders({ defaults: { provider, model } });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveUrl = async (pid: string) => {
-    const baseURL = urls[pid];
-    if (baseURL === undefined) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await setProviders({ providers: { [pid]: { baseURL } } });
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveKey = async (pid: string) => {
-    const value = keys[pid]?.trim();
-    const store = state?.providers[pid]?.keystore;
-    if (!value || !store) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await setProviderKey(store, value);
-      setKeys((k) => ({ ...k, [pid]: '' }));
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Key save failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const undo = () => {
-    if (saving) return;
-    setSaving(true);
-    setError(null);
-    undoProviders()
-      .then((restored) => {
-        if (restored) {
-          setState(restored);
-          setUrls(
-            Object.fromEntries(Object.entries(restored.providers).map(([pid, p]) => [pid, p.baseURL])),
-          );
-        }
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Undo failed.'))
-      .finally(() => setSaving(false));
-  };
 
   if (error && !state) {
     return <p className="p-5 text-sm font-medium text-red-600">{error}</p>;
@@ -311,73 +235,25 @@ function ProvidersTab() {
   return (
     <div className="space-y-4 p-5">
       <p className="text-sm text-heroslate">
-        Pick the default model for new runs. Keys are write-only — they show as configured or missing, never their value.
+        Fixed model per deployment. API access is provided and managed by Wayfind.
       </p>
       {Object.entries(state.providers).map(([pid, p]) => (
         <div key={pid} className="rounded-xl border border-navy/10 bg-ice p-4">
           <div className="flex items-center gap-2">
             <h4 className="font-brico text-sm font-bold text-navy">{pid}</h4>
             <span
-              title={p.keyConfigured ? 'API key configured' : 'No API key — set one below'}
+              title={p.keyConfigured ? 'API key configured' : 'API key missing — contact support'}
               className={`h-2 w-2 rounded-full ${p.keyConfigured ? 'bg-emerald-500' : 'bg-red-500'}`}
             />
-            <span className="text-xs text-heroslate">{p.keyConfigured ? 'key set' : 'no key'}</span>
+            <span className="text-xs text-heroslate">{p.keyConfigured ? 'connected' : 'not connected'}</span>
           </div>
-          <label className="mt-3 block text-xs font-bold uppercase tracking-wider text-heroslate">Base URL</label>
-          <div className="mt-1 flex gap-2">
-            <input
-              value={urls[pid] ?? ''}
-              onChange={(e) => setUrls((u) => ({ ...u, [pid]: e.target.value }))}
-              className="min-w-0 flex-1 rounded-lg border border-navy/15 bg-white px-2.5 py-1.5 font-mono text-xs text-navy outline-none focus:border-cta"
-            />
-            <button
-              onClick={() => void saveUrl(pid)}
-              disabled={saving || urls[pid] === p.baseURL}
-              className="rounded-full bg-cta px-4 py-1.5 text-xs font-bold text-white hover:bg-ctahover disabled:opacity-50"
-            >
-              Save
-            </button>
-          </div>
-          <p className="mt-3 text-xs font-bold uppercase tracking-wider text-heroslate">Models</p>
-          <div className="mt-1.5 space-y-1">
-            {p.models.map((m) => {
-              const isDefault = state.defaults?.provider === pid && state.defaults?.model === m;
-              return (
-                <label key={m} className="flex cursor-pointer items-center gap-2 text-sm text-navy">
-                  <input
-                    type="radio"
-                    name="default-model"
-                    checked={isDefault}
-                    disabled={saving}
-                    onChange={() => void saveDefaults(pid, m)}
-                    className="h-4 w-4 accent-[#2F7BFF]"
-                  />
-                  <code className="text-xs">{m}</code>
-                  {isDefault && <span className="text-[11px] font-bold uppercase tracking-wide text-cta">default</span>}
-                </label>
-              );
-            })}
-          </div>
-          <label className="mt-3 block text-xs font-bold uppercase tracking-wider text-heroslate">
-            API key <span className="font-medium normal-case">({p.keystore})</span>
-          </label>
-          <div className="mt-1 flex gap-2">
-            <input
-              type="password"
-              value={keys[pid] ?? ''}
-              onChange={(e) => setKeys((k) => ({ ...k, [pid]: e.target.value }))}
-              placeholder={p.keyConfigured ? '•••••••• (enter new to replace)' : 'paste key here'}
-              autoComplete="off"
-              className="min-w-0 flex-1 rounded-lg border border-navy/15 bg-white px-2.5 py-1.5 text-xs text-navy outline-none focus:border-cta"
-            />
-            <button
-              onClick={() => void saveKey(pid)}
-              disabled={saving || !(keys[pid]?.trim())}
-              className="rounded-full bg-cta px-4 py-1.5 text-xs font-bold text-white hover:bg-ctahover disabled:opacity-50"
-            >
-              Save key
-            </button>
-          </div>
+          <p className="mt-3 text-xs font-bold uppercase tracking-wider text-heroslate">Endpoint</p>
+          <code className="mt-1 block break-all text-xs text-navy">{p.baseURL}</code>
+          <p className="mt-3 text-xs font-bold uppercase tracking-wider text-heroslate">Model</p>
+          <p className="mt-1 text-sm text-navy">
+            <code className="text-xs">{state.defaults?.model ?? p.models[0] ?? '—'}</code>{' '}
+            <span className="text-[11px] font-bold uppercase tracking-wide text-cta">default</span>
+          </p>
         </div>
       ))}
       {error && (
@@ -385,18 +261,6 @@ function ProvidersTab() {
           {error}
         </p>
       )}
-      <div className="sticky bottom-0 -mx-5 -mb-5 border-t border-navy/10 bg-white/95 px-5 py-3 backdrop-blur">
-        <div className="flex justify-end">
-          <button
-            onClick={undo}
-            disabled={saving || !state.canUndo}
-            title={state.canUndo ? 'Restore before the last save' : 'No changes to undo'}
-            className="rounded-full border border-navy/15 px-4 py-1.5 text-xs font-bold text-navy hover:border-cta disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Undo last change
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

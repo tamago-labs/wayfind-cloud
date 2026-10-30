@@ -1,15 +1,51 @@
-// 11 - grounded search: recent-events question should trigger the hosted
-// Meta web_search tool and come back with a Sources block from url_citations.
-// Run: npx tsx scripts/computer/11-grounding.ts (server must be running)
-import { assert, runToDone } from './config.js';
+// 11 - grounded search: direct Meta Responses API probe (not an agent run).
+// Posts to https://api.meta.ai/v1/responses with the web_search tool and
+// asserts the model searched and cited sources. Agent chat itself runs on
+// the Modal endpoint; grounded_search calls this same Meta path server-side.
+// Run from repo root: npx tsx scripts/computer/11-grounding.ts
+import { config } from 'dotenv';
+import { assert } from './config.js';
+
+config({ path: 'computer/.env' });
+
+const META_RESPONSES_URL = 'https://api.meta.ai/v1/responses';
 
 async function main(): Promise<void> {
-  const { runId, output } = await runToDone(
-    'Who won the most recent Formula 1 Grand Prix? Keep it to two sentences.',
+  const key = process.env.PROVIDER_API_KEY;
+  assert(!!key, 'PROVIDER_API_KEY (Meta) is set in computer/.env');
+  const res = await fetch(META_RESPONSES_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model: 'muse-spark-1.3',
+      input:
+        'Who won the most recent Formula 1 Grand Prix? Two sentences max.\n\nEnd your answer with a \'Sources:\' markdown list of the URLs you relied on.',
+      tools: [{ type: 'web_search' }],
+    }),
+  });
+  assert(res.ok, `Meta responses HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string; annotations?: Array<{ type?: string; url?: string; title?: string }> }> }>;
+    error?: { message?: string };
+  };
+  assert(!data.error, `no API error (got: ${data.error?.message ?? 'none'})`);
+  const output = data.output ?? [];
+  assert(
+    output.some((i) => i.type === 'web_search_call'),
+    'model performed a web_search_call',
   );
-  console.log(`--- run ${runId} output ---\n${output}\n--- end ---`);
-  assert(/sources:/i.test(output), 'grounded answer includes a Sources block');
-  assert(/https?:\/\//.test(output), 'Sources block contains at least one URL');
+  const texts: string[] = [];
+  for (const item of output) {
+    if (item.type !== 'message') continue;
+    for (const block of item.content ?? []) {
+      if (block.type === 'output_text' && block.text) texts.push(block.text);
+    }
+  }
+  const text = texts.join('\n').trim();
+  console.log(`--- grounded answer ---\n${text}\n--- end ---`);
+  assert(text.length > 0, 'grounded answer is non-empty');
+  assert(/sources:/i.test(text), 'answer ends with a Sources list');
+  assert(/https?:\/\//.test(text), 'Sources list contains at least one URL');
   console.log('11-grounding: PASS');
 }
 

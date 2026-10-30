@@ -15,6 +15,7 @@ import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';
 import { createQuestionTool, type AskHook } from './tools/question.js';
 import { createTaskTool, type RunChild } from './tools/task.js';
+import { createGroundedSearchTool } from './tools/grounded.js';
 
 const BASE_INSTRUCTIONS =
   'You are a teammate working on the user\'s cloud computer. ' +
@@ -24,9 +25,6 @@ const BASE_INSTRUCTIONS =
   '(sending, paying, deleting, publishing). Match the user\'s energy: ' +
   'quick confirmations for simple chat, natural full replies otherwise — ' +
   'talk like a teammate, not a status line. ' +
-  'You have built-in grounded web search for current or external facts — it runs automatically. ' +
-  'Whenever you use it, end your answer with a \'Sources:\' markdown list of the URLs you relied on. ' +
-  'Use the websearch tool only when you need an explicit result list with snippets. ' +
   'If the request needs no tools, answer immediately without calling any. ' +
   'Never explore the workspace unprompted — only read or list when the task requires it. ' +
   'For independent work streams, spawn parallel `task` subagents instead of doing everything serially.' +
@@ -58,12 +56,25 @@ export async function createTriageAgent(
   );
   const [mcpTools] = await Promise.all([loadMcpTools(opts)]);
   const resolved: ResolvedModel = resolveModel(sel.provider, sel.model);
+  // Search guidance is worded per capability, never per endpoint: the model
+  // just knows which search path it has.
+  const groundingHosted = providerGrounding(resolved.providerId);
+  const searchGuidance = groundingHosted
+    ? 'You have built-in grounded web search for current or external facts — it runs automatically. ' +
+      'Whenever you use it, end your answer with a \'Sources:\' markdown list of the URLs you relied on. ' +
+      'Use the websearch tool only when you need an explicit result list with snippets. '
+    : 'When the answer needs current or external facts, use the grounded_search tool — it returns a cited answer. ' +
+      'Keep its Sources list at the end of your answer. ' +
+      'Use the websearch tool only when you need an explicit result list with snippets. ';
   let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), createSkillImportTool(opts), createSkillScanTool(), ...mcpTools, ...createWebTools(opts)];
   // Hosted grounded search (Meta web_search): provider-side, no extra key,
   // runs automatically when the model needs current/external facts.
   // No approval card — it has no local side effects.
-  if (providerGrounding(resolved.providerId)) {
+  if (groundingHosted) {
     tools.push(webSearchTool({ searchContextSize: 'medium' }) as never);
+  } else {
+    // Same capability as an explicit Meta-backed tool.
+    tools.push(createGroundedSearchTool(opts));
   }
   if (sel.variant === 'research') {
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
@@ -80,7 +91,7 @@ export async function createTriageAgent(
   return new Agent({
     name: 'Wayfind',
     model: (await resolved.get()) as never,
-    instructions: BASE_INSTRUCTIONS + skillCatalogPrompt(skills),
+    instructions: BASE_INSTRUCTIONS + searchGuidance + skillCatalogPrompt(skills),
     tools,
     handoffs: await triageHandoffs(opts, sel),
   });

@@ -1,14 +1,13 @@
 {
-  "defaults": { "provider": "meta", "model": "muse-spark-1.3" },
-  "small": { "provider": "meta", "model": "muse-spark-1.3" },
+  "defaults": { "provider": "meta", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
+  "small": { "provider": "meta", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
   "providers": {
     "meta": {
-      "baseURL": "https://api.meta.ai/v1",
-      "key": { "env": "PROVIDER_API_KEY", "keystore": "PROVIDER_API_KEY" },
+      "baseURL": "https://pisuth-dae--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct/v1",
+      "key": { "env": "MODAL_API_KEY", "keystore": "MODAL_API_KEY" },
+      "grounding": true,
       "models": {
-        "muse-spark-1.3": {},
-        "muse-wonder-1.0": {},
-        "sam-3.1": {}
+        "meta-models/Muse-Spark-Open-816B-A42B": { "context": 1000000 }
       }
     }
   }
