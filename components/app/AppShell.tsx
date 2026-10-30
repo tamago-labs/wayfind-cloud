@@ -39,11 +39,13 @@ export default function AppShell() {
   const newCount = useRef(0);
 
   // Roster comes from the database; seed.ts stays as shape reference only.
+  // Re-runs on sign-in and whenever a bot is seeded/changed elsewhere
+  // (e.g. RosterFooter auto-creates the first "Wayfind" bot after signup).
   useEffect(() => {
     const ownerId = user?.userId;
     if (!ownerId) return;
     let alive = true;
-    void (async () => {
+    const fetchBots = async () => {
       try {
         const { data } = await dataClient.models.Bot.botsByOwnerId({ ownerId });
         if (!alive) return;
@@ -65,9 +67,13 @@ export default function AppShell() {
         // roster stays empty; user can create the first Bot
         console.error('[AppShell] bots fetch failed:', err);
       }
-    })();
+    };
+    void fetchBots();
+    const onChanged = () => void fetchBots();
+    window.addEventListener('wayfind:bots-changed', onChanged);
     return () => {
       alive = false;
+      window.removeEventListener('wayfind:bots-changed', onChanged);
     };
   }, [user?.userId]);
 

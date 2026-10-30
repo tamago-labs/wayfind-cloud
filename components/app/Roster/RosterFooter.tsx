@@ -10,6 +10,7 @@ import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
 import SettingsModal from './SettingsModal';
+import { newBotColors, newBotShapes } from '../seed';
 
 const dataClient = generateClient<Schema>();
 
@@ -36,6 +37,10 @@ export default function RosterFooter() {
   }, [user?.userId]);
 
   // Lazy get-or-create the UserProfile, mirroring the wallet app pattern.
+  // NOTE: this effect re-runs when email loads, which can strand a previous
+  // run mid-flight. The seed-bot write below is intentionally NOT gated on
+  // `alive` (only setState is) — creator-wins: only the run whose create
+  // succeeded seeds, so no duplicates.
   useEffect(() => {
     const ownerId = user?.userId;
     if (!ownerId) return;
@@ -48,15 +53,51 @@ export default function RosterFooter() {
           setProfileId(data[0].id);
           setDisplayName(data[0].displayName ?? '');
         } else {
-          const { data: created } = await dataClient.models.UserProfile.create({
+          const { data: created, errors } = await dataClient.models.UserProfile.create({
             ownerId,
             email,
             plan: 'free',
           });
-          if (alive && created) setProfileId(created.id);
+          if (errors?.length) {
+            console.error('[RosterFooter] profile create errors:', errors);
+            return;
+          }
+          if (!created) {
+            console.error('[RosterFooter] profile create returned no data');
+            return;
+          }
+          if (alive) setProfileId(created.id);
+          // First signup: seed a "Wayfind" chief-of-staff bot so new users
+          // land on a ready assistant instead of an empty roster.
+          // Best-effort — never blocks profile creation.
+          try {
+            const { data: existing } = await dataClient.models.Bot.botsByOwnerId({ ownerId });
+            if (!existing || existing.length === 0) {
+              const { data: seeded, errors: seedErrors } = await dataClient.models.Bot.create({
+                ownerId,
+                userProfileId: created.id,
+                name: 'Wayfind',
+                role: 'Chief of staff',
+                isChiefOfStaff: true,
+                color: newBotColors[0],
+                shape: newBotShapes[0],
+                status: 'active',
+              });
+              if (seedErrors?.length || !seeded) {
+                console.error('[RosterFooter] seed bot errors:', seedErrors);
+                return;
+              }
+              // Roster may have already fetched an empty list — tell AppShell to refetch.
+              window.dispatchEvent(new CustomEvent('wayfind:bots-changed'));
+            }
+          } catch (err) {
+            // seed bot is a nicety; the user can create one manually
+            console.error('[RosterFooter] seed bot failed:', err);
+          }
         }
-      } catch {
+      } catch (err) {
         // profile stays unavailable; avatar falls back to email
+        console.error('[RosterFooter] profile ensure failed:', err);
       }
     })();
     return () => {
