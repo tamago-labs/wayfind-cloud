@@ -8,6 +8,7 @@ interface ThreadProps {
   bot: SeedBot;
   onApprove: (msgIndex: number, ok: boolean) => void;
   onAnswer?: (msgIndex: number, answers: string[][]) => void;
+  onBotRequest?: (msgIndex: number, ok: boolean) => void;
 }
 
 /** Free-text answer row inside a question card. Sends the typed text as the answer. */
@@ -82,7 +83,7 @@ function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; on
   );
 }
 
-export default function Thread({ bot, onApprove, onAnswer }: ThreadProps) {
+export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: ThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -183,6 +184,38 @@ export default function Thread({ bot, onApprove, onAnswer }: ThreadProps) {
                   <i className="h-2 w-2 rounded-full bg-slate-400" />
                   <i className="h-2 w-2 rounded-full bg-slate-400" />
                 </span>
+              </div>
+            );
+          }
+          if (m.t === 'botreq') {
+            return (
+              <div key={i} className="msg-in rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-bold uppercase tracking-wide text-cta">New Bot</p>
+                <p className="mt-0.5 font-bold text-navy">
+                  {m.name}
+                  {m.role && <span className="font-medium text-heroslate"> · {m.role}</span>}
+                </p>
+                {m.description && <p className="mt-1 text-sm text-heroslate">{m.description}</p>}
+                {m.done === undefined ? (
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      onClick={() => onBotRequest?.(i, true)}
+                      className="rounded-full bg-navy px-4 py-1.5 text-sm font-semibold text-white hover:bg-[#1c3350]"
+                    >
+                      Create Bot
+                    </button>
+                    <button
+                      onClick={() => onBotRequest?.(i, false)}
+                      className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-semibold text-navy hover:bg-slate-50"
+                    >
+                      Not now
+                    </button>
+                  </div>
+                ) : (
+                  <p className={`mt-2 text-sm font-bold ${m.done === 'created' ? 'text-blagoon' : 'text-slate-400'}`}>
+                    {m.done === 'created' ? '✓ Created' : 'Declined'}
+                  </p>
+                )}
               </div>
             );
           }

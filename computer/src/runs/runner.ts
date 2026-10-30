@@ -15,6 +15,8 @@ import { MemorySession, run, RunState } from '@openai/agents';
 import { PROVIDER_MODEL, WORKSPACE_DIR } from '../core/config.js';
 import { createTriageAgent, type AgentSelection } from '../agent/agent.js';
 import type { QuestionPrompt } from '../agent/tools/question.js';
+import type { BotRequest, BotRequestResult } from '../agent/tools/create_bot.js';
+import type { MessageRunner, RosterEntry } from '../agent/tools/message_bot.js';
 import type { ChildRequest, ChildResult } from '../agent/tools/task.js';
 import { clearRunLog, grantForRun, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
 import { check, loadRules, saveRules } from '../core/permissions.js';
@@ -22,7 +24,7 @@ import { resolveModel } from '../providers/providers.js';
 import { reportUsage } from './usage.js';
 
 export interface RunEvent {
-  type: 'chunk' | 'agent' | 'approval' | 'approval-resolved' | 'question' | 'done' | 'error';
+  type: 'chunk' | 'agent' | 'approval' | 'approval-resolved' | 'question' | 'bot_request' | 'done' | 'error';
   chunk?: string;
   agent?: string;
   approvalId?: string;
@@ -32,6 +34,10 @@ export interface RunEvent {
   decision?: 'approve' | 'reject';
   qid?: string;
   questions?: QuestionPrompt[];
+  bid?: string;
+  botName?: string;
+  botRole?: string;
+  botDescription?: string;
   output?: string;
   error?: string;
   toolCalls?: number;
@@ -53,6 +59,12 @@ export interface Run {
   interruptions: PendingApproval[];
   /** Per-bot skill allowlist, mirrored from the start request so resume rebuilds the same agent. */
   allowedSkills?: string[];
+  /** Chief-of-staff capability: create_bot tool + bot_request hook. Mirrored so resume rebuilds the same agent. */
+  canManageBots?: boolean;
+  /** Team roster for @mentions (chief thread). Mirrored so resume rebuilds the same agent. */
+  roster?: RosterEntry[];
+  /** This run's bot name — used for the [via …] tag on cross-bot messages. */
+  botName?: string;
   stateJson?: string;
   output: string;
   toolCalls: number;
@@ -71,6 +83,13 @@ export interface PendingQuestion {
   id: string;
   runId: string;
   questions: QuestionPrompt[];
+  requestedAt: string;
+}
+
+export interface PendingBotRequest {
+  id: string;
+  runId: string;
+  request: BotRequest;
   requestedAt: string;
 }
 
@@ -97,6 +116,29 @@ export function answerQuestion(id: string, answers: string[][]): boolean {
   return true;
 }
 
+const pendingBotRequests = new Map<
+  string,
+  { runId: string; request: BotRequest; requestedAt: string; resolve: (res: BotRequestResult) => void }
+>();
+
+export function listPendingBotRequests(): PendingBotRequest[] {
+  return [...pendingBotRequests.entries()].map(([id, p]) => ({
+    id,
+    runId: p.runId,
+    request: p.request,
+    requestedAt: p.requestedAt,
+  }));
+}
+
+/** Resolve a parked bot-creation request. Returns false for unknown ids. */
+export function answerBotRequest(id: string, result: BotRequestResult): boolean {
+  const pending = pendingBotRequests.get(id);
+  if (!pending) return false;
+  pendingBotRequests.delete(id);
+  pending.resolve(result);
+  return true;
+}
+
 /**
  * AskHook for the `question` tool: push an SSE event and wait for
  * POST /questions/:id. Times out to per-question [] after 120s
@@ -119,6 +161,33 @@ function makeQuestionHook(runState: Run): (questions: QuestionPrompt[]) => Promi
         resolve: (answers) => {
           clearTimeout(timer);
           resolve(answers);
+        },
+      });
+    });
+  };
+}
+
+/**
+ * BotRequestHook for the `create_bot` tool: push an SSE event and wait for
+ * POST /bot-requests/:id. Times out to cancelled after 120s (same as
+ * questions — the provider turn stays open while waiting).
+ */
+function makeBotRequestHook(runState: Run): (req: BotRequest) => Promise<BotRequestResult> {
+  return (req: BotRequest) => {
+    const id = randomUUID();
+    runState.events.push({ type: 'bot_request', bid: id, botName: req.name, botRole: req.role, botDescription: req.description });
+    return new Promise<BotRequestResult>((resolve) => {
+      const timer = setTimeout(() => {
+        if (pendingBotRequests.delete(id)) resolve({ decision: 'cancel' });
+      }, 120_000);
+      timer.unref?.();
+      pendingBotRequests.set(id, {
+        runId: runState.id,
+        request: req,
+        requestedAt: new Date().toISOString(),
+        resolve: (res) => {
+          clearTimeout(timer);
+          resolve(res);
         },
       });
     });
@@ -279,6 +348,10 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
     runState.sel,
     makeRunChild(runState),
     makeQuestionHook(runState),
+    runState.canManageBots ? makeBotRequestHook(runState) : undefined,
+    runState.canManageBots
+      ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) }
+      : undefined,
   );
   let state: Awaited<ReturnType<typeof RunState.fromString>>;
   try {
@@ -358,6 +431,12 @@ export interface StartRunOpts {
   conversationId?: string;
   /** Per-bot skill allowlist (Bot.skillsEnabled). Undefined = all enabled; [] = none. */
   allowedSkills?: string[];
+  /** Chief-of-staff run: exposes the create_bot tool (confirm card in frontend). */
+  canManageBots?: boolean;
+  /** Team roster (all bots incl. self) for @mentions. Only the chief thread sends it. */
+  roster?: RosterEntry[];
+  /** This run's bot name — [via …] tag on cross-bot messages. */
+  botName?: string;
   /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
   /** Subagent variant for `task` children. */
@@ -440,6 +519,53 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
 
 /** One SDK session per live child (task_id). Resuming continues the child. */
 const childSessions = new Map<string, { session: MemorySession; depth: number }>();
+
+/**
+ * MessageRunner for the `message_bot` tool: run the message as a real turn
+ * in the target bot's own conversation (its session, system, skills) and
+ * return the reply. Transcript lines carry the target conversationId with
+ * no parentId, so they render in that bot's thread — the user sees the
+ * chief's message and the reply when they switch bots.
+ */
+function makeMessageRunner(runState: Run): MessageRunner {
+  return async (botName: string, message: string) => {
+    const roster = (runState.roster ?? []).filter((b) => b.id);
+    const matches = roster.filter((b) => b.name.toLowerCase() === botName.toLowerCase());
+    if (matches.length === 0) {
+      throw new Error(
+        `No bot named "${botName}". Available: ${roster.map((b) => b.name).join(', ') || 'none'}. ` +
+          `Tell the user, or offer to create it with create_bot.`,
+      );
+    }
+    if (matches.length > 1) {
+      throw new Error(`There is more than one bot named "${botName}" — ask the user which one they mean.`);
+    }
+    const target = matches[0];
+    if (runState.depth + 1 > MAX_TASK_DEPTH) {
+      return 'Depth cap reached — answer from your own context instead of delegating.';
+    }
+    const sender = runState.botName?.trim() || 'Chief';
+    const system = target.role
+      ? `You are "${target.name}". Role: ${target.role}.`
+      : `You are "${target.name}". Your role is not defined yet.`;
+    runState.events.push({ type: 'agent', agent: `Messaged @${target.name}` });
+    appendTranscript(runState.id, 'tool', `Messaged @${target.name}`, runState.parentId, runState.conversationId);
+    try {
+      const { output } = await runToCompletion(`[via ${sender}] ${message}`, {
+        conversationId: target.id,
+        system,
+        allowedSkills: target.skills ?? undefined,
+        depth: runState.depth + 1,
+      });
+      runState.events.push({ type: 'agent', agent: `@${target.name} replied` });
+      appendTranscript(runState.id, 'tool', `@${target.name} replied`, runState.parentId, runState.conversationId);
+      return output;
+    } catch (err) {
+      runState.events.push({ type: 'agent', agent: `@${target.name} — failed` });
+      throw err;
+    }
+  };
+}
 
 /** Consume one streamed run to completion: chunks/agent events in, then
  * either done (finalOutput + usage) or parked (interruptions saved). */
@@ -552,7 +678,7 @@ function extractWebSources(raw: unknown): Array<{ title: string; url: string }> 
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   try {
-    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills), runState.sel, makeRunChild(runState), makeQuestionHook(runState));
+    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, runState.canManageBots ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) } : undefined);
     // History isolation: children get ONLY their prompt. Top-level input is
     // the live turn (plus JSONL seed on first contact); the session carries
     // everything else. The brief rides bracketed every turn, never persisted.
@@ -601,6 +727,9 @@ function newRunState(opts: StartRunOpts): Run {
     },
     conversationId: opts.conversationId,
     allowedSkills: opts.allowedSkills,
+    canManageBots: opts.canManageBots,
+    roster: opts.roster,
+    botName: opts.botName,
     depth: opts.depth ?? 0,
     events: [],
     done: false,

@@ -14,6 +14,8 @@ import { check, loadRules } from '../core/permissions.js';
 import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';
 import { createQuestionTool, type AskHook } from './tools/question.js';
+import { createBotRequestTool, type BotRequestHook } from './tools/create_bot.js';
+import { createMessageBotTool, rosterDirectory, type MessageRunner, type RosterEntry } from './tools/message_bot.js';
 import { createTaskTool, type RunChild } from './tools/task.js';
 import { createGroundedSearchTool } from './tools/grounded.js';
 
@@ -38,7 +40,13 @@ export interface AgentSelection {
 }
 
 /** Tools unavailable to read-only research subagents. */
-const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill']);
+const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot']);
+
+/** Cross-bot messaging for the chief thread: runner + visible roster. */
+export interface TeamChannel {
+  send: MessageRunner;
+  roster: RosterEntry[];
+}
 
 /** Logged once per process so a boot line proves which code is live. */
 let loggedTools = false;
@@ -48,6 +56,8 @@ export async function createTriageAgent(
   sel: AgentSelection = {},
   runChild?: RunChild,
   ask?: AskHook,
+  botRequest?: BotRequestHook,
+  team?: TeamChannel,
 ): Promise<InstanceType<typeof Agent>> {
   // Per-bot allowlist first, then the global kill switch: a deny rule on
   // skill:<name> hides it from every bot (Settings documents this).
@@ -79,8 +89,19 @@ export async function createTriageAgent(
   if (sel.variant === 'research') {
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
   }
+  const chiefGuidance = botRequest
+    ? 'You can create a new bot with the create_bot tool when the user asks for one — they confirm on a card before it is created. Never claim a bot exists unless create_bot confirmed it. '
+    : '';
+  const teamGuidance = team
+    ? rosterDirectory(team.roster) +
+      ' When the user\'s text @mentions a bot by name, or asks you to consult one, call message_bot with that bot\'s name and relay its reply. '
+    : '';
   if (ask) tools.push(createQuestionTool(opts, ask));
   if (runChild) tools.push(createTaskTool(runChild, opts));
+  // Chief-of-staff capability: the confirm card lives in the frontend, so
+  // the model only ever sees the tool when the hook is wired.
+  if (botRequest) tools.push(createBotRequestTool(botRequest));
+  if (team) tools.push(createMessageBotTool(team.send, opts));
   const names = tools.map((t) => (t as { name: string }).name);
   if (!loggedTools) {
     loggedTools = true;
@@ -91,7 +112,7 @@ export async function createTriageAgent(
   return new Agent({
     name: 'Wayfind',
     model: (await resolved.get()) as never,
-    instructions: BASE_INSTRUCTIONS + searchGuidance + skillCatalogPrompt(skills),
+    instructions: BASE_INSTRUCTIONS + searchGuidance + chiefGuidance + teamGuidance + skillCatalogPrompt(skills),
     tools,
     handoffs: await triageHandoffs(opts, sel),
   });

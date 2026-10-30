@@ -12,11 +12,29 @@ interface ComposerProps {
   onSend: () => void;
   onVoiceSend: (text: string) => void;
   onOpenSkills: () => void;
+  /** Other bots for @mentions (chief thread only). Empty = no autocomplete. */
+  mentionNames?: string[];
 }
 
-export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills }: ComposerProps) {
+/** Trailing @mention being typed, e.g. "@Re" in "ask @Re". Null when none. */
+function mentionQuery(draft: string): string | null {
+  const m = draft.match(/(?:^|\s)@([A-Za-z0-9_-]{0,24})$/);
+  return m ? m[1] : null;
+}
+
+export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, mentionNames = [] }: ComposerProps) {
   const [plusOpen, setPlusOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
+
+  const q = mentionQuery(draft);
+  const mentions =
+    q === null || mentionNames.length === 0
+      ? []
+      : mentionNames.filter((n) => n.toLowerCase().startsWith(q.toLowerCase())).slice(0, 5);
+
+  const pickMention = (name: string) => {
+    onDraft(draft.replace(/@([A-Za-z0-9_-]{0,24})$/, `@${name} `));
+  };
 
   useEffect(() => {
     if (!plusOpen) return;
@@ -29,6 +47,22 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
 
   return (
     <div className="px-4 pb-4">
+      <div className="relative mx-auto max-w-2xl">
+        {mentions.length > 0 && (
+          <div className="absolute bottom-full left-4 right-4 z-10 mb-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+            {mentions.map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => pickMention(n)}
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm font-semibold text-navy hover:bg-cta/5"
+              >
+                <span className="text-cta">@</span>
+                {n}
+              </button>
+            ))}
+          </div>
+        )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -54,6 +88,12 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
         <input
           value={draft}
           onChange={(e) => onDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Tab' && mentions.length > 0) {
+              e.preventDefault();
+              pickMention(mentions[0]);
+            }
+          }}
           autoComplete="off"
           placeholder={`Message ${botName}`}
           className="min-w-0 flex-1 bg-transparent px-1 text-[15px] text-navy outline-none placeholder:text-slate-400"
@@ -74,6 +114,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           <Send className="h-[18px] w-[18px]" strokeWidth={2.4} />
         </button>
       </form>
+      </div>
       {voiceOpen && (
         <VoiceModal onVoiceSend={onVoiceSend} onClose={() => setVoiceOpen(false)} />
       )}

@@ -15,6 +15,14 @@ export type Msg =
         options: Array<{ label: string; description?: string }>;
       }>;
       done?: boolean;
+    }
+  | {
+      t: 'botreq';
+      bid: string;
+      name: string;
+      role?: string;
+      description?: string;
+      done?: 'created' | 'cancelled';
     };
 
 export interface SeedBot {

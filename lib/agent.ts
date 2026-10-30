@@ -21,16 +21,33 @@ export async function decideApproval(approvalId: string, decision: 'approve' | '
   return res.ok;
 }
 
+export interface RosterBot {
+  id: string;
+  name: string;
+  role?: string;
+  /** Per-bot skill allowlist (Bot.skillsEnabled). Undefined = all enabled. */
+  skills?: string[] | null;
+}
+
 export async function postTask(
   text: string,
   conversationId?: string,
   system?: string,
   allowedSkills?: string[],
+  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string },
 ): Promise<string> {
   const res = await fetch(`${AGENT_URL}/task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, conversationId, system, allowedSkills }),
+    body: JSON.stringify({
+      text,
+      conversationId,
+      system,
+      allowedSkills,
+      canManageBots: opts?.canManageBots === true,
+      ...(opts?.roster ? { roster: opts.roster } : {}),
+      ...(opts?.botName ? { botName: opts.botName } : {}),
+    }),
   });
   if (!res.ok) throw new Error(`agent /task → ${res.status}`);
   const { runId } = (await res.json()) as { runId: string };
@@ -45,6 +62,7 @@ export interface StreamHandlers {
     qid: string;
     questions: Array<{ question: string; header?: string; options: Array<{ label: string; description?: string }> }>;
   }) => void;
+  onBotRequest?: (r: { bid: string; botName: string; botRole?: string; botDescription?: string }) => void;
 }
 
 /** Resolve when the run emits done; reject on error/timeout. Ignores `: ping` heartbeats. */
@@ -99,6 +117,13 @@ export async function streamRun(runId: string, handlers: StreamHandlers, timeout
               options: Array<{ label: string; description?: string }>;
             }[],
           });
+        } else if (e.type === 'bot_request' && typeof e.bid === 'string' && typeof e.botName === 'string') {
+          handlers.onBotRequest?.({
+            bid: e.bid as string,
+            botName: e.botName as string,
+            botRole: typeof e.botRole === 'string' ? (e.botRole as string) : undefined,
+            botDescription: typeof e.botDescription === 'string' ? (e.botDescription as string) : undefined,
+          });
         } else if (e.type === 'done') {
           if (typeof e.output === 'string') output = e.output;
           await reader.cancel().catch(() => {});
@@ -120,6 +145,19 @@ export async function answerQuestion(qid: string, answers: string[][]): Promise<
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ answers }),
+  });
+  return res.ok;
+}
+
+/** Resolve a parked bot-creation request. Confirm carries the created bot id (or an error); cancel declines. */
+export async function answerBotRequest(
+  bid: string,
+  result: { decision: 'confirm' | 'cancel'; botId?: string; error?: string },
+): Promise<boolean> {
+  const res = await fetch(`${AGENT_URL}/bot-requests/${bid}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(result),
   });
   return res.ok;
 }

@@ -12,7 +12,7 @@ import BotPanel, { type BotEdits } from './BotPanel';
 import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
-import { answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
+import { answerBotRequest, answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
 import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
@@ -137,7 +137,16 @@ export default function AppShell() {
             ? `You are "${targetName}". Role: ${targetRole}.`
             : `You are "${targetName}". Your role is not defined yet.`
           : undefined;
-        const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined);
+        const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined, {
+          canManageBots: targetIsChief,
+          // Chief-only: the model sees the roster so it can propose bots and @mention them.
+          roster: targetIsChief
+            ? bots
+                .filter((b) => b.id)
+                .map((b) => ({ id: b.id as string, name: b.name, role: b.role, skills: b.skillsEnabled }))
+            : undefined,
+          botName: targetName,
+        });
         await streamRun(runId, {
           onChunk: (delta) =>
             patchBot(targetIndex, (b) => {
@@ -177,6 +186,14 @@ export default function AppShell() {
                   after: 'Approved — continuing.',
                   approvalId: a.approvalId,
                 },
+              ],
+            })),
+          onBotRequest: (r) =>
+            patchBot(targetIndex, (b) => ({
+              ...b,
+              msgs: [
+                ...b.msgs.filter((m) => m.t !== 'typing'),
+                { t: 'botreq', bid: r.bid, name: r.botName, role: r.botRole, description: r.botDescription },
               ],
             })),
         });
@@ -314,10 +331,10 @@ export default function AppShell() {
     return null;
   };
 
-  // Returns an error message on failure, null on success.
-  const createBot = async (name: string, isChief: boolean): Promise<string | null> => {
+  // Core Bot insert (no navigation). Returns the created id or an error message.
+  const insertBot = async (name: string, isChief: boolean): Promise<{ botId: string | null; error: string | null }> => {
     const ownerId = user?.userId;
-    if (!ownerId) return 'Not signed in. Please sign in again.';
+    if (!ownerId) return { botId: null, error: 'Not signed in. Please sign in again.' };
     const n = newCount.current++;
     const color = newBotColors[n % newBotColors.length];
     const shape = newBotShapes[n % newBotShapes.length];
@@ -341,20 +358,78 @@ export default function AppShell() {
       if (errors?.length || !data) {
         const msg = errors?.map((e) => e.message).join('; ') || 'Create failed with no error detail.';
         console.error('[AppShell] bot create failed:', msg);
-        return msg;
+        return { botId: null, error: msg };
       }
       console.log('[AppShell] bot created:', data.id);
       setBots((prev) => [
         { id: data.id, name, role: isChief ? 'Chief of staff' : '', isChiefOfStaff: isChief, skillsEnabled: null, color, shape, busy: false, msgs: [] },
         ...prev,
       ]);
-      setCur(0);
-      setSideOpen(false);
-      return null;
+      return { botId: data.id, error: null };
     } catch (err) {
       console.error('[AppShell] bot create failed:', err);
-      return err instanceof Error ? err.message : 'Create failed. Check your connection and try again.';
+      return { botId: null, error: err instanceof Error ? err.message : 'Create failed. Check your connection and try again.' };
     }
+  };
+
+  // Returns an error message on failure, null on success.
+  const createBot = async (name: string, isChief: boolean): Promise<string | null> => {
+    const { error } = await insertBot(name, isChief);
+    if (!error) {
+      setCur(0);
+      setSideOpen(false);
+    }
+    return error;
+  };
+
+  // Chief-proposed bot: confirm card → create without leaving the thread.
+  // Name uniqueness is enforced here so the model retries with another name.
+  const confirmBotRequest = (msgIndex: number, ok: boolean) => {
+    const chief = bots[cur];
+    const target = chief?.msgs[msgIndex];
+    if (!chief?.id || !target || target.t !== 'botreq' || target.done !== undefined) return;
+    const chiefId = chief.id;
+    const bid = target.bid;
+    // Locate the chief by id at patch time — insertBot prepends, shifting indices.
+    const patchChief = (fn: (b: ViewBot) => ViewBot) =>
+      setBots((prev) => {
+        const i = prev.findIndex((b) => b.id === chiefId);
+        return i < 0 ? prev : prev.map((b, j) => (j === i ? fn(b) : b));
+      });
+    if (!ok) {
+      patchChief((b) => ({
+        ...b,
+        msgs: b.msgs.map((m, j) => (j === msgIndex && m.t === 'botreq' ? { ...m, done: 'cancelled' as const } : m)),
+      }));
+      void answerBotRequest(bid, { decision: 'cancel' }).catch((err) =>
+        console.error('[AppShell] bot request cancel failed:', err),
+      );
+      return;
+    }
+    const nameTaken = bots.some((b) => b.name.toLowerCase() === target.name.toLowerCase());
+    if (nameTaken) {
+      const error = `A bot named "${target.name}" already exists — pick another name.`;
+      patchChief((b) => ({
+        ...b,
+        msgs: b.msgs.map((m, j) => (j === msgIndex && m.t === 'botreq' ? { ...m, done: 'cancelled' as const } : m)),
+      }));
+      void answerBotRequest(bid, { decision: 'cancel', error }).catch((err) =>
+        console.error('[AppShell] bot request resolve failed:', err),
+      );
+      return;
+    }
+    void (async () => {
+      const { botId, error } = await insertBot(target.name, false);
+      // insertBot prepends to the roster — shift selection so the chief thread stays open.
+      setCur((c) => c + 1);
+      const done: 'created' | 'cancelled' = botId ? 'created' : 'cancelled';
+      patchChief((b) => ({
+        ...b,
+        msgs: b.msgs.map((m, j) => (j === msgIndex && m.t === 'botreq' ? { ...m, done } : m)),
+      }));
+      if (botId) void answerBotRequest(bid, { decision: 'confirm', botId }).catch((err) => console.error('[AppShell] bot request confirm failed:', err));
+      else void answerBotRequest(bid, { decision: 'cancel', error: error ?? 'Create failed.' }).catch((err) => console.error('[AppShell] bot request resolve failed:', err));
+    })();
   };
 
   const q = query.toLowerCase();
@@ -446,8 +521,16 @@ export default function AppShell() {
         <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
           Local dev — replies come from your computer server. Make sure it’s running on :8080.
         </div>
-        <Thread bot={bot} onApprove={approve} onAnswer={answer} />
-        <Composer botName={bot.name} draft={draft} onDraft={setDraft} onSend={send} onVoiceSend={sendText} onOpenSkills={() => setSkillsOpen(true)} />
+        <Thread bot={bot} onApprove={approve} onAnswer={answer} onBotRequest={confirmBotRequest} />
+        <Composer
+          botName={bot.name}
+          draft={draft}
+          onDraft={setDraft}
+          onSend={send}
+          onVoiceSend={sendText}
+          onOpenSkills={() => setSkillsOpen(true)}
+          mentionNames={bot.isChiefOfStaff ? bots.filter((b) => b.id && b.id !== bot.id).map((b) => b.name) : []}
+        />
       </main>
 
       <BotPanel

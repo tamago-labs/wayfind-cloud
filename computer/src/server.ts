@@ -8,7 +8,7 @@ import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider } from './providers/provider.js';
 import { loadCatalog, resolveApiKey } from './providers/providers.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
-import { getRun, getHistory, listPendingApprovals, listPendingQuestions, listRuns, resolveApproval, answerQuestion, startRun } from './runs/runner.js';
+import { getRun, getHistory, listPendingApprovals, listPendingBotRequests, listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun } from './runs/runner.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
 
@@ -124,13 +124,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/task' && method === 'POST') {
     try {
-      const { text, conversationId, system, provider, model, allowedSkills } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
         provider?: string;
         model?: string;
         allowedSkills?: string[];
+        canManageBots?: boolean;
+        roster?: Array<{ id?: string; name?: string; role?: string; skills?: string[] | null }>;
+        botName?: string;
       };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
       if (conversationId !== undefined && typeof conversationId !== 'string') {
@@ -139,7 +142,27 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (allowedSkills !== undefined && (!Array.isArray(allowedSkills) || allowedSkills.some((s) => typeof s !== 'string'))) {
         return void json(res, 400, { error: 'allowedSkills must be string[]' });
       }
-      const r = startRun(text, { provider, model, conversationId, system, allowedSkills });
+      const cleanRoster = Array.isArray(roster)
+        ? roster
+            .filter((b) => b && typeof b.id === 'string' && typeof b.name === 'string')
+            .slice(0, 50)
+            .map((b) => ({
+              id: b.id as string,
+              name: (b.name as string).slice(0, 40),
+              ...(typeof b.role === 'string' ? { role: b.role.slice(0, 80) } : {}),
+              ...(Array.isArray(b.skills) ? { skills: (b.skills as string[]).filter((s) => typeof s === 'string') } : {}),
+            }))
+        : undefined;
+      const r = startRun(text, {
+        provider,
+        model,
+        conversationId,
+        system,
+        allowedSkills,
+        canManageBots: canManageBots === true,
+        roster: cleanRoster,
+        ...(typeof botName === 'string' ? { botName: botName.slice(0, 40) } : {}),
+      });
       return void json(res, 202, { runId: r.id });
     } catch {
       return void json(res, 400, { error: 'Invalid JSON body' });
@@ -174,6 +197,34 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/questions' && method === 'GET') {
     return void json(res, 200, { questions: listPendingQuestions() });
+  }
+
+  // Chief-of-staff bot creation: the frontend owns Bot records, so the
+  // model's create_bot call parks here until the user confirms/cancels.
+  if (pathname === '/bot-requests' && method === 'GET') {
+    return void json(res, 200, { requests: listPendingBotRequests() });
+  }
+
+  const botRequestMatch = pathname.match(/^\/bot-requests\/([A-Za-z0-9-]+)$/);
+  if (botRequestMatch && method === 'POST') {
+    try {
+      const { decision, botId, error } = JSON.parse(await readBody(req)) as {
+        decision?: string;
+        botId?: string;
+        error?: string;
+      };
+      if (decision !== 'confirm' && decision !== 'cancel') {
+        return void json(res, 400, { error: 'Body must be { decision: "confirm" | "cancel", botId?, error? }' });
+      }
+      const ok = answerBotRequest(botRequestMatch[1], {
+        decision,
+        ...(typeof botId === 'string' ? { botId } : {}),
+        ...(typeof error === 'string' ? { error } : {}),
+      });
+      return void json(res, ok ? 200 : 404, ok ? { ok: true } : { error: 'unknown bot request' });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
   }
 
   const questionMatch = pathname.match(/^\/questions\/([A-Za-z0-9-]+)$/);
