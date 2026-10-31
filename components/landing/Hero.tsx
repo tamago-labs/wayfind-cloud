@@ -58,7 +58,7 @@ export default function Hero() {
           Meet your new AI teammates
         </h1>
         <p className="mx-auto mt-6 max-w-lg text-lg text-heroslate">
-          Create named AI Bots that remember, use cloud computers, and work in the background. Start from $5/month.
+          Always-on AI teammates in the cloud for small businesses, doing real work across the tools you already use.
         </p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
           <Link href="/app" className="rounded-full bg-cta px-8 py-4 font-semibold text-white hover:bg-ctahover transition-colors">

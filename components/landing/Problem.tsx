@@ -14,13 +14,13 @@ const cards: { color: MascotColor; shape: MascotShape; title: string; body: stri
     color: 'lagoon',
     shape: 'circle',
     title: 'Not available everywhere',
-    body: 'Many AI agents launch in limited regions. Outside those markets, access can be a barrier before you start.',
+    body: 'Many similar solutions launch in limited regions. Outside those markets, access can be a barrier before you start.',
   },
   {
     color: 'moss',
     shape: 'pebble',
-    title: 'Locked into one vendor',
-    body: 'Your workflow should not depend on one vendor. Choose the AI that fits each task, and switch anytime.',
+    title: 'Built for shopping, not business',
+    body: 'Today\u2019s AI bots book trips and spend on your card but none of them reconcile your expenses, or close your month-end.',
   },
 ];
 

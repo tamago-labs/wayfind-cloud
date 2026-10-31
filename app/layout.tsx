@@ -4,9 +4,9 @@ import ConfigureAmplify from "@/components/ConfigureAmplify";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Wayfind Cloud — Always-On AI Agents From $5/Month",
+  title: "Wayfind Cloud — AI Teammates for Small Businesses From $5/month",
   description:
-    "Hire AI Bots for research, coding, leads, and everyday operations. Each Bot remembers its context and works in the cloud, without an expensive bundled subscription. Free during early access.",
+    "Hire AI teammates for finance, operations, marketing, and more. They remember your workflows, use your business tools, and work in the cloud. Start from $5/month. Free during early access.",
 };
 
 export default function RootLayout({
