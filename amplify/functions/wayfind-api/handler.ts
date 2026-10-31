@@ -61,16 +61,16 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
   const header = JSON.parse(Buffer.from(h, "base64url").toString());
   const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as Claims;
 
-  // Backend-injected (amplify/backend.ts addEnvironment) — not part of the
-  // resource-declared env type, so process.env is correct here.
-  const poolId = process.env.USER_POOL_ID;
+  // All env is resource-declared (functions/wayfind-api/resource.ts) — the
+  // console shows exactly what the deploy captured.
+  const poolId = env.USER_POOL_ID;
   const region = env.AWS_REGION ?? process.env.AWS_REGION;
   if (!poolId || !region) throw new Error("auth not configured");
   const expectedIss = `https://cognito-idp.${region}.amazonaws.com/${poolId}`;
   if (claims.iss !== expectedIss) throw new Error("bad issuer");
   if (claims.exp * 1000 < Date.now()) throw new Error("token expired");
   if (claims.token_use !== "id" && claims.token_use !== "access") throw new Error("bad token use");
-  const clientId = process.env.USER_POOL_CLIENT_ID;
+  const clientId = env.USER_POOL_CLIENT_ID;
   if (claims.token_use === "id" && clientId && claims.aud !== clientId) throw new Error("bad audience");
 
   const key = await getPublicKey(header.kid, expectedIss);

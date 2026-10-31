@@ -64,8 +64,10 @@ apiLambda.addToRolePolicy(
   }),
 );
 
-// Kept for reference; the Function URL CORS config above is authoritative.
-apiLambda.addEnvironment("CORS_ORIGIN", "https://wayfind.click");
+// All function env (auth pool IDs, CORS, computer config) is declared in
+// amplify/functions/wayfind-api/resource.ts — nothing is set here, so the
+// console always shows exactly what the deploy captured. Secrets stay on
+// secret() and never appear as plain env.
 
 const apiFunctionUrl = apiLambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE, // every route verifies the Cognito JWT in the handler
