@@ -126,7 +126,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/task' && method === 'POST') {
     try {
-      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
@@ -136,6 +136,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         canManageBots?: boolean;
         roster?: Array<{ id?: string; name?: string; role?: string; skills?: string[] | null }>;
         botName?: string;
+        attachments?: string[];
       };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
       if (conversationId !== undefined && typeof conversationId !== 'string') {
@@ -143,6 +144,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       }
       if (allowedSkills !== undefined && (!Array.isArray(allowedSkills) || allowedSkills.some((s) => typeof s !== 'string'))) {
         return void json(res, 400, { error: 'allowedSkills must be string[]' });
+      }
+      if (attachments !== undefined && (!Array.isArray(attachments) || attachments.some((a) => typeof a !== 'string'))) {
+        return void json(res, 400, { error: 'attachments must be string[]' });
       }
       const cleanRoster = Array.isArray(roster)
         ? roster
@@ -164,6 +168,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         canManageBots: canManageBots === true,
         roster: cleanRoster,
         ...(typeof botName === 'string' ? { botName: botName.slice(0, 40) } : {}),
+        ...(attachments ? { attachments: attachments.slice(0, 5) } : {}),
       });
       return void json(res, 202, { runId: r.id });
     } catch {

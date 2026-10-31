@@ -1,8 +1,24 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { FileText } from 'lucide-react';
 import Markdown from './Markdown';
 import type { Msg, SeedBot } from './seed';
+import { viewFileUrl } from '@/lib/agent';
+
+/** Split a user message into display text + attached workspace paths.
+/// Live messages carry files[]; rehydrated history carries an
+/// "[attached: a, b]" marker (bytes are never persisted). */
+function splitAttachments(m: Extract<Msg, { t: 'u' }>): { text: string; files: string[] } {
+  if (m.files?.length) return { text: m.x, files: m.files };
+  const match = m.x.match(/ \[attached: ([^\]]+)\]$/);
+  if (!match) return { text: m.x, files: [] };
+  return { text: m.x.slice(0, match.index), files: match[1].split(',').map((s) => s.trim()).filter(Boolean) };
+}
+
+function isImagePath(p: string): boolean {
+  return /\.(png|jpe?g|gif|webp)$/i.test(p);
+}
 
 interface ThreadProps {
   bot: SeedBot;
@@ -101,9 +117,27 @@ export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: Threa
         )}
         {bot.msgs.map((m, i) => {
           if (m.t === 'u') {
+            const { text, files } = splitAttachments(m);
             return (
               <div key={i} className="msg-in ml-auto max-w-[85%] rounded-2xl rounded-br-sm bg-cta px-4 py-2.5 text-white">
-                {m.x}
+                {files.length > 0 && (
+                  <div className="mb-1.5 flex flex-wrap gap-1.5">
+                    {files.map((p) => (
+                      <span key={p} title={p} className="inline-flex items-center gap-1 rounded-lg bg-white/20 p-1">
+                        {isImagePath(p) ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={viewFileUrl(p)} alt={p} className="h-14 w-14 rounded-md object-cover" />
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-1 text-xs font-semibold">
+                            <FileText className="h-4 w-4" />
+                            {p.split('/').pop()}
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {text}
               </div>
             );
           }

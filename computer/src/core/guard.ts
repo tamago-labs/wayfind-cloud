@@ -81,7 +81,7 @@ const READ_ONLY = new Set(['list', 'glob', 'read', 'grep', 'webfetch', 'websearc
  * later billing. Explicit `deny` rules still hold — guarded() throws in
  * execute.
  */
-const FREE_ALLOW = new Set(['generate_image', 'edit_image']);
+const FREE_ALLOW = new Set(['generate_image', 'edit_image', 'read_file']);
 
 /**
  * SDK `needsApproval` policy for a tool: interrupt only when the rules say

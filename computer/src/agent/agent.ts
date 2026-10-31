@@ -19,6 +19,7 @@ import { createMessageBotTool, rosterDirectory, type MessageRunner, type RosterE
 import { createTaskTool, type RunChild } from './tools/task.js';
 import { createGroundedSearchTool } from './tools/grounded.js';
 import { createImageTools } from './tools/image.js';
+import { createFileReaderTool } from './tools/read_file.js';
 
 const BASE_INSTRUCTIONS =
   'You are a teammate working on the user\'s cloud computer. ' +
@@ -82,6 +83,12 @@ export async function createTriageAgent(
     'When the user asks for a picture, illustration, logo draft, or any visual, call generate_image — ' +
     'the image appears in chat by itself, so just briefly say what you made. ' +
     'To change a generated or Library image, call edit_image with its workspace path. ';
+  // File guidance: attached images arrive inside the user message — just
+  // look at them. Named workspace/Library files go through read_file
+  // (images and PDFs understood, text returned directly).
+  const fileGuidance =
+    'Images attached to the chat message are visible to you directly — describe or answer from the pixels. ' +
+    'When the user names a stored file ("summarize report.pdf", "what is in this screenshot"), call read_file with its workspace path. ';
   let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), createSkillImportTool(opts), createSkillScanTool(), ...mcpTools, ...createWebTools(opts)];
   // Hosted grounded search (Meta web_search): provider-side, no extra key,
   // runs automatically when the model needs current/external facts.
@@ -96,6 +103,9 @@ export async function createTriageAgent(
   // default — each call logs an IMAGE_USAGE line in the transcript for
   // later billing. Research subagents stay text-only.
   tools.push(...createImageTools(opts));
+  // File reading (images + PDFs via Meta-direct 1.3, text locally).
+  // Read-only like grounded_search — no card. Allowed in research too.
+  tools.push(createFileReaderTool(opts));
   if (sel.variant === 'research') {
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
   }
@@ -123,7 +133,7 @@ export async function createTriageAgent(
   return new Agent({
     name: 'Wayfind',
     model: (await resolved.get()) as never,
-    instructions: BASE_INSTRUCTIONS + searchGuidance + imageGuidance + chiefGuidance + teamGuidance + skillCatalogPrompt(skills),
+    instructions: BASE_INSTRUCTIONS + searchGuidance + imageGuidance + fileGuidance + chiefGuidance + teamGuidance + skillCatalogPrompt(skills),
     tools,
     handoffs: await triageHandoffs(opts, sel),
   });

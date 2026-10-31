@@ -1,7 +1,7 @@
 import type { MascotColor, MascotShape } from '@/components/Mascot';
 
 export type Msg =
-  | { t: 'u'; x: string }
+  | { t: 'u'; x: string; files?: string[] }
   | { t: 'b'; x: string }
   | { t: 'tool'; x: string }
   | { t: 'typing' }

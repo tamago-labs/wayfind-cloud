@@ -9,10 +9,11 @@
 // POST /approvals/:id resumes via RunState. Permissive mode never
 // interrupts (policy returns false) and auto-allows with an audit event.
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { MemorySession, run, RunState } from '@openai/agents';
 import { PROVIDER_MODEL, WORKSPACE_DIR } from '../core/config.js';
+import { inside } from '../agent/tools/paths.js';
 import { createTriageAgent, type AgentSelection } from '../agent/agent.js';
 import type { QuestionPrompt } from '../agent/tools/question.js';
 import type { BotRequest, BotRequestResult } from '../agent/tools/create_bot.js';
@@ -296,8 +297,59 @@ function seedFor(conversationId: string | undefined): unknown[] {
     );
 }
 
-function userMessage(text: string): unknown {
-  return { type: 'message', role: 'user', content: [{ type: 'input_text', text }] };
+function userMessage(text: string, attachments?: string[]): unknown {
+  const { parts, hint } = attachContent(attachments);
+  return {
+    type: 'message',
+    role: 'user',
+    content: [{ type: 'input_text', text: hint ? `${text}\n\n${hint}` : text }, ...parts],
+  };
+}
+
+/** Max attached files inlined per message; each capped at 10MB. */
+const MAX_ATTACH = 5;
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+
+const ATTACH_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
+/** Split attachments: images inline as input_image data URLs (the chat
+ * model sees them); anything else becomes a hint so the model reaches
+ * for the read_file tool instead. */
+function attachContent(paths: string[] | undefined): { parts: unknown[]; hint: string } {
+  const parts: unknown[] = [];
+  const hints: string[] = [];
+  for (const p of (paths ?? []).slice(0, MAX_ATTACH)) {
+    let full: string;
+    try {
+      full = inside(p);
+    } catch {
+      hints.push(`${p} (not found in workspace)`);
+      continue;
+    }
+    const st = statSync(full, { throwIfNoEntry: false });
+    if (!st || st.isDirectory() || st.size > MAX_ATTACH_BYTES) {
+      hints.push(`${p} (could not attach — missing or over 10MB)`);
+      continue;
+    }
+    const ext = p.slice(p.lastIndexOf('.')).toLowerCase();
+    const mime = ATTACH_MIME[ext];
+    if (mime) {
+      const b64 = readFileSync(full).toString('base64');
+      // SDK field is `image` (data URL string) in this version — not
+      // `image_url`. Wrong name passes through unconverted and the
+      // endpoint rejects the message.
+      parts.push({ type: 'input_image', image: `data:${mime};base64,${b64}` });
+    } else {
+      hints.push(`${p} (use read_file to read it)`);
+    }
+  }
+  return { parts, hint: hints.length > 0 ? `[attached files: ${hints.join(', ')}]` : '' };
 }
 
 export function getRun(id: string): Run | undefined {
@@ -439,6 +491,9 @@ export interface StartRunOpts {
   botName?: string;
   /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
+  /** Workspace-relative attachment paths (chat paperclip). Images are
+   * inlined into the user message; other files become a read_file hint. */
+  attachments?: string[];
   /** Subagent variant for `task` children. */
   subagentType?: 'general' | 'research';
   /** Resume this child session (task_id) instead of starting fresh. */
@@ -701,7 +756,9 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     // everything else. The brief rides bracketed every turn, never persisted.
     const liveText = !runState.parentId && opts.system ? `[${opts.system}]\n\n${text}` : text;
     const input = (
-      runState.parentId ? [userMessage(text)] : [...seedFor(opts.conversationId), userMessage(liveText)]
+      runState.parentId
+        ? [userMessage(text)]
+        : [...seedFor(opts.conversationId), userMessage(liveText, opts.attachments)]
     ) as never;
     let session: MemorySession | undefined;
     if (!runState.parentId) {
@@ -761,7 +818,10 @@ function newRunState(opts: StartRunOpts): Run {
 export function startRun(text: string, opts: StartRunOpts): Run {
   const runState = newRunState(opts);
   runs.set(runState.id, runState);
-  appendTranscript(runState.id, 'user', text, runState.parentId, opts.conversationId);
+  // Persist attachment paths (not bytes) so history shows what was sent
+  // without replaying megabytes of base64 on rehydrate.
+  const marker = opts.attachments?.length ? ` [attached: ${opts.attachments.slice(0, 5).join(', ')}]` : '';
+  appendTranscript(runState.id, 'user', text + marker, runState.parentId, opts.conversationId);
   void executeRun(runState, text, opts).catch(() => {});
   return runState;
 }

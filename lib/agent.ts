@@ -34,7 +34,7 @@ export async function postTask(
   conversationId?: string,
   system?: string,
   allowedSkills?: string[],
-  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string },
+  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[] },
 ): Promise<string> {
   const res = await fetch(`${AGENT_URL}/task`, {
     method: 'POST',
@@ -47,6 +47,7 @@ export async function postTask(
       canManageBots: opts?.canManageBots === true,
       ...(opts?.roster ? { roster: opts.roster } : {}),
       ...(opts?.botName ? { botName: opts.botName } : {}),
+      ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
     }),
   });
   if (!res.ok) throw new Error(`agent /task → ${res.status}`);
@@ -334,4 +335,9 @@ export async function uploadFile(path: string, contentBase64: string): Promise<{
 /** Direct download URL for a workspace file (Library rows link here). */
 export function downloadFileUrl(path: string): string {
   return `${AGENT_URL}/files/download?path=${encodeURIComponent(path)}`;
+}
+
+/** Inline view URL for a workspace image (chat thumbnails and messages). */
+export function viewFileUrl(path: string): string {
+  return `${AGENT_URL}/files/view?path=${encodeURIComponent(path)}`;
 }

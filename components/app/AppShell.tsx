@@ -125,11 +125,11 @@ export default function AppShell() {
   const patchBotById = (id: string, fn: (b: ViewBot) => ViewBot) =>
     setBots((prev) => prev.map((b) => (b.id === id ? fn(b) : b)));
 
-  const send = () => sendText(draft);
+  const send = (attachments: string[] = []) => sendText(draft, attachments);
 
-  const sendText = (raw: string) => {
+  const sendText = (raw: string, attachments: string[] = []) => {
     const v = raw.trim();
-    if (!v || !bot || bot.busy) return;
+    if ((!v && attachments.length === 0) || !bot || bot.busy) return;
     const targetIndex = cur;
     const targetId = bot.id;
     const targetName = bot.name;
@@ -137,7 +137,11 @@ export default function AppShell() {
     const targetIsChief = bot.isChiefOfStaff;
     const targetSkills = bot.skillsEnabled;
     setDraft('');
-    patchBot(targetIndex, (b) => ({ ...b, busy: true, msgs: [...b.msgs, { t: 'u', x: v }, { t: 'typing' }] }));
+    patchBot(targetIndex, (b) => ({
+      ...b,
+      busy: true,
+      msgs: [...b.msgs, { t: 'u', x: v || '(attached files)', ...(attachments.length > 0 ? { files: attachments } : {}) }, { t: 'typing' }],
+    }));
     // Stable identity for the whole run: roster inserts shift indices, so
     // every patch below keys on the bot id. Falls back to the captured
     // index only when the bot has no id yet (local-only, pre-save).
@@ -160,6 +164,7 @@ export default function AppShell() {
                 .map((b) => ({ id: b.id as string, name: b.name, role: b.role, skills: b.skillsEnabled }))
             : undefined,
           botName: targetName,
+          ...(attachments.length > 0 ? { attachments } : {}),
         });
         await streamRun(runId, {
           onChunk: (delta) =>
