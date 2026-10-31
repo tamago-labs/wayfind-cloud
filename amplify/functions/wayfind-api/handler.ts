@@ -4,17 +4,20 @@ import { generateClient } from "aws-amplify/data";
 import { getAmplifyDataClientConfig } from "@aws-amplify/backend/function/runtime";
 import { env } from "$amplify/env/wayfind-api";
 import type { Schema } from "../../data/resource";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import {
   LambdaMicrovmsClient,
   CreateMicrovmAuthTokenCommand,
+  RunMicrovmCommand,
+  SuspendMicrovmCommand,
+  ResumeMicrovmCommand,
+  TerminateMicrovmCommand,
+  GetMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
 import { createVerify, createPublicKey } from "crypto";
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
 Amplify.configure(resourceConfig, libraryOptions);
 const dataClient = generateClient<Schema>();
-const lambda = new LambdaClient({});
 const microvms = new LambdaMicrovmsClient({ region: process.env.AWS_REGION });
 
 /* ---------------- Cognito JWT verification (no external deps) ---------------- */
@@ -132,7 +135,8 @@ export const handler = async (
   const ownerId = claims.sub;
 
   try {
-    // POST /computer/request â€” create (or return) the Computer request, then gatekeep
+    // POST /computer/request - get-or-create the caller's Computer row.
+    // No approval gate: any signed-in user may provision (gatekeeper removed).
     if (path.endsWith("/computer/request") && method === "POST") {
       const profile = await ensureProfile(claims);
       const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
@@ -141,7 +145,6 @@ export const handler = async (
         const { data: created, errors } = await dataClient.models.Computer.create({
           ownerId,
           userProfileId: profile.id,
-          gateStatus: "pending",
           provisionStatus: "not_provisioned",
           region: "ap-southeast-1",
           requestedAt: new Date().toISOString(),
@@ -151,27 +154,82 @@ export const handler = async (
         }
         computer = created;
       }
-      const gatekeeperName = process.env.GATEKEEPER_FUNCTION_NAME;
-      if (computer.gateStatus === "pending" && gatekeeperName) {
-        const result = await lambda.send(
-          new InvokeCommand({
-            FunctionName: gatekeeperName,
-            InvocationType: "RequestResponse",
-            Payload: JSON.stringify({
-              computerId: computer.id,
-              ownerId,
-              emailVerified: claims.email_verified === true || claims.email_verified === "true",
-            }),
-          }),
-        );
-        const payload = result.Payload ? JSON.parse(Buffer.from(result.Payload).toString()) : {};
-        const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
-        return json(200, { data: updated ?? computer, decision: payload });
-      }
       return json(200, { data: computer });
     }
 
     // POST /chat/message â€” Phase 4 (chat + model runtime). Honest stub.
+    // POST /computer/provision - boot the caller's VM (idempotent).
+    // Returns the Computer row immediately; the footer polls provisionStatus.
+    // Awaited inline (boot ~11s + hooks + smoke < 60s, fits the 300s budget).
+    if (path.endsWith("/computer/provision") && method === "POST") {
+      const profile = await ensureProfile(claims);
+      const computer = await findOrCreateComputer(ownerId, profile.id);
+      if (computer.provisionStatus === "running") return json(200, { data: computer });
+      if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
+      if (computer.provisionStatus === "suspended") {
+        return json(409, { error: "computer is suspended - use POST /computer/action {resume}", data: computer });
+      }
+      try {
+        await provisionComputer(computer.id, ownerId);
+        const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
+        return json(200, { data: updated ?? computer });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[wayfind-api] provision failed:", msg);
+        return json(502, { error: `provision failed: ${msg.slice(0, 300)}` });
+      }
+    }
+
+    // POST /computer/action {suspend|resume|terminate} - caller's own VM only.
+    if (path.endsWith("/computer/action") && method === "POST") {
+      let body: { action?: string } = {};
+      try {
+        body = JSON.parse(event.body ?? "{}");
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
+      const computer = computers?.[0];
+      if (!computer?.microvmId) return json(404, { error: "no provisioned MicroVM for this account" });
+      const microvmId = computer.microvmId;
+      try {
+        if (body.action === "suspend") {
+          // Best-effort workspace flush before suspend.
+          try {
+            const token = await mintVmToken(microvmId, 5);
+            await vmFetch(computer.endpoint ?? "", token, "/hooks/suspend", {});
+          } catch {
+            // VM may already be unreachable - suspend anyway.
+          }
+          await microvms.send(new SuspendMicrovmCommand({ microvmIdentifier: microvmId }));
+          const { data: updated } = await dataClient.models.Computer.update({ id: computer.id, provisionStatus: "suspended" });
+          return json(200, { data: updated });
+        }
+        if (body.action === "resume") {
+          await microvms.send(new ResumeMicrovmCommand({ microvmIdentifier: microvmId }));
+          const endpoint = await waitForRunning(microvmId);
+          const { data: updated } = await dataClient.models.Computer.update({ id: computer.id, provisionStatus: "running", endpoint });
+          return json(200, { data: updated });
+        }
+        if (body.action === "terminate") {
+          try {
+            const token = await mintVmToken(microvmId, 5);
+            await vmFetch(computer.endpoint ?? "", token, "/hooks/terminate", {});
+          } catch {
+            // VM may already be gone - terminate anyway.
+          }
+          await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: microvmId }));
+          const { data: updated } = await dataClient.models.Computer.update({ id: computer.id, provisionStatus: "terminated", microvmId: "" });
+          return json(200, { data: updated });
+        }
+        return json(400, { error: "action must be suspend, resume, or terminate" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[wayfind-api] computer action failed:", msg);
+        return json(502, { error: `action failed: ${msg.slice(0, 300)}` });
+      }
+    }
+
     // POST /runs/:id/usage — agent usage events go to CreditLedger rows (M2).
     // Body: { model?, provider?, durationMs?, outputChars?, toolCalls?,
     //         kind?, unit?, quantity?, tokens?: { input, output },
@@ -295,3 +353,128 @@ export const handler = async (
     return json(500, { error: "internal error" });
   }
 };
+
+/* ---------------- computer lifecycle (provision/action) ---------------- */
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+async function findOrCreateComputer(ownerId: string, profileId: string) {
+  const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
+  if (existing?.[0]) return existing[0];
+  const { data: created, errors } = await dataClient.models.Computer.create({
+    ownerId,
+    userProfileId: profileId,
+    provisionStatus: "not_provisioned",
+    region: process.env.COMPUTER_REGION ?? "ap-southeast-1",
+    requestedAt: new Date().toISOString(),
+  });
+  if (errors || !created) throw new Error(`computer create failed: ${JSON.stringify(errors)}`);
+  return created;
+}
+
+async function waitForRunning(microvmId: string, timeoutMs = 5 * 60_000): Promise<string> {
+  const start = Date.now();
+  for (;;) {
+    const res = await microvms.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
+    if (res.state === "RUNNING") {
+      if (!res.endpoint) throw new Error("VM RUNNING but no endpoint");
+      return res.endpoint;
+    }
+    if (res.state === "TERMINATED") throw new Error("VM terminated while starting");
+    if (Date.now() - start > timeoutMs) throw new Error(`VM did not reach RUNNING in ${timeoutMs / 1000}s`);
+    await sleep(10_000);
+  }
+}
+
+async function vmFetch(endpoint: string, token: string, path: string, body?: unknown): Promise<Response> {
+  return fetch(`https://${endpoint}${path}`, {
+    method: "POST",
+    headers: { "X-aws-proxy-auth": token, "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function mintVmToken(microvmId: string, expirationInMinutes = 30): Promise<string> {
+  const out = await microvms.send(
+    new CreateMicrovmAuthTokenCommand({
+      microvmIdentifier: microvmId,
+      expirationInMinutes,
+      allowedPorts: [{ port: 8080 }],
+    }),
+  );
+  const token = (out.authToken as Record<string, string> | undefined)?.["X-aws-proxy-auth"];
+  if (!token) throw new Error("token mint returned no auth token");
+  return token;
+}
+
+/** Full provision chain (boot + identity + smoke test). Throws on any step. */
+export async function provisionComputer(computerId: string, ownerId: string): Promise<void> {
+  const imageArn = process.env.COMPUTER_IMAGE_ARN;
+  if (!imageArn) throw new Error("COMPUTER_IMAGE_ARN is not configured");
+  const bucket = process.env.COMPUTER_WORKSPACE_BUCKET ?? "";
+  const prefix = `computers/${computerId}/workspace/`;
+
+  await dataClient.models.Computer.update({ id: computerId, provisionStatus: "provisioning" });
+  try {
+    const run = await microvms.send(
+      new RunMicrovmCommand({
+        imageIdentifier: imageArn,
+        runHookPayload: JSON.stringify({ ownerId, computerId }),
+        ingressNetworkConnectors: [
+          `arn:aws:lambda:${process.env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:ALL_INGRESS`,
+        ],
+        egressNetworkConnectors: [
+          `arn:aws:lambda:${process.env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
+        ],
+        idlePolicy: { autoResumeEnabled: true, maxIdleDurationSeconds: 900, suspendedDurationSeconds: 300 },
+        maximumDurationInSeconds: 14_400,
+      }),
+    );
+    if (!run.microvmId) throw new Error("run-microvm returned no microvmId");
+    const endpoint = await waitForRunning(run.microvmId);
+    const token = await mintVmToken(run.microvmId);
+
+    // Identity + secrets (Amplify secrets, never stored in the DB).
+    const modalKey = process.env.MODAL_API_KEY;
+    const metaKey = process.env.PROVIDER_API_KEY;
+    if (!modalKey || !metaKey) throw new Error("provider API keys are not configured (Amplify secrets)");
+    const runRes = await vmFetch(endpoint, token, "/hooks/run", {
+      ownerId,
+      computerId,
+      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey },
+      ...(bucket ? { workspace: { bucket, prefix } } : {}),
+    });
+    if (!runRes.ok) throw new Error(`/hooks/run → ${runRes.status}: ${(await runRes.text()).slice(0, 200)}`);
+
+    // Smoke test: one chat turn through the new VM.
+    const taskRes = await vmFetch(endpoint, token, "/task", {
+      text: "Reply with exactly: cloud-ok",
+      ownerId,
+    });
+    if (!taskRes.ok) throw new Error(`/task smoke → ${taskRes.status}`);
+    const { runId } = (await taskRes.json()) as { runId?: string };
+    if (!runId) throw new Error("smoke task returned no runId");
+    const stream = await fetch(`https://${endpoint}/stream/${runId}`, {
+      headers: { "X-aws-proxy-auth": token, Accept: "text/event-stream" },
+    });
+    const sse = await stream.text();
+    if (!sse.includes("cloud-ok")) throw new Error("smoke chat did not return cloud-ok");
+
+    await dataClient.models.Computer.update({
+      id: computerId,
+      provisionStatus: "running",
+      microvmId: run.microvmId,
+      endpoint,
+      imageVersion: "1.0",
+      decidedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await dataClient.models.Computer.update({
+      id: computerId,
+      provisionStatus: "terminated",
+      gateReason: `provision failed: ${msg.slice(0, 300)}`,
+    });
+    throw err;
+  }
+}

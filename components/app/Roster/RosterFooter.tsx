@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { LogOut, Pencil, Settings } from 'lucide-react';
+import { Cloud, CloudOff, Loader2, LogOut, Pencil, Settings } from 'lucide-react';
 import { useAuthenticator } from '@aws-amplify/ui-react';
 import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
@@ -12,6 +12,7 @@ import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
 import SettingsModal from './SettingsModal';
 import { newBotColors, newBotShapes } from '../seed';
+import { backendConfigured, computerAction, provisionComputer, requestComputer } from '@/lib/wayfind-api';
 
 const dataClient = generateClient<Schema>();
 
@@ -22,6 +23,19 @@ export default function RosterFooter() {
   const [displayName, setDisplayName] = useState('');
   const [plan, setPlan] = useState('free');
   const [spend, setSpend] = useState<number | null>(null);
+  const [computer, setComputer] = useState<{
+    id: string;
+    provisionStatus?: string | null;
+    endpoint?: string | null;
+    microvmId?: string | null;
+    gateReason?: string | null;
+  } | null>(null);
+  const [computerBusy, setComputerBusy] = useState(false);
+  const [computerError, setComputerError] = useState('');
+  // Transport toggle: local :8080 vs cloud VM endpoint. Persisted.
+  const [transport, setTransport] = useState<'local' | 'cloud'>(() =>
+    typeof window !== 'undefined' && window.localStorage.getItem('wayfind-transport') === 'cloud' ? 'cloud' : 'local',
+  );
   const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -129,6 +143,52 @@ export default function RosterFooter() {
       alive = false;
     };
   }, [user?.userId]);
+
+  // Computer row: load once, poll while provisioning. Transport toggle
+  // writes localStorage keys that lib/agent.ts reads per request.
+  const loadComputer = async (silent = false) => {
+    if (!backendConfigured()) return;
+    if (!silent) setComputerError('');
+    try {
+      const { data } = (await requestComputer()) as { data?: typeof computer };
+      if (data) setComputer(data);
+    } catch (err) {
+      if (!silent) setComputerError(err instanceof Error ? err.message : 'Computer status failed');
+    }
+  };
+  useEffect(() => {
+    if (!user?.userId) return;
+    void loadComputer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.userId]);
+  useEffect(() => {
+    if (computer?.provisionStatus !== 'provisioning') return;
+    const t = setInterval(() => void loadComputer(true), 10_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [computer?.provisionStatus]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('wayfind-transport', transport);
+    if (transport === 'cloud' && computer?.endpoint) {
+      window.localStorage.setItem('wayfind-vm-endpoint', `https://${computer.endpoint}`);
+    }
+  }, [transport, computer?.endpoint]);
+
+  const runComputerOp = async (op: () => Promise<unknown>) => {
+    if (computerBusy) return;
+    setComputerBusy(true);
+    setComputerError('');
+    try {
+      const { data } = (await op()) as { data?: typeof computer };
+      if (data) setComputer(data);
+      else await loadComputer(true);
+    } catch (err) {
+      setComputerError(err instanceof Error ? err.message : 'Computer op failed');
+    } finally {
+      setComputerBusy(false);
+    }
+  };
 
 
   const initial = (displayName || email).charAt(0).toUpperCase() || 'P';
@@ -247,6 +307,83 @@ export default function RosterFooter() {
           </span>
           </button>
         </div>
+      {backendConfigured() && (
+        <div className="mt-2 rounded-2xl bg-white/70 px-3 py-2 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-navy">
+              {transport === 'cloud' ? <Cloud className="h-3.5 w-3.5" /> : <CloudOff className="h-3.5 w-3.5" />}
+              Computer · {computer?.provisionStatus ?? '…'}
+            </span>
+            <button
+              onClick={() => setTransport((t) => (t === 'cloud' ? 'local' : 'cloud'))}
+              title={transport === 'cloud' ? 'Chat via local :8080' : 'Chat via cloud VM'}
+              className="rounded-full border border-navy/15 px-2 py-0.5 text-[11px] font-bold text-heroslate hover:border-cta hover:text-cta"
+            >
+              {transport === 'cloud' ? 'cloud ✓' : 'local'}
+            </button>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {(!computer || computer.provisionStatus === 'not_provisioned' || computer.provisionStatus === 'terminated') && (
+              <button
+                onClick={() => void runComputerOp(provisionComputer)}
+                disabled={computerBusy}
+                className="rounded-full bg-navy px-3 py-1 text-xs font-bold text-white hover:bg-[#1c3350] disabled:opacity-50"
+              >
+                {computerBusy ? 'Starting…' : 'Start computer'}
+              </button>
+            )}
+            {computer?.provisionStatus === 'provisioning' && (
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-heroslate">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Booting your computer…
+              </span>
+            )}
+            {computer?.provisionStatus === 'running' && (
+              <>
+                <button
+                  onClick={() => void runComputerOp(() => computerAction('suspend'))}
+                  disabled={computerBusy}
+                  className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-navy hover:border-cta hover:text-cta disabled:opacity-50"
+                >
+                  Suspend
+                </button>
+                <button
+                  onClick={() => void runComputerOp(() => computerAction('terminate'))}
+                  disabled={computerBusy}
+                  className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-heroslate hover:text-red-600 disabled:opacity-50"
+                >
+                  Terminate
+                </button>
+              </>
+            )}
+            {computer?.provisionStatus === 'suspended' && (
+              <>
+                <button
+                  onClick={() => void runComputerOp(() => computerAction('resume'))}
+                  disabled={computerBusy}
+                  className="rounded-full bg-navy px-3 py-1 text-xs font-bold text-white hover:bg-[#1c3350] disabled:opacity-50"
+                >
+                  Resume
+                </button>
+                <button
+                  onClick={() => void runComputerOp(() => computerAction('terminate'))}
+                  disabled={computerBusy}
+                  className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-heroslate hover:text-red-600 disabled:opacity-50"
+                >
+                  Terminate
+                </button>
+              </>
+            )}
+          </div>
+          {(computerError || computer?.gateReason) && (
+            <p className="mt-1 text-[11px] font-semibold text-red-600">
+              {computerError || computer?.gateReason}
+            </p>
+          )}
+          {computer?.provisionStatus === 'running' && transport !== 'cloud' && (
+            <p className="mt-1 text-[11px] text-heroslate">Your cloud computer is running — flip to cloud to chat with it.</p>
+          )}
+        </div>
+      )}
       <ProfileModal
         open={nameOpen}
         onClose={() => setNameOpen(false)}

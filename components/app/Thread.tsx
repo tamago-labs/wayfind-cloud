@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText } from 'lucide-react';
 import Markdown from './Markdown';
+import VmImage from './VmImage';
 import type { Msg, SeedBot } from './seed';
 import { viewFileUrl } from '@/lib/agent';
 
@@ -125,8 +126,7 @@ export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: Threa
                     {files.map((p) => (
                       <span key={p} title={p} className="inline-flex items-center gap-1 rounded-lg bg-white/20 p-1">
                         {isImagePath(p) ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={viewFileUrl(p)} alt={p} className="h-14 w-14 rounded-md object-cover" />
+                          <VmImage src={viewFileUrl(p)} alt={p} className="h-14 w-14 rounded-md object-cover" />
                         ) : (
                           <span className="inline-flex items-center gap-1 px-1 text-xs font-semibold">
                             <FileText className="h-4 w-4" />

@@ -1,6 +1,5 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { wayfindApiFunction } from "../functions/wayfind-api/resource";
-import { gatekeeper } from "../functions/gatekeeper/resource";
 
 /**
  * Wayfind Cloud data — Phase 3 (PRD A11).
@@ -87,7 +86,6 @@ const schema = a.schema({
     .secondaryIndexes((index) => [index("ownerId").queryField("ledgerByOwnerId")]),
 }).authorization((allow) => [
   allow.resource(wayfindApiFunction),
-  allow.resource(gatekeeper),
 ]);
 
 export type Schema = ClientSchema<typeof schema>;

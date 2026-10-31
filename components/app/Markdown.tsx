@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
+import VmImage from './VmImage';
 
 /** Markdown for bot messages: GFM + code highlight, compact chat styling. */
 export default function Markdown({ text }: { text: string }) {
@@ -14,13 +15,11 @@ export default function Markdown({ text }: { text: string }) {
         rehypePlugins={[rehypeHighlight]}
         components={{
           // Generated images render inline; click opens full size.
-          // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
           img: ({ src, alt }) => (
             <a href={typeof src === 'string' ? src : ''} target="_blank" rel="noreferrer" title="Open full size">
-              <img
+              <VmImage
                 src={typeof src === 'string' ? src : ''}
                 alt={typeof alt === 'string' ? alt : ''}
-                loading="lazy"
                 className="my-2 max-h-96 w-full rounded-xl object-cover"
               />
             </a>

@@ -31,6 +31,9 @@ Nothing in this repo has been run against a real MicroVM yet.
 - **Functions (deployed):** `wayfind-api` (Function URL, Cognito JWT
   verified in handler; routes `/health /me /bots /computer/request
   /chat/message→501`), `gatekeeper` (Computer gate decisions).
+  2026-11-01: gatekeeper REMOVED — no approval gate, any signed-in user may
+  provision; routes `/computer/provision` + `/computer/action` live in
+  `wayfind-api` with MicroVM IAM.
   Frontend currently talks **AppSync directly** for roster CRUD;
   `lib/wayfind-api.ts` exists but is lightly used — do not build a second
   client path; new server-side work goes through `wayfind-api` routes or

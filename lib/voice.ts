@@ -1,22 +1,29 @@
 // Voice capture + transcription client. The mic stream is downsampled to
 // 24 kHz mono and encoded as WAV in the browser, so the agent server can
 // forward it straight to Meta speech-to-text with no audio tooling.
-const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
+const LOCAL_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
 
-export interface VoiceResult {
-  transcript: string;
-  audioDurationMs: number;
+function voiceBase(): string {
+  if (typeof window === 'undefined') return LOCAL_URL;
+  if (window.localStorage.getItem('wayfind-transport') !== 'cloud') return LOCAL_URL;
+  return window.localStorage.getItem('wayfind-vm-endpoint') ?? LOCAL_URL;
 }
 
 export async function transcribeVoice(wav: Blob, ownerId?: string): Promise<VoiceResult> {
-  const res = await fetch(`${AGENT_URL}/voice/transcribe${ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : ''}`, {
+  const { vmAuthHeaders } = await import('./agent');
+  const res = await fetch(`${voiceBase()}/voice/transcribe${ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : ''}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'audio/wav' },
+    headers: { 'Content-Type': 'audio/wav', ...(await vmAuthHeaders()) },
     body: wav,
   });
   const data = (await res.json()) as { transcript?: string; audioDurationMs?: number; error?: string };
   if (!res.ok) throw new Error(data.error ?? `Voice transcribe failed (${res.status})`);
   return { transcript: data.transcript ?? '', audioDurationMs: data.audioDurationMs ?? 0 };
+}
+
+export interface VoiceResult {
+  transcript: string;
+  audioDurationMs: number;
 }
 
 export interface RecordOptions {

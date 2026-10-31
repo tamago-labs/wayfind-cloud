@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Send, Mic, Plus, Paperclip, X, FileText, Loader2 } from 'lucide-react';
 import ComposerMenu from './ComposerMenu';
 import VoiceModal from './VoiceModal';
+import VmImage from './VmImage';
 import { uploadFile, viewFileUrl } from '@/lib/agent';
 
 interface ComposerProps {
@@ -124,8 +125,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
             {staged.map((p) => (
               <span key={p} className="group relative inline-flex items-center gap-1.5 rounded-xl border border-navy/15 bg-ice py-1 pl-1 pr-2">
                 {isImagePath(p) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={viewFileUrl(p)} alt={p} className="h-10 w-10 rounded-lg object-cover" />
+                  <VmImage src={viewFileUrl(p)} alt={p} className="h-10 w-10 rounded-lg object-cover" />
                 ) : (
                   <span className="grid h-10 w-10 place-items-center rounded-lg bg-white">
                     <FileText className="h-5 w-5 text-heroslate" />

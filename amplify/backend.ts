@@ -7,21 +7,15 @@ import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { wayfindApiFunction } from "./functions/wayfind-api/resource";
-import { gatekeeper } from "./functions/gatekeeper/resource";
 
 const backend = defineBackend({
   auth,
   data,
   storage,
   wayfindApiFunction,
-  gatekeeper,
 });
 
 const apiLambda = backend.wayfindApiFunction.resources.lambda as LambdaFunction;
-const gatekeeperLambda = backend.gatekeeper.resources.lambda as LambdaFunction;
-
-// wayfind-api may invoke the gatekeeper on Computer requests
-gatekeeperLambda.grantInvoke(apiLambda);
 
 // wayfind-api mints MicroVM auth tokens (POST /computer/token) for the
 // caller's own VM only - the handler enforces the ownership check.
@@ -33,13 +27,52 @@ apiLambda.addToRolePolicy(
   }),
 );
 
-// Inject auth + gatekeeper wiring (no secrets here — Phase 4 uses Amplify secrets)
+// Computer lifecycle (provision/suspend/resume/terminate + status reads).
+// Scoped to MicroVM control only — image builds stay a manual script.
+const computerRegion = process.env.COMPUTER_REGION ?? "ap-southeast-1";
+apiLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: [
+      "lambda-microvms:RunMicrovm",
+      "lambda-microvms:SuspendMicrovm",
+      "lambda-microvms:ResumeMicrovm",
+      "lambda-microvms:TerminateMicrovm",
+      "lambda-microvms:GetMicrovm",
+      "lambda-microvms:GetMicrovmImage",
+    ],
+    resources: ["*"], // microvm-ids are per-run; ownership enforced in handler
+  }),
+);
+
+// Workspace sync bucket (S3): VMs read/write only their computers/* prefix.
+const workspaceBucket = process.env.COMPUTER_WORKSPACE_BUCKET ?? "wayfind-microvm-artifacts-ap-southeast-1";
+apiLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+    resources: [`arn:aws:s3:::${workspaceBucket}/computers/*`],
+  }),
+);
+apiLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["s3:ListBucket"],
+    resources: [`arn:aws:s3:::${workspaceBucket}`],
+    conditions: { StringLike: { "s3:prefix": ["computers/*"] } },
+  }),
+);
+
+apiLambda.addEnvironment("COMPUTER_REGION", computerRegion);
+apiLambda.addEnvironment("COMPUTER_WORKSPACE_BUCKET", workspaceBucket);
+apiLambda.addEnvironment("COMPUTER_IMAGE_ARN", process.env.COMPUTER_IMAGE_ARN ?? "");
+
+// Inject auth wiring (no secrets here — provider keys arrive via Amplify secrets)
 apiLambda.addEnvironment("USER_POOL_ID", backend.auth.resources.userPool.userPoolId);
 apiLambda.addEnvironment(
   "USER_POOL_CLIENT_ID",
   backend.auth.resources.userPoolClient.userPoolClientId,
 );
-apiLambda.addEnvironment("GATEKEEPER_FUNCTION_NAME", gatekeeperLambda.functionName);
 apiLambda.addEnvironment("CORS_ORIGIN", "https://wayfind.cloud");
 
 const apiFunctionUrl = apiLambda.addFunctionUrl({

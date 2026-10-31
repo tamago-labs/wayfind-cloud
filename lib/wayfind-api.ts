@@ -57,3 +57,8 @@ export const listBots = () => apiFetch('/bots');
 export const createBot = (bot: { name: string; finder: string; job: string; description?: string }) =>
   apiFetch('/bots', { method: 'POST', body: JSON.stringify(bot) });
 export const requestComputer = () => apiFetch('/computer/request', { method: 'POST', body: '{}' });
+export const provisionComputer = () => apiFetch('/computer/provision', { method: 'POST', body: '{}' });
+export const computerAction = (action: 'suspend' | 'resume' | 'terminate') =>
+  apiFetch('/computer/action', { method: 'POST', body: JSON.stringify({ action }) });
+export const computerToken = (expirationInMinutes = 30) =>
+  apiFetch('/computer/token', { method: 'POST', body: JSON.stringify({ expirationInMinutes }) });

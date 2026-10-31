@@ -5,6 +5,32 @@
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
 
+/** Cloud transport: when the footer toggle is on cloud mode, chat + files
+ * go to the VM endpoint with a minted proxy token. Localhost otherwise. */
+export function cloudEndpoint(): string | null {
+  if (typeof window === 'undefined') return null;
+  if (window.localStorage.getItem('wayfind-transport') !== 'cloud') return null;
+  return window.localStorage.getItem('wayfind-vm-endpoint');
+}
+
+function agentBase(): string {
+  return cloudEndpoint() ?? AGENT_URL;
+}
+
+let vmToken: { token: string; exp: number } | null = null;
+
+/** Proxy-auth headers for the VM endpoint ({} in local mode). Refreshes
+ * the 30-min token when under 5 minutes remain. */
+export async function vmAuthHeaders(): Promise<Record<string, string>> {
+  if (!cloudEndpoint()) return {};
+  if (vmToken && vmToken.exp > Date.now() + 5 * 60_000) return { 'X-aws-proxy-auth': vmToken.token };
+  const { computerToken } = await import('./wayfind-api');
+  const out = (await computerToken(30)) as { authToken?: string };
+  if (!out.authToken) throw new Error('VM token mint returned no auth token');
+  vmToken = { token: out.authToken, exp: Date.now() + 25 * 60_000 };
+  return { 'X-aws-proxy-auth': vmToken.token };
+}
+
 export interface HistoryMessage {
   role: 'user' | 'assistant' | 'tool';
   text: string;
@@ -13,7 +39,7 @@ export interface HistoryMessage {
 
 /** Resolve a parked approval. The run resumes and streams on. */
 export async function decideApproval(approvalId: string, decision: 'approve' | 'reject'): Promise<boolean> {
-  const res = await fetch(`${AGENT_URL}/approvals/${approvalId}`, {
+  const res = await agentFetch(`/approvals/${approvalId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision }),
@@ -36,9 +62,9 @@ export async function postTask(
   allowedSkills?: string[],
   opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string },
 ): Promise<string> {
-  const res = await fetch(`${AGENT_URL}/task`, {
+  const res = await fetch(`${agentBase()}/task`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await vmAuthHeaders()) },
     body: JSON.stringify({
       text,
       conversationId,
@@ -67,9 +93,19 @@ export interface StreamHandlers {
   onBotRequest?: (r: { bid: string; botName: string; botRole?: string; botDescription?: string }) => void;
 }
 
+/** Same as fetch, but against the active transport with VM auth headers. */
+async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${agentBase()}${path}`, {
+    ...init,
+    headers: { ...(init?.headers ?? {}), ...(await vmAuthHeaders()) },
+  });
+}
+
 /** Resolve when the run emits done; reject on error/timeout. Ignores `: ping` heartbeats. */
 export async function streamRun(runId: string, handlers: StreamHandlers, timeoutMs = 600_000): Promise<string> {
-  const res = await fetch(`${AGENT_URL}/stream/${runId}`, { headers: { Accept: 'text/event-stream' } });
+  const res = await fetch(`${agentBase()}/stream/${runId}`, {
+    headers: { Accept: 'text/event-stream', ...(await vmAuthHeaders()) },
+  });
   if (!res.ok || !res.body) throw new Error(`agent /stream → ${res.status}`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -143,7 +179,7 @@ export async function streamRun(runId: string, handlers: StreamHandlers, timeout
 
 /** Answer a parked question. The run continues with your answers. */
 export async function answerQuestion(qid: string, answers: string[][]): Promise<boolean> {
-  const res = await fetch(`${AGENT_URL}/questions/${qid}`, {
+  const res = await agentFetch(`/questions/${qid}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ answers }),
@@ -156,7 +192,7 @@ export async function answerBotRequest(
   bid: string,
   result: { decision: 'confirm' | 'cancel'; botId?: string; error?: string },
 ): Promise<boolean> {
-  const res = await fetch(`${AGENT_URL}/bot-requests/${bid}`, {
+  const res = await agentFetch(`/bot-requests/${bid}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(result),
@@ -167,7 +203,7 @@ export async function answerBotRequest(
 /** Compress a first message into a short role label. Returns '' on failure (caller keeps role empty). */
 export async function summarizeRole(text: string, ownerId?: string): Promise<string> {
   try {
-    const res = await fetch(`${AGENT_URL}/summarize-role`, {
+    const res = await agentFetch(`/summarize-role`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, ...(ownerId ? { ownerId } : {}) }),
@@ -180,7 +216,7 @@ export async function summarizeRole(text: string, ownerId?: string): Promise<str
   }
 }
 export async function getHistory(conversationId: string): Promise<HistoryMessage[]> {
-  const res = await fetch(`${AGENT_URL}/history/${conversationId}`);
+  const res = await agentFetch(`/history/${conversationId}`);
   if (!res.ok) throw new Error(`agent /history → ${res.status}`);
   const { messages } = (await res.json()) as { messages: HistoryMessage[] };
   return messages;
@@ -191,7 +227,7 @@ export async function getServerStatus(): Promise<{
   permissionMode: 'permissive' | 'enforcing';
   provider: { baseURL: string; model: string };
 }> {
-  const res = await fetch(`${AGENT_URL}/status`);
+  const res = await agentFetch(`/status`);
   if (!res.ok) throw new Error(`agent /status → ${res.status}`);
   return (await res.json()) as {
     permissionMode: 'permissive' | 'enforcing';
@@ -208,13 +244,13 @@ export interface PermissionRule {
 }
 
 export async function getPermissions(): Promise<{ rules: PermissionRule[]; canUndo: boolean }> {
-  const res = await fetch(`${AGENT_URL}/permissions`);
+  const res = await agentFetch(`/permissions`);
   if (!res.ok) throw new Error(`agent /permissions → ${res.status}`);
   return (await res.json()) as { rules: PermissionRule[]; canUndo: boolean };
 }
 
 export async function setPermissions(rules: PermissionRule[]): Promise<PermissionRule[]> {
-  const res = await fetch(`${AGENT_URL}/permissions`, {
+  const res = await agentFetch(`/permissions`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rules }),
@@ -229,7 +265,7 @@ export async function setPermissions(rules: PermissionRule[]): Promise<Permissio
 
 /** Restore permissions to before the last save. Returns null when nothing to undo. */
 export async function undoPermissions(): Promise<{ rules: PermissionRule[]; canUndo: boolean } | null> {
-  const res = await fetch(`${AGENT_URL}/permissions/undo`, { method: 'POST' });
+  const res = await agentFetch(`/permissions/undo`, { method: 'POST' });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`agent /permissions/undo → ${res.status}`);
   return (await res.json()) as { rules: PermissionRule[]; canUndo: boolean };
@@ -248,7 +284,7 @@ export interface ProvidersState {
 }
 
 export async function getProviders(): Promise<ProvidersState> {
-  const res = await fetch(`${AGENT_URL}/providers`);
+  const res = await agentFetch(`/providers`);
   if (!res.ok) throw new Error(`agent /providers → ${res.status}`);
   return (await res.json()) as ProvidersState;
 }
@@ -262,7 +298,7 @@ export interface InstalledSkill {
 
 /** Installed skill catalog for the Settings list + per-bot picker. */
 export async function getSkills(): Promise<InstalledSkill[]> {
-  const res = await fetch(`${AGENT_URL}/skills`);
+  const res = await agentFetch(`/skills`);
   if (!res.ok) throw new Error(`agent /skills → ${res.status}`);
   return ((await res.json()) as { skills: InstalledSkill[] }).skills;
 }
@@ -273,7 +309,7 @@ export type SkillResolveResult =
 
 /** Preview a chat-provided source without installing anything. */
 export async function resolveSkill(source: string): Promise<SkillResolveResult> {
-  const res = await fetch(`${AGENT_URL}/skills/resolve`, {
+  const res = await agentFetch(`/skills/resolve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ source }),
@@ -291,7 +327,7 @@ export async function resolveSkill(source: string): Promise<SkillResolveResult> 
 
 /** Install a resolved source. Throws with the validation message on conflict. */
 export async function installSkill(source: string, overwrite = false): Promise<InstalledSkill[]> {
-  const res = await fetch(`${AGENT_URL}/skills/install`, {
+  const res = await agentFetch(`/skills/install`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ source, overwrite }),
@@ -303,7 +339,7 @@ export async function installSkill(source: string, overwrite = false): Promise<I
 
 /** Remove an installed skill. Returns false when unknown. */
 export async function removeSkill(name: string): Promise<boolean> {
-  const res = await fetch(`${AGENT_URL}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  const res = await agentFetch(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
   return res.ok;
 }
 
@@ -316,14 +352,14 @@ export interface FileEntry {
 
 /** Shallow workspace listing for the Library tab. */
 export async function listFiles(path = ''): Promise<{ path: string; entries: FileEntry[] }> {
-  const res = await fetch(`${AGENT_URL}/files?path=${encodeURIComponent(path)}`);
+  const res = await agentFetch(`/files?path=${encodeURIComponent(path)}`);
   if (!res.ok) throw new Error(`agent /files → ${res.status}`);
   return res.json() as Promise<{ path: string; entries: FileEntry[] }>;
 }
 
 /** Upload a file (base64) into the shared workspace. Throws with server message. */
 export async function uploadFile(path: string, contentBase64: string): Promise<{ size: number }> {
-  const res = await fetch(`${AGENT_URL}/files/upload`, {
+  const res = await agentFetch(`/files/upload`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path, contentBase64 }),
@@ -335,10 +371,10 @@ export async function uploadFile(path: string, contentBase64: string): Promise<{
 
 /** Direct download URL for a workspace file (Library rows link here). */
 export function downloadFileUrl(path: string): string {
-  return `${AGENT_URL}/files/download?path=${encodeURIComponent(path)}`;
+  return `${agentBase()}/files/download?path=${encodeURIComponent(path)}`;
 }
 
 /** Inline view URL for a workspace image (chat thumbnails and messages). */
 export function viewFileUrl(path: string): string {
-  return `${AGENT_URL}/files/view?path=${encodeURIComponent(path)}`;
+  return `${agentBase()}/files/view?path=${encodeURIComponent(path)}`;
 }
