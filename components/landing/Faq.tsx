@@ -1,11 +1,23 @@
 const faqs = [
   {
-    q: 'Can I use any AI model?',
-    a: 'You choose the model each Bot runs on from the models we offer. Bringing your own API key works on any plan, and opens after early access.',
+    q: 'Which AI models do my Bots use?',
+    a: 'Hosted Meta open-weight models (Muse Spark Open and Muse Glimmer), served via Modal, on every plan — no keys to bring, no setup. Premium adds Muse Wonder — Meta\u2019s new frontier, in the class of GPT-6 and Claude Fable — for complex work, agentic coding, and graphical computer work.',
+  },
+  {
+    q: 'What can a Bot actually do?',
+    a: 'Complete multi-step work across your connected apps, remember your workflows, and keep going in the background. A Bot produces finished results — reconciliation reports, drafted emails, prepared announcements — and asks for your approval before anything sensitive.',
+  },
+  {
+    q: 'Do I need to watch every step?',
+    a: 'No. Bots run routines on their own and only stop for your OK before sending, paying, publishing, or changing important records.',
+  },
+  {
+    q: 'Which business apps connect?',
+    a: 'Zoho-based services for books, mail, calendar and more — 100+ services via Zoho MCP — plus Web3 MCP connectors made by the Wayfind team for USDC payments and treasury.',
   },
   {
     q: 'What is a MicroVM?',
-    a: 'A very small virtual machine. We are building Wayfind\u2019s cloud computer on AWS Lambda MicroVMs, which combine VM-level isolation with near-instant launch and resume, and they keep your computer\u2019s state while it sleeps. The computer is in development and rolls out in phases.',
+    a: 'A very small virtual machine. We are building Wayfind\u2019s cloud computer on Firecracker MicroVMs on AWS Lambda, which combine VM-level isolation with near-instant launch and resume, and they keep your computer\u2019s state while it sleeps.',
   },
   {
     q: 'Will it run with my laptop closed?',
@@ -17,7 +29,7 @@ const faqs = [
   },
   {
     q: 'Where is Wayfind available?',
-    a: 'We start in the ap-southeast-1 region, so it works well from Southeast Asia, and we\u2019re not limited to US-first launches.',
+    a: 'Available worldwide from day one — no region-locked launches.',
   },
 ];
 

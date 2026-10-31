@@ -1,27 +1,40 @@
+'use client';
+
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 
 const plans = [
   {
+    name: 'Free',
+    price: '$0',
+    features: [
+      'Up to 3 Bots with persistent memory',
+      'Meta open-weight models',
+      'Limited usage to try your first Bots',
+    ],
+    featured: false,
+  },
+  {
     name: 'Starter',
     price: '$5',
     features: [
-      'Up to 10 Bots with persistent memory',
-      'Muse Glimmer credits included + BYOK',
-      '1 routine, daily brief included',
-      'Limited cloud computer minutes',
+      'Up to 5 Bots with persistent memory',
+      'Meta open-weight models',
+      'Generous usage limits',
+      '1 scheduled routine',
     ],
-    featured: false,
+    featured: true,
   },
   {
     name: 'Premium',
     price: '$30',
     features: [
-      'Unlimited Bots and group chats',
-      'Glimmer, Wonder + supported premium models',
-       'Unlimited scheduled + event routines',
-      'Higher cloud computer minutes',
+      'Up to 10 Bots and group chats',
+      'Muse Wonder for complex and graphical work',
+      'Highest usage limits',
+      '10 scheduled routines',
     ],
-    featured: true,
+    featured: false,
   },
   {
     name: 'Enterprise',
@@ -38,6 +51,21 @@ const plans = [
 ];
 
 export default function Pricing() {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [idx, setIdx] = useState(0);
+
+  const onScroll = () => {
+    const el = trackRef.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    setIdx(Math.round((el.scrollLeft / (el.scrollWidth - el.clientWidth)) * (plans.length - 1)));
+  };
+
+  const go = (i: number) => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollTo({ left: (i / (plans.length - 1)) * (el.scrollWidth - el.clientWidth), behavior: 'smooth' });
+  };
+
   return (
     <section id="pricing" className="scroll-mt-16 bg-ice px-6 py-24 font-brico text-navy">
       <div className="mx-auto max-w-6xl">
@@ -47,14 +75,18 @@ export default function Pricing() {
             Free in early access. Simple after.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-heroslate">
-            No card needed today. Bring your own AI key on any plan, or use ours. Idle time is never charged.
+            No card needed today. Idle time is never charged.
           </p>
         </div>
-        <div className="mt-12 grid gap-5 md:grid-cols-3 mx-auto max-w-6xl">
+        <div
+          ref={trackRef}
+          onScroll={onScroll}
+          className="mt-12 flex snap-x snap-mandatory gap-5 overflow-x-auto pb-2 [scrollbar-width:none] min-[480px]:grid min-[480px]:grid-cols-2 min-[480px]:overflow-visible min-[480px]:pb-0 lg:grid-cols-4 [&::-webkit-scrollbar]:hidden mx-auto max-w-6xl"
+        >
           {plans.map((p) => (
             <div
               key={p.name}
-              className={`flex flex-col rounded-3xl p-8 ${
+              className={`flex min-w-[85%] snap-center flex-col rounded-3xl p-8 min-[480px]:min-w-0 ${
                 p.featured
                   ? 'bg-navy text-white shadow-xl shadow-navy/25 lg:-mt-4 lg:pb-12'
                   : 'bg-white shadow-sm'
@@ -99,10 +131,22 @@ export default function Pricing() {
                       : 'border-2 border-navy text-navy hover:bg-navy hover:text-white'
                   }`}
                 >
-                  Join early access
+                  {p.name === 'Free' ? 'Start free' : 'Join early access'}
                 </Link>
               )}
             </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-center gap-2 min-[480px]:hidden" role="tablist" aria-label="Pricing plans">
+          {plans.map((p, i) => (
+            <button
+              key={p.name}
+              role="tab"
+              aria-selected={i === idx}
+              aria-label={`Show: ${p.name}`}
+              onClick={() => go(i)}
+              className={`h-2 rounded-full transition-all ${i === idx ? 'w-6 bg-cta' : 'w-2 bg-navy/20'}`}
+            />
           ))}
         </div>
       </div>

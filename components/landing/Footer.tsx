@@ -14,12 +14,11 @@ export default function Footer() {
             <Link href="https://x.com/WayfindZZZ" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">x</Link>
           </nav>
         </div>
-        <p className="text-[12px] text-heroslate leading-relaxed mt-8 max-w-3xl">
-          Wayfind Cloud is in early access. Chats, computer panels and routines shown on this page are
-          illustrative until real Bots are running. Planned pricing is not on sale yet. Nothing here
-          promises an always-on computer — it suspends when idle and checkpoints its work.
+        <p className="text-[12px] text-heroslate leading-relaxed mt-8 max-w-md">
+          Always-on AI teammates in the cloud for small businesses.
+          Early access — features and pricing may change before launch.
         </p>
-        <p className="text-[12px] text-heroslate mt-3">© 2026 Tamago Labs</p>
+        <p className="text-[12px] text-heroslate mt-3">© 2026 Tamago Labs Japan</p>
       </div>
     </footer>
   );
