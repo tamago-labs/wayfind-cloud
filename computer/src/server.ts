@@ -1,6 +1,8 @@
 // Agent HTTP + SSE server. Serves the browser direct (SSE) and the
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
 import OpenAI from 'openai';
 import { PORT, MODAL_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
 import { permissionMode } from './core/guard.js';
@@ -188,6 +190,89 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[voice] transcribe failed:', msg);
       return void json(res, 500, { error: `transcribe failed: ${msg}` });
+    }
+  }
+
+  // Workspace files: Library tab listing, composer uploads, downloads.
+  // User-initiated input like typing — no approval card. All paths are
+  // jailed inside WORKSPACE_DIR; dotfiles (keys, state) stay hidden.
+  function jailPath(rel: string): string | null {
+    const root = resolve(WORKSPACE_DIR);
+    const abs = resolve(root, rel);
+    if (abs !== root && !abs.startsWith(root + sep)) return null;
+    return abs;
+  }
+
+  if (pathname === '/files' && method === 'GET') {
+    const rel = url.searchParams.get('path') ?? '';
+    const abs = jailPath(rel);
+    if (abs === null) return void json(res, 400, { error: 'Path escapes workspace' });
+    try {
+      if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+        return void json(res, 404, { error: 'Not a directory' });
+      }
+      const entries = readdirSync(abs)
+        .filter((n) => !n.startsWith('.'))
+        .map((n) => {
+          const st = statSync(resolve(abs, n));
+          return {
+            name: n,
+            dir: st.isDirectory(),
+            size: st.isDirectory() ? 0 : st.size,
+            mtime: st.mtimeMs,
+          };
+        })
+        .sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+      return void json(res, 200, { path: rel, entries });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return void json(res, 500, { error: `list failed: ${msg}` });
+    }
+  }
+
+  if (pathname === '/files/upload' && method === 'POST') {
+    try {
+      const { path: rel, contentBase64 } = JSON.parse(await readBody(req)) as {
+        path?: string;
+        contentBase64?: string;
+      };
+      if (!rel || typeof rel !== 'string' || typeof contentBase64 !== 'string') {
+        return void json(res, 400, { error: 'Body must be { path, contentBase64 }' });
+      }
+      const abs = jailPath(rel);
+      if (abs === null) return void json(res, 400, { error: 'Path escapes workspace' });
+      if (statSync(abs, { throwIfNoEntry: false })?.isDirectory()) {
+        return void json(res, 400, { error: 'Path is a directory' });
+      }
+      const buf = Buffer.from(contentBase64, 'base64');
+      if (buf.length > 10 * 1024 * 1024) return void json(res, 413, { error: 'File too large (10MB max)' });
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, buf);
+      return void json(res, 200, { ok: true, path: rel, size: buf.length });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  const downloadMatch = pathname === '/files/download' && method === 'GET';
+  if (downloadMatch) {
+    const rel = url.searchParams.get('path') ?? '';
+    const abs = jailPath(rel);
+    if (abs === null) return void json(res, 400, { error: 'Path escapes workspace' });
+    try {
+      if (!existsSync(abs) || statSync(abs).isDirectory()) {
+        return void json(res, 404, { error: 'Not a file' });
+      }
+      const name = rel.split('/').pop() ?? 'download';
+      res.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${name.replace(/"/g, '')}"`,
+        ...corsHeaders(),
+      });
+      return void createReadStream(abs).pipe(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return void json(res, 500, { error: `download failed: ${msg}` });
     }
   }
 

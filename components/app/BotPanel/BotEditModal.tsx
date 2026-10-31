@@ -97,7 +97,7 @@ export default function BotEditModal({ open, onClose, initial, onSave }: BotEdit
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') void save();
                 }}
-                placeholder="e.g. inbox triage — or leave empty for AI to assign"
+                placeholder="HR assistant, CFO"
                 maxLength={80}
                 className="mt-1.5 w-full rounded-xl border border-navy/15 bg-ice px-4 py-2.5 text-sm text-navy outline-none placeholder:text-heroslate/60 focus:border-cta"
               />

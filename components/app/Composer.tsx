@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Send, Mic, Plus } from 'lucide-react';
-import SkillsPopover from './SkillsPopover';
+import ComposerMenu from './ComposerMenu';
 import VoiceModal from './VoiceModal';
 
 interface ComposerProps {
@@ -70,7 +70,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
         }}
         className="relative mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-slate-200 bg-white p-1.5 shadow-sm focus-within:border-cta"
       >
-        <SkillsPopover
+        <ComposerMenu
           open={plusOpen}
           onClose={() => setPlusOpen(false)}
           botName={botName}

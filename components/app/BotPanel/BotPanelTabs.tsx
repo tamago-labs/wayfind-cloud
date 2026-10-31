@@ -12,7 +12,7 @@ export default function BotPanelTabs({ botId }: { botId: string | null }) {
   const [tab, setTab] = useState<Tab>('Details');
 
   return (
-    <div className="mt-5">
+    <div className="mt-5 flex min-h-0 flex-1 flex-col">
       <div role="tablist" aria-label="Bot panel sections" className="grid grid-cols-3 gap-1 rounded-full bg-white p-1 shadow-sm">
         {tabs.map((t) => (
           <button
@@ -28,7 +28,7 @@ export default function BotPanelTabs({ botId }: { botId: string | null }) {
           </button>
         ))}
       </div>
-      <div className="mt-3" role="tabpanel">
+      <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-0.5" role="tabpanel">
         {tab === 'Details' && <TabDetails botId={botId} />}
         {tab === 'Library' && <TabLibrary />}
         {tab === 'Computer' && <TabComputer />}

@@ -108,12 +108,9 @@ function PermissionsTab() {
 
   const revokeAll = (permission: string) => {
     if (!rules || saving) return;
-    const ok = window.confirm(`Revoke "${permission}" entirely (deny *)?`);
-    if (!ok) return;
-    // Idempotent: collapse any existing catch-all rows for this permission
-    // into a single leading deny instead of stacking a new one per click.
-    const rest = rules.filter((r) => !(r.permission === permission && r.pattern === '*'));
-    const next = [{ permission, pattern: '*', action: 'deny' as const }, ...rest];
+    // Same semantics as the per-row ✕: drop every rule for this permission
+    // so its tools fall back to ask (reads stay free by default).
+    const next = rules.filter((r) => r.permission !== permission);
     void persist(next);
   };
 
@@ -134,7 +131,7 @@ function PermissionsTab() {
   return (
     <div className="p-5">
       <p className="text-sm text-heroslate">
-        First matching rule wins. Flipping a rule to <b>deny</b> revokes that permission. Changes apply to new runs.
+        Bots ask before sensitive actions. Allow or deny each one — changes apply to new chats.
       </p>
       {groups.map(({ permission, items }) => (
         <div key={permission} className="mt-5">
@@ -143,9 +140,11 @@ function PermissionsTab() {
             <button
               onClick={() => revokeAll(permission)}
               disabled={saving}
-              className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50"
+              aria-label={`Delete all ${permission} rules`}
+              title="Delete all rules for this permission"
+              className="shrink-0 text-xs font-bold text-heroslate hover:text-red-600 disabled:opacity-50"
             >
-              Revoke all
+              ✕ all
             </button>
           </div>
           <div className="mt-2 space-y-1.5">
@@ -183,7 +182,7 @@ function PermissionsTab() {
       ))}
       {groups.length === 0 && (
         <p className="mt-5 rounded-xl border border-dashed border-navy/20 p-4 text-center text-sm text-heroslate">
-          No rules — every tool falls back to ask.
+          No rules — reads are free, everything else falls back to ask.
         </p>
       )}
       {error && (

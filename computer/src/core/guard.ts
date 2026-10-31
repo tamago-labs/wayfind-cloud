@@ -68,6 +68,14 @@ export function decide(rules: Rule[], permission: string, target: string): Actio
 }
 
 /**
+ * Read-only tools never interrupt: listing, searching, or reading files
+ * cannot mutate anything, so asking per call is pure friction (a dozen
+ * cards for one "find my pictures" request). Explicit `deny` rules still
+ * hold — guarded() throws in execute.
+ */
+const READ_ONLY = new Set(['list', 'glob', 'read', 'grep', 'webfetch', 'websearch']);
+
+/**
  * SDK `needsApproval` policy for a tool: interrupt only when the rules say
  * "ask" AND the server runs in enforcing mode. Child runs inherit the
  * parent's delegation grant (the `task` spawn itself was already gated).
@@ -82,7 +90,9 @@ export function approvalPolicy<TArgs>(
     const target = targetOf(input);
     // Already approved this run — don't park again.
     if (hasGrant(runStore.getStore()?.runId ?? '', permission, target)) return false;
-    return decide(loadRules(), permission, target) === 'ask';
+    const action = decide(loadRules(), permission, target);
+    if (READ_ONLY.has(permission) && action !== 'deny') return false;
+    return action === 'ask';
   };
 }
 

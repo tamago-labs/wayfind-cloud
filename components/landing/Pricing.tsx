@@ -115,7 +115,7 @@ export default function Pricing() {
               </ul>
               {'custom' in p && p.custom ? (
                 <a
-                  href="https://x.com/WayfindZZZ"
+                  href="https://x.com/WayfindCloud"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-8 rounded-full border-2 border-navy px-6 py-3 text-center font-semibold text-navy transition-colors hover:bg-navy hover:text-white"

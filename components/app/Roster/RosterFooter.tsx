@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
 import { LogOut, Pencil, Settings } from 'lucide-react';
@@ -19,6 +20,7 @@ export default function RosterFooter() {
   const [email, setEmail] = useState('');
   const [profileId, setProfileId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
+  const [plan, setPlan] = useState('free');
   const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -52,6 +54,7 @@ export default function RosterFooter() {
         if (data && data.length > 0) {
           setProfileId(data[0].id);
           setDisplayName(data[0].displayName ?? '');
+          setPlan(data[0].plan ?? 'free');
         } else {
           const { data: created, errors } = await dataClient.models.UserProfile.create({
             ownerId,
@@ -165,6 +168,12 @@ export default function RosterFooter() {
                     {displayName && email ? (
                       <span className="block truncate text-xs text-heroslate">{email}</span>
                     ) : null}
+                    <span className="mt-0.5 block text-xs font-bold text-cta">
+                      {plan.charAt(0).toUpperCase() + plan.slice(1)} plan ·{' '}
+                      <Link href="/#pricing" onClick={() => setMenuOpen(false)} className="underline">
+                        Upgrade
+                      </Link>
+                    </span>
                   </span>
                 </div>
                 <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />

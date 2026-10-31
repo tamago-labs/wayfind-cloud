@@ -18,12 +18,21 @@ function truncate(s: string): string {
 }
 
 function runShell(command: string, timeoutMs?: number): Promise<string> {
+  // Dev servers run on Windows (no sh); MicroVMs run Linux. PowerShell
+  // covers common sh-flavored inspection commands (ls, rm, cat) locally.
+  const win = process.platform === 'win32';
+  const file = win ? 'powershell.exe' : 'sh';
+  const args = win ? ['-NoProfile', '-Command', command] : ['-c', command];
   return new Promise<string>((resolvePromise) => {
     execFile(
-      'sh',
-      ['-c', command],
+      file,
+      args,
       { cwd: ROOT, timeout: timeoutMs ?? 60_000, maxBuffer: 4 * 1024 * 1024 },
       (err, stdout, stderr) => {
+        if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+          resolvePromise(`shell unavailable: ${file} not found on ${process.platform}`);
+          return;
+        }
         const tail = err ? `exit=${(err as { code?: unknown }).code ?? '?'} ` : '';
         resolvePromise(truncate(`${tail}${stdout}${stderr}`) || '(no output)');
       },
@@ -34,7 +43,7 @@ function runShell(command: string, timeoutMs?: number): Promise<string> {
 export function createBuiltinTools(opts: GuardOpts): Array<ReturnType<typeof tool>> {
   const shell = tool({
     name: 'shell',
-    description: 'Run a shell command inside the workspace (sh -c). Use for running scripts and inspecting files.',
+    description: 'Run a shell command inside the workspace. Use for running scripts and inspecting files.',
     parameters: z.object({
       command: z.string().describe('Shell command to run'),
       timeoutMs: z.number().optional().describe('Kill after this many ms (default 60000)'),

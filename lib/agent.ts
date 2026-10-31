@@ -304,3 +304,34 @@ export async function removeSkill(name: string): Promise<boolean> {
   const res = await fetch(`${AGENT_URL}/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
   return res.ok;
 }
+
+export interface FileEntry {
+  name: string;
+  dir: boolean;
+  size: number;
+  mtime: number;
+}
+
+/** Shallow workspace listing for the Library tab. */
+export async function listFiles(path = ''): Promise<{ path: string; entries: FileEntry[] }> {
+  const res = await fetch(`${AGENT_URL}/files?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error(`agent /files → ${res.status}`);
+  return res.json() as Promise<{ path: string; entries: FileEntry[] }>;
+}
+
+/** Upload a file (base64) into the shared workspace. Throws with server message. */
+export async function uploadFile(path: string, contentBase64: string): Promise<{ size: number }> {
+  const res = await fetch(`${AGENT_URL}/files/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, contentBase64 }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { size?: number; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `agent /files/upload → ${res.status}`);
+  return { size: body.size ?? 0 };
+}
+
+/** Direct download URL for a workspace file (Library rows link here). */
+export function downloadFileUrl(path: string): string {
+  return `${AGENT_URL}/files/download?path=${encodeURIComponent(path)}`;
+}
