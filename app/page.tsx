@@ -4,7 +4,7 @@ import Header from '@/components/landing/Header';
 import Hero from '@/components/landing/Hero';
 import Problem from '@/components/landing/Problem';
 import HowSection from '@/components/landing/HowSection';
-import Models from '@/components/landing/Models';
+import UseCases from '@/components/landing/UseCases';
 import Trust from '@/components/landing/Trust';
 import Pricing from '@/components/landing/Pricing';
 import Faq from '@/components/landing/Faq';
@@ -18,7 +18,7 @@ export default function Home() {
       <Hero />
       <Problem />
       <HowSection />
-      <Models />
+      <UseCases />
       <Trust />
       <Pricing />
       <Faq />

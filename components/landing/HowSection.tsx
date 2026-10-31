@@ -158,7 +158,7 @@ export default function HowSection() {
                 {/* window 1: reconciliation (backdrop) */}
                 <div className="absolute inset-x-[4%] top-[3%] rounded-xl border border-white/10 bg-white/[0.06] p-4">
                   <div className="mb-2 flex items-center gap-2 text-xs font-bold">
-                    <i className="h-3 w-3 rounded-full bg-bmoss" />Reconciling March books ⇄ QuickBooks
+                    <i className="h-3 w-3 rounded-full bg-bmoss" />Reconciling March books ⇄ Zoho Books
                     <span className={`wf-fade ml-auto rounded-full bg-white/10 px-2 py-0.5 text-[10px] ${on(t, 8900) ? 'on' : ''}`}>
                       4 matched · 2 missing
                     </span>

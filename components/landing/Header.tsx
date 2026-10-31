@@ -6,10 +6,10 @@ import { Menu, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Mascot from '@/components/Mascot';
 
-// Nav anchors: #how #models #connectors #pricing #faq (plus #problem section, unlinked).
+// Nav anchors: #how #usecases #connectors #pricing #faq (plus #problem section, unlinked).
 const navLinks = [
   { href: '/#how', label: 'The Computer' },
-  { href: '/#models', label: 'Models' },
+  { href: '/#usecases', label: 'Use cases' },
   { href: '/#connectors', label: 'Connectors' },
   { href: '/#pricing', label: 'Pricing' },
   { href: '/#faq', label: 'FAQ' },
