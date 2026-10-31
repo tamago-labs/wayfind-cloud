@@ -63,6 +63,7 @@ const schema = a.schema({
       ]),
       region: a.string(),
       microvmId: a.string(),
+      endpoint: a.string(),
       imageVersion: a.string(),
       requestedAt: a.datetime(),
       decidedAt: a.datetime(),
