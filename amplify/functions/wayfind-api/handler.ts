@@ -18,7 +18,7 @@ import { createVerify, createPublicKey } from "crypto";
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
 Amplify.configure(resourceConfig, libraryOptions);
 const dataClient = generateClient<Schema>();
-const microvms = new LambdaMicrovmsClient({ region: process.env.AWS_REGION });
+const microvms = new LambdaMicrovmsClient({ region: env.AWS_REGION ?? process.env.AWS_REGION });
 
 /* ---------------- Cognito JWT verification (no external deps) ---------------- */
 
@@ -61,14 +61,14 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
   const header = JSON.parse(Buffer.from(h, "base64url").toString());
   const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as Claims;
 
-  const poolId = process.env.USER_POOL_ID;
-  const region = process.env.AWS_REGION;
+  const poolId = env.USER_POOL_ID;
+  const region = env.AWS_REGION ?? process.env.AWS_REGION;
   if (!poolId || !region) throw new Error("auth not configured");
   const expectedIss = `https://cognito-idp.${region}.amazonaws.com/${poolId}`;
   if (claims.iss !== expectedIss) throw new Error("bad issuer");
   if (claims.exp * 1000 < Date.now()) throw new Error("token expired");
   if (claims.token_use !== "id" && claims.token_use !== "access") throw new Error("bad token use");
-  const clientId = process.env.USER_POOL_CLIENT_ID;
+  const clientId = env.USER_POOL_CLIENT_ID;
   if (claims.token_use === "id" && clientId && claims.aud !== clientId) throw new Error("bad audience");
 
   const key = await getPublicKey(header.kid, expectedIss);
@@ -83,7 +83,7 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
 /* ---------------- helpers ---------------- */
 
 const CORS = {
-  "Access-Control-Allow-Origin": process.env.CORS_ORIGIN ?? "https://wayfind.cloud",
+  "Access-Control-Allow-Origin": env.CORS_ORIGIN ?? "https://wayfind.cloud",
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json",
@@ -365,7 +365,7 @@ async function findOrCreateComputer(ownerId: string, profileId: string) {
     ownerId,
     userProfileId: profileId,
     provisionStatus: "not_provisioned",
-    region: process.env.COMPUTER_REGION ?? "ap-southeast-1",
+    region: env.COMPUTER_REGION ?? "ap-southeast-1",
     requestedAt: new Date().toISOString(),
   });
   if (errors || !created) throw new Error(`computer create failed: ${JSON.stringify(errors)}`);
@@ -409,9 +409,9 @@ async function mintVmToken(microvmId: string, expirationInMinutes = 30): Promise
 
 /** Full provision chain (boot + identity + smoke test). Throws on any step. */
 export async function provisionComputer(computerId: string, ownerId: string): Promise<void> {
-  const imageArn = process.env.COMPUTER_IMAGE_ARN;
+  const imageArn = env.COMPUTER_IMAGE_ARN;
   if (!imageArn) throw new Error("COMPUTER_IMAGE_ARN is not configured");
-  const bucket = process.env.COMPUTER_WORKSPACE_BUCKET ?? "";
+  const bucket = env.COMPUTER_WORKSPACE_BUCKET ?? "";
   const prefix = `computers/${computerId}/workspace/`;
 
   await dataClient.models.Computer.update({ id: computerId, provisionStatus: "provisioning" });
@@ -421,10 +421,10 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
         imageIdentifier: imageArn,
         runHookPayload: JSON.stringify({ ownerId, computerId }),
         ingressNetworkConnectors: [
-          `arn:aws:lambda:${process.env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:ALL_INGRESS`,
+          `arn:aws:lambda:${env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:ALL_INGRESS`,
         ],
         egressNetworkConnectors: [
-          `arn:aws:lambda:${process.env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
+          `arn:aws:lambda:${env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
         ],
         idlePolicy: { autoResumeEnabled: true, maxIdleDurationSeconds: 900, suspendedDurationSeconds: 300 },
         maximumDurationInSeconds: 14_400,
@@ -435,8 +435,8 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
     const token = await mintVmToken(run.microvmId);
 
     // Identity + secrets (Amplify secrets, never stored in the DB).
-    const modalKey = process.env.MODAL_API_KEY;
-    const metaKey = process.env.PROVIDER_API_KEY;
+    const modalKey = env.MODAL_API_KEY;
+    const metaKey = env.PROVIDER_API_KEY;
     if (!modalKey || !metaKey) throw new Error("provider API keys are not configured (Amplify secrets)");
     const runRes = await vmFetch(endpoint, token, "/hooks/run", {
       ownerId,

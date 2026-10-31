@@ -29,7 +29,6 @@ apiLambda.addToRolePolicy(
 
 // Computer lifecycle (provision/suspend/resume/terminate + status reads).
 // Scoped to MicroVM control only — image builds stay a manual script.
-const computerRegion = process.env.COMPUTER_REGION ?? "ap-southeast-1";
 apiLambda.addToRolePolicy(
   new PolicyStatement({
     effect: Effect.ALLOW,
@@ -46,6 +45,8 @@ apiLambda.addToRolePolicy(
 );
 
 // Workspace sync bucket (S3): VMs read/write only their computers/* prefix.
+// The bucket name is needed at synth time for the policy; the handler reads
+// all runtime config via `env.X` (see functions/wayfind-api/resource.ts).
 const workspaceBucket = process.env.COMPUTER_WORKSPACE_BUCKET ?? "wayfind-microvm-artifacts-ap-southeast-1";
 apiLambda.addToRolePolicy(
   new PolicyStatement({
@@ -63,16 +64,6 @@ apiLambda.addToRolePolicy(
   }),
 );
 
-apiLambda.addEnvironment("COMPUTER_REGION", computerRegion);
-apiLambda.addEnvironment("COMPUTER_WORKSPACE_BUCKET", workspaceBucket);
-apiLambda.addEnvironment("COMPUTER_IMAGE_ARN", process.env.COMPUTER_IMAGE_ARN ?? "");
-
-// Inject auth wiring (no secrets here — provider keys arrive via Amplify secrets)
-apiLambda.addEnvironment("USER_POOL_ID", backend.auth.resources.userPool.userPoolId);
-apiLambda.addEnvironment(
-  "USER_POOL_CLIENT_ID",
-  backend.auth.resources.userPoolClient.userPoolClientId,
-);
 apiLambda.addEnvironment("CORS_ORIGIN", "https://wayfind.cloud");
 
 const apiFunctionUrl = apiLambda.addFunctionUrl({
