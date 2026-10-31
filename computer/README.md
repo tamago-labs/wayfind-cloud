@@ -32,7 +32,7 @@ curl.exe -N "http://localhost:8080/stream/$($run.runId)"
 
 ## P1 (shipped)
 
-handoffs sub-agents (Research, McpSetup) · skills loader (`SKILL.md`
+handoffs sub-agent (Research) · skills loader (`SKILL.md`
 catalog + `skill` tool) · MCP stdio client (workspace/mcp.json, open
 input schemas) · allow/deny/ask permissions (`permissions.json`) +
 approval events on the stream (CLI prompts inline; server denies for

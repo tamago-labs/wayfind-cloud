@@ -49,8 +49,9 @@ export function providerGrounding(providerId?: string): boolean {
   try {
     const entry = loadCatalog().providers?.[providerId];
     if (entry?.grounding !== true) return false;
-    // Hosted web_search only exists on Meta's API. Open-weights servers
-    // (e.g. a Modal endpoint) would 400 the whole run on the unknown tool.
+    // Hosted web_search only exists on Meta's API (api.meta.ai). The Modal
+    // open-weights endpoint serves chat only — grounding there goes through
+    // the explicit grounded_search tool (Meta direct, metaApiKey), never here.
     const base = entry.baseURL ?? process.env.PROVIDER_BASE_URL ?? 'https://api.meta.ai/v1';
     return base.includes('api.meta.ai');
   } catch {
@@ -96,8 +97,8 @@ export interface ResolvedModel {
 
 export function resolveModel(providerId?: string, modelId?: string): ResolvedModel {
   const catalog = loadCatalog();
-  const pid = providerId ?? catalog.defaults?.provider ?? 'meta';
-  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'muse-spark-1.3';
+  const pid = providerId ?? catalog.defaults?.provider ?? 'modal';
+  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'meta-models/Muse-Spark-Open-816B-A42B';
   const entry = catalog.providers?.[pid];
   const baseURL = entry?.baseURL ?? process.env.PROVIDER_BASE_URL ?? 'https://api.meta.ai/v1';
   const client = providerClient(pid, entry ?? { baseURL });

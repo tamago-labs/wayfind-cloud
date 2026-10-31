@@ -1,11 +1,10 @@
 {
-  "defaults": { "provider": "meta", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
-  "small": { "provider": "meta", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
+  "defaults": { "provider": "modal", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
+  "small": { "provider": "modal", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
   "providers": {
-    "meta": {
+    "modal": {
       "baseURL": "https://pisuth-dae--ep-muse-spark-open-816b-a42b-server.us-west.modal.direct/v1",
       "key": { "env": "MODAL_API_KEY", "keystore": "MODAL_API_KEY" },
-      "grounding": true,
       "models": {
         "meta-models/Muse-Spark-Open-816B-A42B": { "context": 1000000 }
       }

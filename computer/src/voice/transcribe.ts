@@ -1,8 +1,8 @@
 // Voice transcription proxy. The browser records the mic, encodes WAV
 // (24 kHz mono 16-bit PCM — the ASR engine-native format) and POSTs raw
 // bytes here; we forward to Meta's speech-to-text endpoint and return the
-// transcript. The Model API key is reused from the meta provider entry,
-// so no extra key setup is needed. Errors carry an HTTP status for the route.
+// transcript. Meta-direct key (PROVIDER_API_KEY via metaApiKey) — separate
+// from the Modal chat-model key. Errors carry an HTTP status for the route.
 import { metaApiKey } from '../providers/providers.js';
 
 const ASR_URL = 'https://api.meta.ai/v1/asr/transcribe';

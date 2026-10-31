@@ -25,18 +25,6 @@ export async function createResearchAgent(opts: GuardOpts, sel: AgentSelection =
   });
 }
 
-export async function createMcpSetupAgent(opts: GuardOpts, sel: AgentSelection = {}): Promise<InstanceType<typeof Agent>> {
-  return new Agent({
-    name: 'McpSetup',
-    model: await specialistModel(sel, false),
-    instructions:
-      'You are an MCP setup specialist. Install and configure MCP servers: ' +
-      'inspect workspace/mcp.json, add server entries, verify with list. ' +
-      'Never write secrets into chat — put them in the keystore via the skill tool flow.',
-    tools: createBuiltinTools(opts),
-  });
-}
-
 export async function triageHandoffs(opts: GuardOpts, sel: AgentSelection = {}): Promise<Array<InstanceType<typeof Agent>>> {
-  return [await createResearchAgent(opts, sel), await createMcpSetupAgent(opts, sel)];
+  return [await createResearchAgent(opts, sel)];
 }

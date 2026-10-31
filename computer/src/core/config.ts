@@ -23,7 +23,7 @@ function keystore(): Record<string, string> {
 const keys = keystore();
 
 export const PROVIDER_BASE_URL = process.env.PROVIDER_BASE_URL ?? 'https://api.meta.ai/v1';
-export const PROVIDER_MODEL = process.env.PROVIDER_MODEL ?? 'muse-spark-1.3';
+export const PROVIDER_MODEL = process.env.PROVIDER_MODEL ?? 'meta-models/Muse-Spark-Open-816B-A42B';
 export const PROVIDER_API_KEY = process.env.PROVIDER_API_KEY ?? keys.PROVIDER_API_KEY ?? '';
 export const MODAL_API_KEY = process.env.MODAL_API_KEY ?? keys.MODAL_API_KEY ?? '';
 
