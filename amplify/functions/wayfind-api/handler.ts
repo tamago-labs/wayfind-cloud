@@ -61,14 +61,16 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
   const header = JSON.parse(Buffer.from(h, "base64url").toString());
   const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as Claims;
 
-  const poolId = env.USER_POOL_ID;
+  // Backend-injected (amplify/backend.ts addEnvironment) — not part of the
+  // resource-declared env type, so process.env is correct here.
+  const poolId = process.env.USER_POOL_ID;
   const region = env.AWS_REGION ?? process.env.AWS_REGION;
   if (!poolId || !region) throw new Error("auth not configured");
   const expectedIss = `https://cognito-idp.${region}.amazonaws.com/${poolId}`;
   if (claims.iss !== expectedIss) throw new Error("bad issuer");
   if (claims.exp * 1000 < Date.now()) throw new Error("token expired");
   if (claims.token_use !== "id" && claims.token_use !== "access") throw new Error("bad token use");
-  const clientId = env.USER_POOL_CLIENT_ID;
+  const clientId = process.env.USER_POOL_CLIENT_ID;
   if (claims.token_use === "id" && clientId && claims.aud !== clientId) throw new Error("bad audience");
 
   const key = await getPublicKey(header.kid, expectedIss);
@@ -83,7 +85,7 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
 /* ---------------- helpers ---------------- */
 
 const CORS = {
-  "Access-Control-Allow-Origin": env.CORS_ORIGIN ?? "https://wayfind.cloud",
+  "Access-Control-Allow-Origin": process.env.CORS_ORIGIN ?? "*",
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json",

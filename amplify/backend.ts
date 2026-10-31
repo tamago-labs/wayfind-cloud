@@ -64,12 +64,14 @@ apiLambda.addToRolePolicy(
   }),
 );
 
-apiLambda.addEnvironment("CORS_ORIGIN", "https://wayfind.cloud");
+// Wildcard for now (sandbox + localhost dev) — tighten to https://wayfind.cloud before prod.
+apiLambda.addEnvironment("CORS_ORIGIN", "*");
 
 const apiFunctionUrl = apiLambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE, // every route verifies the Cognito JWT in the handler
   cors: {
-    allowedOrigins: ["https://wayfind.cloud", "http://localhost:3000"],
+    // Wildcard for now (sandbox + localhost dev) — tighten before prod.
+    allowedOrigins: ["*"],
     allowedMethods: [HttpMethod.ALL],
     allowedHeaders: ["*"],
     maxAge: Duration.minutes(5),
