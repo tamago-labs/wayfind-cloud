@@ -18,6 +18,7 @@ import { createBotRequestTool, type BotRequestHook } from './tools/create_bot.js
 import { createMessageBotTool, rosterDirectory, type MessageRunner, type RosterEntry } from './tools/message_bot.js';
 import { createTaskTool, type RunChild } from './tools/task.js';
 import { createGroundedSearchTool } from './tools/grounded.js';
+import { createImageTools } from './tools/image.js';
 
 const BASE_INSTRUCTIONS =
   'You are a teammate working on the user\'s cloud computer. ' +
@@ -40,7 +41,7 @@ export interface AgentSelection {
 }
 
 /** Tools unavailable to read-only research subagents. */
-const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot']);
+const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot', 'generate_image', 'edit_image']);
 
 /** Cross-bot messaging for the chief thread: runner + visible roster. */
 export interface TeamChannel {
@@ -76,6 +77,11 @@ export async function createTriageAgent(
     : 'When the answer needs current or external facts, use the grounded_search tool — it returns a cited answer. ' +
       'Keep its Sources list at the end of your answer. ' +
       'Use the websearch tool only when you need an explicit result list with snippets. ';
+  // Image guidance: the model only needs to know when to reach for the tool.
+  const imageGuidance =
+    'When the user asks for a picture, illustration, logo draft, or any visual, call generate_image — ' +
+    'the image appears in chat by itself, so just briefly say what you made. ' +
+    'To change a generated or Library image, call edit_image with its workspace path. ';
   let tools = [...createBuiltinTools(opts), createEditTool(opts), ...createSearchTools(opts), createSkillTool(skills, opts), createSkillImportTool(opts), createSkillScanTool(), ...mcpTools, ...createWebTools(opts)];
   // Hosted grounded search (Meta web_search): provider-side, no extra key,
   // runs automatically when the model needs current/external facts.
@@ -86,6 +92,10 @@ export async function createTriageAgent(
     // Same capability as an explicit Meta-backed tool.
     tools.push(createGroundedSearchTool(opts));
   }
+  // Image generation/editing (Meta Muse Image, Meta-direct key). Allowed by
+  // default — each call logs an IMAGE_USAGE line in the transcript for
+  // later billing. Research subagents stay text-only.
+  tools.push(...createImageTools(opts));
   if (sel.variant === 'research') {
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
   }
@@ -113,7 +123,7 @@ export async function createTriageAgent(
   return new Agent({
     name: 'Wayfind',
     model: (await resolved.get()) as never,
-    instructions: BASE_INSTRUCTIONS + searchGuidance + chiefGuidance + teamGuidance + skillCatalogPrompt(skills),
+    instructions: BASE_INSTRUCTIONS + searchGuidance + imageGuidance + chiefGuidance + teamGuidance + skillCatalogPrompt(skills),
     tools,
     handoffs: await triageHandoffs(opts, sel),
   });

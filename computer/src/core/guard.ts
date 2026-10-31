@@ -76,6 +76,14 @@ export function decide(rules: Rule[], permission: string, target: string): Actio
 const READ_ONLY = new Set(['list', 'glob', 'read', 'grep', 'webfetch', 'websearch']);
 
 /**
+ * Allowed by default, no card: image generation/editing costs $0.01 per
+ * image and every call logs an IMAGE_USAGE line in the transcript for
+ * later billing. Explicit `deny` rules still hold — guarded() throws in
+ * execute.
+ */
+const FREE_ALLOW = new Set(['generate_image', 'edit_image']);
+
+/**
  * SDK `needsApproval` policy for a tool: interrupt only when the rules say
  * "ask" AND the server runs in enforcing mode. Child runs inherit the
  * parent's delegation grant (the `task` spawn itself was already gated).
@@ -91,7 +99,7 @@ export function approvalPolicy<TArgs>(
     // Already approved this run — don't park again.
     if (hasGrant(runStore.getStore()?.runId ?? '', permission, target)) return false;
     const action = decide(loadRules(), permission, target);
-    if (READ_ONLY.has(permission) && action !== 'deny') return false;
+    if ((READ_ONLY.has(permission) || FREE_ALLOW.has(permission)) && action !== 'deny') return false;
     return action === 'ask';
   };
 }

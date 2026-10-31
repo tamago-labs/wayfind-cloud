@@ -115,6 +115,16 @@ export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: Threa
             );
           }
           if (m.t === 'tool') {
+            // Image generation/editing shows a skeleton bubble while Muse
+            // Image works — the finished image arrives as markdown below.
+            if (m.x === 'Generating image…' || m.x === 'Editing image…') {
+              return (
+                <div key={i} className="msg-in w-full rounded-2xl rounded-bl-sm bg-white p-3 shadow-sm">
+                  <div className="aspect-video w-full animate-pulse rounded-2xl bg-gradient-to-br from-ice via-slate-200 to-ice" />
+                  <p className="mt-2 text-xs font-semibold text-heroslate">{m.x}</p>
+                </div>
+              );
+            }
             const dot = m.x.endsWith('failed')
               ? 'bg-red-500'
               : m.x.endsWith('finished')

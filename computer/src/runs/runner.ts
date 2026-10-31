@@ -578,12 +578,24 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
   const seenTypes = process.env.WAYFIND_DEBUG_EVENTS === '1' ? new Set<string>() : null;
   for await (const event of stream as unknown as Iterable<{
     type: string;
+    name?: string;
     agent?: { name: string };
+    item?: { rawItem?: { name?: string } };
     data?: { type: string; delta?: string };
   }>) {
     seenTypes?.add(event.type);
     if (event.type === 'raw_model_stream_event' && event.data?.type === 'output_text_delta' && event.data.delta) {
       runState.events.push({ type: 'chunk', chunk: event.data.delta });
+    }
+    // Long-running image calls get a visible progress row so the UI can
+    // show a skeleton while Muse Image works (normal tools stay silent).
+    if (event.type === 'run_item_stream_event' && event.name === 'tool_called') {
+      const toolName = event.item?.rawItem?.name;
+      if (toolName === 'generate_image' || toolName === 'edit_image') {
+        const label = toolName === 'generate_image' ? 'Generating image…' : 'Editing image…';
+        runState.events.push({ type: 'agent', agent: label });
+        appendTranscript(runState.id, 'tool', label, runState.parentId, runState.conversationId);
+      }
     }
     if (event.type === 'agent_updated_stream_event' && event.agent) {
       runState.events.push({ type: 'agent', agent: event.agent.name });

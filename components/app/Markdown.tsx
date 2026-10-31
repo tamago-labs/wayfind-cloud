@@ -9,7 +9,24 @@ import 'highlight.js/styles/github.css';
 export default function Markdown({ text }: { text: string }) {
   return (
     <div className="prose prose-sm max-w-none break-words text-navy prose-p:my-1 prose-p:leading-relaxed prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-code:rounded prose-code:bg-ice prose-code:px-1 prose-code:py-0.5 prose-code:text-[13px] prose-code:before:content-none prose-code:after:content-none prose-pre:my-2 prose-pre:rounded-xl prose-pre:bg-navy prose-pre:text-[13px] prose-a:font-semibold prose-a:text-cta prose-strong:text-navy prose-headings:my-2 prose-headings:text-navy">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={{
+          // Generated images render inline; click opens full size.
+          // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+          img: ({ src, alt }) => (
+            <a href={typeof src === 'string' ? src : ''} target="_blank" rel="noreferrer" title="Open full size">
+              <img
+                src={typeof src === 'string' ? src : ''}
+                alt={typeof alt === 'string' ? alt : ''}
+                loading="lazy"
+                className="my-2 max-h-96 w-full rounded-xl object-cover"
+              />
+            </a>
+          ),
+        }}
+      >
         {text}
       </ReactMarkdown>
     </div>

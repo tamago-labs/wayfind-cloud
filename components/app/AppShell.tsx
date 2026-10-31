@@ -13,7 +13,7 @@ import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
 import { answerBotRequest, answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
-import { newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
+import { isImageProgress, newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
 
@@ -88,9 +88,13 @@ export default function AppShell() {
           patchBot(cur, (prev) =>
             prev.msgs.length > 0
               ? prev
-              : {
-                  ...prev,
-                  msgs: history.map((m) =>
+                : {
+                    ...prev,
+                    // Drop stale image-progress rows — the skeleton only
+                    // lives while a run is in flight.
+                    msgs: history
+                      .filter((m) => !(m.role === 'tool' && isImageProgress(m.text)))
+                      .map((m) =>
                     m.role === 'assistant'
                       ? { t: 'b' as const, x: m.text }
                       : m.role === 'tool'
@@ -207,7 +211,13 @@ export default function AppShell() {
               ],
             })),
         });
-        patchTarget((b) => ({ ...b, busy: false }));
+        // Run finished — drop any image-progress skeleton rows; the
+        // finished image arrives as markdown in the final message.
+        patchTarget((b) => ({
+          ...b,
+          busy: false,
+          msgs: b.msgs.filter((m) => !(m.t === 'tool' && isImageProgress(m.x))),
+        }));
         // First chat defines the role: AI compresses the user's job
         // description into a short label and saves it (manual edits win —
         // this only fires while the role is still empty, never for the chief).

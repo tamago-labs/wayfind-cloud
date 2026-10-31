@@ -2,7 +2,7 @@
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, resolve, sep } from 'node:path';
+import { dirname, extname, resolve, sep } from 'node:path';
 import OpenAI from 'openai';
 import { PORT, MODAL_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
 import { permissionMode } from './core/guard.js';
@@ -273,6 +273,42 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return void json(res, 500, { error: `download failed: ${msg}` });
+    }
+  }
+
+  // Inline view for images (chat rendering, Markdown img). Unlike
+  // /files/download (attachment + octet-stream, forces save-as), this
+  // serves real image Content-Types so browsers render it in place.
+  // Images only — everything else still goes through /files/download.
+  const IMAGE_TYPES: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+  };
+  if (pathname === '/files/view' && method === 'GET') {
+    const rel = url.searchParams.get('path') ?? '';
+    const abs = jailPath(rel);
+    if (abs === null) return void json(res, 400, { error: 'Path escapes workspace' });
+    try {
+      if (!existsSync(abs) || statSync(abs).isDirectory()) {
+        return void json(res, 404, { error: 'Not a file' });
+      }
+      const ext = extname(abs).toLowerCase();
+      const contentType = IMAGE_TYPES[ext];
+      if (!contentType) return void json(res, 415, { error: 'Not a viewable image' });
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Disposition': 'inline',
+        'Cache-Control': 'private, max-age=3600',
+        ...corsHeaders(),
+      });
+      return void createReadStream(abs).pipe(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return void json(res, 500, { error: `view failed: ${msg}` });
     }
   }
 
