@@ -32,7 +32,12 @@ future `computer-manager` Lambda. Nothing here touches the app.
      }
      ```
 3. **Your own IAM principal** (the one running these scripts) needs
-   `lambda-microvms:*` in the test region + `s3:PutObject` on the bucket.
+   `lambda:*Microvm*` in the test region + `s3:PutObject` on the bucket.
+   NOTE (2026-11-01): IAM namespace is `lambda:` (e.g. `lambda:RunMicrovm`),
+   verified via `simulate-principal-policy` — `lambda-microvms:*` silently
+   never matches. Use `lambda:RunMicrovm`, `lambda:SuspendMicrovm`,
+   `lambda:ResumeMicrovm`, `lambda:TerminateMicrovm`, `lambda:GetMicrovm`,
+   `lambda:GetMicrovmImage`, `lambda:CreateMicrovmAuthToken`.
 4. Base image ARN for the region:
    `aws lambda-microvms list-managed-microvm-images --region <region>`
 

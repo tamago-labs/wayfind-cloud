@@ -19,10 +19,12 @@ const apiLambda = backend.wayfindApiFunction.resources.lambda as LambdaFunction;
 
 // wayfind-api mints MicroVM auth tokens (POST /computer/token) for the
 // caller's own VM only - the handler enforces the ownership check.
+// NOTE: IAM namespace is `lambda:` (verified via simulate-principal-policy),
+// not `lambda-microvms:` — the latter silently never matches.
 apiLambda.addToRolePolicy(
   new PolicyStatement({
     effect: Effect.ALLOW,
-    actions: ["lambda-microvms:CreateMicrovmAuthToken"],
+    actions: ["lambda:CreateMicrovmAuthToken"],
     resources: ["*"],
   }),
 );
@@ -33,12 +35,12 @@ apiLambda.addToRolePolicy(
   new PolicyStatement({
     effect: Effect.ALLOW,
     actions: [
-      "lambda-microvms:RunMicrovm",
-      "lambda-microvms:SuspendMicrovm",
-      "lambda-microvms:ResumeMicrovm",
-      "lambda-microvms:TerminateMicrovm",
-      "lambda-microvms:GetMicrovm",
-      "lambda-microvms:GetMicrovmImage",
+      "lambda:RunMicrovm",
+      "lambda:SuspendMicrovm",
+      "lambda:ResumeMicrovm",
+      "lambda:TerminateMicrovm",
+      "lambda:GetMicrovm",
+      "lambda:GetMicrovmImage",
     ],
     resources: ["*"], // microvm-ids are per-run; ownership enforced in handler
   }),
