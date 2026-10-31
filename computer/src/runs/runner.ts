@@ -22,7 +22,7 @@ import type { ChildRequest, ChildResult } from '../agent/tools/task.js';
 import { clearRunLog, grantForRun, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
 import { check, loadRules, saveRules } from '../core/permissions.js';
 import { resolveModel } from '../providers/providers.js';
-import { reportUsage } from './usage.js';
+import { reportUsage, sumResponseTokens } from './usage.js';
 
 export interface RunEvent {
   type: 'chunk' | 'agent' | 'approval' | 'approval-resolved' | 'question' | 'bot_request' | 'done' | 'error';
@@ -66,6 +66,8 @@ export interface Run {
   roster?: RosterEntry[];
   /** This run's bot name — used for the [via …] tag on cross-bot messages. */
   botName?: string;
+  /** Cognito sub threaded from POST /task. Per-user metering key. */
+  ownerId?: string;
   stateJson?: string;
   output: string;
   toolCalls: number;
@@ -470,6 +472,27 @@ function auditTo(runId: string, allowedSkills?: string[]): GuardOpts {
     onApproval: (a) => {
       console.log(`[${a.auto ? 'auto-allow' : 'ask-audit'}] run ${runId}: ${a.permission} "${a.target}"`);
     },
+    // Metered calls report immediately (works for parked runs too).
+    // Observe-only — usage never blocks execution.
+    onUsage: (call) => {
+      const runState = getRun(runId);
+      if (!runState) return;
+      void reportUsage({
+        runId,
+        model: runState.model,
+        provider: runState.provider,
+        kind: call.kind,
+        unit: call.unit,
+        quantity: call.quantity,
+        durationMs: 0,
+        outputChars: 0,
+        toolCalls: 0,
+        ...(call.tokens ? { tokens: call.tokens } : {}),
+        costPer1M: resolveModel(runState.sel.provider, runState.sel.model).cost,
+        userId: runState.ownerId,
+        at: new Date().toISOString(),
+      });
+    },
   };
 }
 
@@ -489,6 +512,8 @@ export interface StartRunOpts {
   roster?: RosterEntry[];
   /** This run's bot name — [via …] tag on cross-bot messages. */
   botName?: string;
+  /** Cognito sub from the frontend. Threads into every usage event. */
+  ownerId?: string;
   /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
   /** Workspace-relative attachment paths (chat paperclip). Images are
@@ -562,6 +587,7 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
         depth: fresh ? depth + 1 : depth,
         conversationId: runState.conversationId,
         allowedSkills: runState.allowedSkills,
+        ownerId: runState.ownerId,
         subagentType: req.subagentType,
         resumeTaskId: fresh ? undefined : req.taskId,
       });
@@ -616,6 +642,7 @@ function makeMessageRunner(runState: Run): MessageRunner {
         allowedSkills: target.skills ?? undefined,
         depth: runState.depth + 1,
         delegated: true,
+        ownerId: runState.ownerId,
       });
       runState.events.push({ type: 'agent', agent: `@${target.name} replied` });
       appendTranscript(runState.id, 'tool', `@${target.name} replied`, runState.parentId, runState.conversationId);
@@ -708,10 +735,15 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
     runId: runState.id,
     model: runState.model,
     provider: runState.provider,
+    kind: 'chat',
+    unit: 'chars',
+    quantity: withSources.length,
     durationMs: Date.now() - startedAt,
     outputChars: withSources.length,
     toolCalls: runState.toolCalls,
+    tokens: sumResponseTokens(result.rawResponses),
     costPer1M: resolveModel(runState.sel.provider, runState.sel.model).cost,
+    userId: runState.ownerId,
     at: new Date().toISOString(),
   });
   runState.done = true;
@@ -804,6 +836,7 @@ function newRunState(opts: StartRunOpts): Run {
     canManageBots: opts.canManageBots,
     roster: opts.roster,
     botName: opts.botName,
+    ownerId: opts.ownerId,
     depth: opts.depth ?? 0,
     events: [],
     done: false,

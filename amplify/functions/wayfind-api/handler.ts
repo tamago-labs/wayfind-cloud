@@ -172,10 +172,13 @@ export const handler = async (
     }
 
     // POST /chat/message â€” Phase 4 (chat + model runtime). Honest stub.
-    // POST /runs/:id/usage - CLI usage events go to CreditLedger rows (M2).
+    // POST /runs/:id/usage — agent usage events go to CreditLedger rows (M2).
     // Body: { model?, provider?, durationMs?, outputChars?, toolCalls?,
-    //         tokens?: { input, output }, costPer1M?: { input, output } }.
-    // Without token counts the spend is unknown: writes a 0-delta audit row.
+    //         kind?, unit?, quantity?, tokens?: { input, output },
+    //         costPer1M?: { input, output }, costUsd?, userId? (ignored —
+    //         attribution is always the verified caller) }.
+    // Observe-only: metering never blocks. Delta is negative spend when a
+    // price is known, else a 0-delta audit row carrying quantities in reason.
     if (/\/runs\/[^/]+\/usage$/.test(path) && method === "POST") {
       const runId = path.split("/").slice(-2, -1)[0];
       let body: {
@@ -184,8 +187,12 @@ export const handler = async (
         durationMs?: number;
         outputChars?: number;
         toolCalls?: number;
+        kind?: string;
+        unit?: string;
+        quantity?: number;
         tokens?: { input?: number; output?: number };
         costPer1M?: { input?: number; output?: number };
+        costUsd?: number;
       } = {};
       try {
         body = JSON.parse(event.body ?? "{}");
@@ -194,7 +201,9 @@ export const handler = async (
       }
       let delta = 0;
       const { tokens, costPer1M } = body;
-      if (
+      if (typeof body.costUsd === "number") {
+        delta = -Math.abs(body.costUsd);
+      } else if (
         typeof tokens?.input === "number" &&
         typeof tokens?.output === "number" &&
         typeof costPer1M?.input === "number" &&
@@ -202,21 +211,36 @@ export const handler = async (
       ) {
         delta = -((tokens.input * costPer1M.input + tokens.output * costPer1M.output) / 1_000_000);
       }
+      const qty =
+        typeof body.quantity === "number"
+          ? ` ${body.quantity}${body.unit ? ` ${body.unit}` : ""}`
+          : "";
       const reason =
         `model usage run=${runId} provider=${body.provider ?? "?"} model=${body.model ?? "?"} ` +
+        `kind=${body.kind ?? "chat"}${qty} ` +
         `tokens=${tokens ? `${tokens.input ?? 0}in/${tokens.output ?? 0}out` : "unknown"} ` +
         `tools=${body.toolCalls ?? 0} durationMs=${body.durationMs ?? 0}`;
+      // Running balance = sum of all prior deltas + this one. Cheap enough
+      // at current volumes; revisit with a stored balance + pagination later.
+      let balanceAfter: number | null = null;
+      try {
+        const { data: rows } = await dataClient.models.CreditLedger.ledgerByOwnerId({ ownerId });
+        const prior = (rows ?? []).reduce((sum, r) => sum + (r.delta ?? 0), 0);
+        balanceAfter = Math.round((prior + delta) * 1_000_000) / 1_000_000;
+      } catch {
+        balanceAfter = null;
+      }
       const { data: entry, errors } = await dataClient.models.CreditLedger.create({
         ownerId,
         delta,
         reason,
-        balanceAfter: null,
+        balanceAfter,
         runId,
       });
       if (errors || !entry) {
         return json(500, { error: `ledger write failed: ${JSON.stringify(errors)}` });
       }
-      return json(200, { ok: true, ledgerId: entry.id, delta });
+      return json(200, { ok: true, ledgerId: entry.id, delta, balanceAfter });
     }
 
     // POST /computer/token - mint a short-lived, port-scoped auth token for

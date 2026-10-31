@@ -13,6 +13,8 @@ interface ComposerProps {
   onSend: (attachments: string[]) => void;
   onVoiceSend: (text: string) => void;
   onOpenSkills: () => void;
+  /** Cognito sub for usage attribution. */
+  ownerId?: string;
   /** Other bots for @mentions (chief thread only). Empty = no autocomplete. */
   mentionNames?: string[];
 }
@@ -23,7 +25,7 @@ function mentionQuery(draft: string): string | null {
   return m ? m[1] : null;
 }
 
-export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, mentionNames = [] }: ComposerProps) {
+export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, ownerId, mentionNames = [] }: ComposerProps) {
   const [plusOpen, setPlusOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   // Staged attachments: uploaded to the workspace immediately (they live
@@ -216,7 +218,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
       </form>
       </div>
       {voiceOpen && (
-        <VoiceModal onVoiceSend={onVoiceSend} onClose={() => setVoiceOpen(false)} />
+        <VoiceModal onVoiceSend={onVoiceSend} onClose={() => setVoiceOpen(false)} ownerId={ownerId} />
       )}
       <p className="mx-auto mt-2 max-w-2xl text-center text-xs text-slate-400">
         Bots ask before anything irreversible. Secrets never go in chat.

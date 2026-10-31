@@ -11,6 +11,7 @@ type Phase = 'listening' | 'processing' | 'error';
 interface VoiceModalProps {
   onVoiceSend: (text: string) => void;
   onClose: () => void;
+  ownerId?: string;
 }
 
 function formatMs(ms: number): string {
@@ -18,7 +19,7 @@ function formatMs(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-export default function VoiceModal({ onVoiceSend, onClose }: VoiceModalProps) {
+export default function VoiceModal({ onVoiceSend, onClose, ownerId }: VoiceModalProps) {
   const [phase, setPhase] = useState<Phase>('listening');
   const [attempt, setAttempt] = useState(0);
   const [level, setLevel] = useState(0);
@@ -30,6 +31,8 @@ export default function VoiceModal({ onVoiceSend, onClose }: VoiceModalProps) {
   sendRef.current = onVoiceSend;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  const ownerRef = useRef(ownerId);
+  ownerRef.current = ownerId;
 
   // (Re)start capture on mount and every retry; abort tears down on unmount.
   useEffect(() => {
@@ -48,7 +51,7 @@ export default function VoiceModal({ onVoiceSend, onClose }: VoiceModalProps) {
         );
         if (!alive) return;
         setPhase('processing');
-        const out = await transcribeVoice(wav);
+        const out = await transcribeVoice(wav, ownerRef.current);
         if (!alive) return;
         const text = out.transcript.trim();
         if (!text) {

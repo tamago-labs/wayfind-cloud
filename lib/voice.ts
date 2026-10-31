@@ -8,8 +8,8 @@ export interface VoiceResult {
   audioDurationMs: number;
 }
 
-export async function transcribeVoice(wav: Blob): Promise<VoiceResult> {
-  const res = await fetch(`${AGENT_URL}/voice/transcribe`, {
+export async function transcribeVoice(wav: Blob, ownerId?: string): Promise<VoiceResult> {
+  const res = await fetch(`${AGENT_URL}/voice/transcribe${ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : ''}`, {
     method: 'POST',
     headers: { 'Content-Type': 'audio/wav' },
     body: wav,

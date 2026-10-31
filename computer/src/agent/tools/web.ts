@@ -149,7 +149,14 @@ export function createWebTools(opts: GuardOpts): Array<ReturnType<typeof tool>> 
     execute: guarded(
       'websearch',
       (a: { query: string }) => a.query,
-      async (a: { query: string; numResults?: number }) => exaSearch(a.query, a.numResults ?? 8),
+      async (a: { query: string; numResults?: number }) => {
+        const out = await exaSearch(a.query, a.numResults ?? 8);
+        // Only billable calls count — missing-key fallbacks never hit Exa.
+        if (hasSearchKey() && !out.startsWith('No search results')) {
+          opts.onUsage?.({ kind: 'websearch', unit: 'calls', quantity: 1, detail: a.query.slice(0, 120) });
+        }
+        return out;
+      },
       opts,
     ),
     needsApproval: approvalPolicy('websearch', (a: { query: string }) => a.query),

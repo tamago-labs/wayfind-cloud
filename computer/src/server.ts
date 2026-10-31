@@ -11,6 +11,7 @@ import { initProvider } from './providers/provider.js';
 import { loadCatalog, resolveApiKey } from './providers/providers.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingBotRequests, listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun } from './runs/runner.js';
+import { reportUsage } from './runs/usage.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
 
@@ -126,7 +127,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/task' && method === 'POST') {
     try {
-      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments, ownerId } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
@@ -137,6 +138,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         roster?: Array<{ id?: string; name?: string; role?: string; skills?: string[] | null }>;
         botName?: string;
         attachments?: string[];
+        ownerId?: string;
       };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
       if (conversationId !== undefined && typeof conversationId !== 'string') {
@@ -169,6 +171,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         roster: cleanRoster,
         ...(typeof botName === 'string' ? { botName: botName.slice(0, 40) } : {}),
         ...(attachments ? { attachments: attachments.slice(0, 5) } : {}),
+        ...(typeof ownerId === 'string' && ownerId ? { ownerId: ownerId.slice(0, 128) } : {}),
       });
       return void json(res, 202, { runId: r.id });
     } catch {
@@ -182,13 +185,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   // Voice: browser posts raw WAV bytes (audio/wav), we proxy Meta ASR.
-  // User-initiated input like typing — no approval card.
+  // User-initiated input like typing — no approval card. Metered (observe-only).
   if (pathname === '/voice/transcribe' && method === 'POST') {
     try {
       const ct = req.headers['content-type'] ?? '';
       if (!ct.startsWith('audio/')) return void json(res, 400, { error: 'Content-Type must be audio/wav' });
       const wav = await readBytes(req, 7 * 1024 * 1024);
       const out = await transcribeWav(wav);
+      const ownerId = url.searchParams.get('ownerId') ?? undefined;
+      await reportUsage({
+        runId: 'voice',
+        model: 'muse-voice-transcribe-1.0',
+        kind: 'voice',
+        unit: 'seconds',
+        quantity: Math.round((out.audioDurationMs / 1000) * 10) / 10,
+        durationMs: 0,
+        outputChars: out.transcript.length,
+        toolCalls: 0,
+        ...(ownerId ? { userId: ownerId } : {}),
+        at: new Date().toISOString(),
+      });
       return void json(res, 200, out);
     } catch (err) {
       if (err instanceof VoiceError) return void json(res, err.status, { error: err.message });
@@ -493,7 +509,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // description) into a short role label. No tools, no session.
   if (pathname === '/summarize-role' && method === 'POST') {
     try {
-      const { text } = JSON.parse(await readBody(req)) as { text?: string };
+      const { text, ownerId } = JSON.parse(await readBody(req)) as { text?: string; ownerId?: string };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text }' });
       const client = new OpenAI({ apiKey: MODAL_API_KEY, baseURL: PROVIDER_BASE_URL });
       // NOTE: muse-spark spends part of the token budget on hidden reasoning
@@ -518,6 +534,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         .replace(/^["'“”]+|["'“”.]+$/g, '')
         .trim()
         .slice(0, 80);
+      await reportUsage({
+        runId: 'summarize-role',
+        model: PROVIDER_MODEL,
+        kind: 'summarize',
+        unit: 'calls',
+        quantity: 1,
+        durationMs: 0,
+        outputChars: role.length,
+        toolCalls: 0,
+        ...(typeof ownerId === 'string' && ownerId ? { userId: ownerId } : {}),
+        at: new Date().toISOString(),
+      });
       return void json(res, 200, { role: role || 'general assistant' });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

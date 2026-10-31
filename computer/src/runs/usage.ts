@@ -1,7 +1,14 @@
 // Usage metering: every completed run emits a usage event (logged + kept on
-// the run). If WAYFIND_API_URL is set, it is also POSTed to
-// POST /runs/:id/usage (run id = backend run id passed via TASK_RUN_ID).
-// Token-level cost accounting lands in P2.
+// the run), and every metered tool call emits its own event immediately
+// (works for parked runs too). If WAYFIND_API_URL is set, events are also
+// POSTed to POST /runs/:id/usage (run id = backend run id via TASK_RUN_ID).
+// Observe-only: metering never blocks. Token-level cost accounting for
+// priced models lands here via costPer1M; unknown rates stay tracked
+// (quantities) but unpriced (no spendUsd).
+import { IMAGE_USD_EACH, type UsageKind, type UsageUnit } from '../usage/prices.js';
+
+export type { UsageKind, UsageUnit };
+
 export interface TokenCounts {
   input: number;
   output: number;
@@ -10,6 +17,12 @@ export interface TokenCounts {
 export interface UsageEvent {
   runId: string;
   model: string;
+  /** Which metered call this event covers. Defaults to 'chat'. */
+  kind?: UsageKind;
+  /** What `quantity` counts in. Defaults to 'calls'. */
+  unit?: UsageUnit;
+  /** Amount in `unit` (images, seconds, calls, tokens). */
+  quantity?: number;
   provider?: string;
   durationMs: number;
   outputChars: number;
@@ -17,13 +30,19 @@ export interface UsageEvent {
   tokens?: TokenCounts;
   /** $/1M tokens from providers.json. */
   costPer1M?: { input: number; output: number };
-  /** Computed only when both tokens and rates are present. */
+  /** Computed when a price is known (images, or tokens + rates). */
   spendUsd?: number;
+  /** Cognito sub threaded through from POST /task. Absent locally. */
+  userId?: string;
   at: string;
 }
 
 export async function reportUsage(usage: UsageEvent): Promise<UsageEvent> {
-  if (usage.tokens && usage.costPer1M) {
+  usage.kind ??= 'chat';
+  usage.unit ??= usage.kind === 'chat' ? 'chars' : 'calls';
+  if (usage.kind === 'image' && typeof usage.quantity === 'number') {
+    usage.spendUsd = usage.quantity * IMAGE_USD_EACH;
+  } else if (usage.tokens && usage.costPer1M) {
     usage.spendUsd =
       (usage.tokens.input * usage.costPer1M.input + usage.tokens.output * usage.costPer1M.output) / 1_000_000;
   }
@@ -41,4 +60,30 @@ export async function reportUsage(usage: UsageEvent): Promise<UsageEvent> {
     console.error('[usage] post failed:', err instanceof Error ? err.message : err);
   }
   return usage;
+}
+
+/** Sum input/output tokens across SDK rawResponses usage entries. */
+export function sumResponseTokens(raw: unknown): TokenCounts | undefined {
+  const responses = Array.isArray(raw) ? raw : [];
+  let input = 0;
+  let output = 0;
+  let found = false;
+  for (const r of responses) {
+    const u = (r as { usage?: { inputTokens?: number; outputTokens?: number } })?.usage;
+    if (typeof u?.inputTokens === 'number' || typeof u?.outputTokens === 'number') {
+      input += u.inputTokens ?? 0;
+      output += u.outputTokens ?? 0;
+      found = true;
+    }
+  }
+  return found ? { input, output } : undefined;
+}
+
+/** Parse Meta Responses-API `usage: {input_tokens, output_tokens}`. */
+export function parseMetaUsage(data: unknown): TokenCounts | undefined {
+  const u = (data as { usage?: { input_tokens?: number; output_tokens?: number } })?.usage;
+  if (typeof u?.input_tokens === 'number' || typeof u?.output_tokens === 'number') {
+    return { input: u.input_tokens ?? 0, output: u.output_tokens ?? 0 };
+  }
+  return undefined;
 }

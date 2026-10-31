@@ -7,6 +7,7 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { approvalPolicy, guarded, type GuardOpts } from '../../core/guard.js';
 import { metaApiKey } from '../../providers/providers.js';
+import { parseMetaUsage, type TokenCounts } from '../../runs/usage.js';
 
 const META_RESPONSES_URL = 'https://api.meta.ai/v1/responses';
 const GROUNDING_MODEL = 'muse-spark-1.3';
@@ -40,7 +41,7 @@ function appendSources(text: string, output: unknown): string {
   return lines.length > 0 ? `${text}\n\nSources:\n${lines.join('\n')}` : text;
 }
 
-export async function groundedSearch(query: string): Promise<string> {
+export async function groundedSearch(query: string, onTokens?: (t: TokenCounts | undefined) => void): Promise<string> {
   const key = metaApiKey();
   if (!key) {
     return 'Grounded search is not configured (no Meta API key on the server). Give me a URL and I will fetch it directly.';
@@ -62,8 +63,9 @@ export async function groundedSearch(query: string): Promise<string> {
       const detail = (await res.text()).slice(0, 200);
       throw new Error(`Meta grounded search HTTP ${res.status}: ${detail}`);
     }
-    const data = (await res.json()) as { output?: unknown[]; error?: { message?: string } };
+    const data = (await res.json()) as { output?: unknown[]; usage?: unknown; error?: { message?: string } };
     if (data.error) throw new Error(`Meta grounded search: ${data.error.message ?? 'unknown error'}`);
+    onTokens?.(parseMetaUsage(data));
     const texts: string[] = [];
     for (const item of data.output ?? []) {
       const content = (item as { type?: string; content?: unknown })?.content;
@@ -92,7 +94,16 @@ export function createGroundedSearchTool(opts: GuardOpts): ReturnType<typeof too
     execute: guarded(
       'grounded_search',
       (a: { query: string }) => a.query,
-      async (a: { query: string }) => groundedSearch(a.query),
+      async (a: { query: string }) =>
+        groundedSearch(a.query, (tokens) =>
+          opts.onUsage?.({
+            kind: 'grounded_search',
+            unit: 'tokens',
+            quantity: (tokens?.input ?? 0) + (tokens?.output ?? 0),
+            detail: a.query.slice(0, 120),
+            ...(tokens ? { tokens } : {}),
+          }),
+        ),
       opts,
     ),
     needsApproval: approvalPolicy('grounded_search', (a: { query: string }) => a.query),

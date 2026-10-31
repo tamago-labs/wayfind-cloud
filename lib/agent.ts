@@ -34,7 +34,7 @@ export async function postTask(
   conversationId?: string,
   system?: string,
   allowedSkills?: string[],
-  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[] },
+  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string },
 ): Promise<string> {
   const res = await fetch(`${AGENT_URL}/task`, {
     method: 'POST',
@@ -48,6 +48,7 @@ export async function postTask(
       ...(opts?.roster ? { roster: opts.roster } : {}),
       ...(opts?.botName ? { botName: opts.botName } : {}),
       ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
+      ...(opts?.ownerId ? { ownerId: opts.ownerId } : {}),
     }),
   });
   if (!res.ok) throw new Error(`agent /task → ${res.status}`);
@@ -164,12 +165,12 @@ export async function answerBotRequest(
 }
 
 /** Compress a first message into a short role label. Returns '' on failure (caller keeps role empty). */
-export async function summarizeRole(text: string): Promise<string> {
+export async function summarizeRole(text: string, ownerId?: string): Promise<string> {
   try {
     const res = await fetch(`${AGENT_URL}/summarize-role`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(ownerId ? { ownerId } : {}) }),
     });
     if (!res.ok) return '';
     const { role } = (await res.json()) as { role?: string };

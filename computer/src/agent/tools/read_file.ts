@@ -8,6 +8,7 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { approvalPolicy, guarded, type GuardOpts } from '../../core/guard.js';
 import { metaApiKey } from '../../providers/providers.js';
+import { parseMetaUsage, type TokenCounts } from '../../runs/usage.js';
 import { inside } from './paths.js';
 
 const META_RESPONSES_URL = 'https://api.meta.ai/v1/responses';
@@ -28,7 +29,7 @@ function extOf(path: string): string {
   return i >= 0 ? path.slice(i).toLowerCase() : '';
 }
 
-export async function readWorkspaceFile(relPath: string, question?: string): Promise<string> {
+export async function readWorkspaceFile(relPath: string, question?: string, onTokens?: (t: TokenCounts | undefined) => void): Promise<string> {
   const full = inside(relPath);
   let stat: ReturnType<typeof statSync> | null = null;
   try {
@@ -83,8 +84,9 @@ export async function readWorkspaceFile(relPath: string, question?: string): Pro
       const detail = (await res.text()).slice(0, 200);
       throw new Error(`File reader HTTP ${res.status}: ${detail}`);
     }
-    const data = (await res.json()) as { output?: unknown[]; error?: { message?: string } };
+    const data = (await res.json()) as { output?: unknown[]; usage?: unknown; error?: { message?: string } };
     if (data.error) throw new Error(`File reader: ${data.error.message ?? 'unknown error'}`);
+    onTokens?.(parseMetaUsage(data));
     const texts: string[] = [];
     for (const item of data.output ?? []) {
       const content = (item as { type?: string; content?: unknown })?.content;
@@ -116,7 +118,15 @@ export function createFileReaderTool(opts: GuardOpts): ReturnType<typeof tool> {
       'read_file',
       (a: { path: string }) => a.path,
       async (a: { path: string; question?: string }) => {
-        const answer = await readWorkspaceFile(a.path, a.question);
+        const answer = await readWorkspaceFile(a.path, a.question, (tokens) =>
+          opts.onUsage?.({
+            kind: 'read_file',
+            unit: 'tokens',
+            quantity: (tokens?.input ?? 0) + (tokens?.output ?? 0),
+            detail: a.path,
+            ...(tokens ? { tokens } : {}),
+          }),
+        );
         return `${answer}\n\nFILE_USAGE file=${a.path}`;
       },
       opts,

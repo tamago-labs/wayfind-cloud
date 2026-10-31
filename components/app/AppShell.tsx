@@ -165,6 +165,7 @@ export default function AppShell() {
             : undefined,
           botName: targetName,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(user?.userId ? { ownerId: user.userId } : {}),
         });
         await streamRun(runId, {
           onChunk: (delta) =>
@@ -229,7 +230,7 @@ export default function AppShell() {
         if (targetId && !targetRole && !targetIsChief) {
           void (async () => {
             try {
-              const role = await summarizeRole(v);
+              const role = await summarizeRole(v, user?.userId);
               if (!role) return;
               const { errors } = await dataClient.models.Bot.update({ id: targetId, role });
               if (errors?.length) return;
@@ -564,6 +565,7 @@ export default function AppShell() {
           onSend={send}
           onVoiceSend={sendText}
           onOpenSkills={() => setSkillsOpen(true)}
+          ownerId={user?.userId}
           mentionNames={bot.isChiefOfStaff ? bots.filter((b) => b.id && b.id !== bot.id).map((b) => b.name) : []}
         />
       </main>

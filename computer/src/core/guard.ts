@@ -8,6 +8,7 @@
 // allow/deny inside execute — asks are decided before execute ever runs.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { check, loadRules, type Action, type Rule } from './permissions.js';
+import type { TokenCounts, UsageKind, UsageUnit } from '../runs/usage.js';
 
 import { randomUUID } from 'node:crypto';
 
@@ -19,8 +20,19 @@ export interface ApprovalRequest {
   auto?: boolean;
 }
 
+/** A metered tool call (Meta API, Exa, …). Observe-only: reported, never blocked. */
+export interface MeteredCall {
+  kind: UsageKind;
+  unit: UsageUnit;
+  quantity: number;
+  detail?: string;
+  tokens?: TokenCounts;
+}
+
 export interface GuardOpts {
   onApproval?: (approval: ApprovalRequest) => void;
+  /** Fired by tools after each metered call; the runner reports it. */
+  onUsage?: (call: MeteredCall) => void;
   /** Per-bot skill allowlist. Undefined = all installed skills enabled; [] = none. */
   allowedSkills?: string[];
 }

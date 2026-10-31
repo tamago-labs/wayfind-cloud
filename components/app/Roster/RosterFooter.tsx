@@ -21,6 +21,7 @@ export default function RosterFooter() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [plan, setPlan] = useState('free');
+  const [spend, setSpend] = useState<number | null>(null);
   const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -108,6 +109,27 @@ export default function RosterFooter() {
     };
   }, [user?.userId, email]);
 
+  // Observe-only usage total: sum of ledger deltas (negative = spend).
+  // Best-effort — the footer works fine without it.
+  useEffect(() => {
+    const ownerId = user?.userId;
+    if (!ownerId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { data } = await dataClient.models.CreditLedger.ledgerByOwnerId({ ownerId });
+        if (!alive || !data) return;
+        const total = data.reduce((sum, r) => sum + (r.delta ?? 0), 0);
+        setSpend(Math.abs(total));
+      } catch {
+        // usage display stays hidden
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [user?.userId]);
+
 
   const initial = (displayName || email).charAt(0).toUpperCase() || 'P';
   const router = useRouter();
@@ -174,6 +196,11 @@ export default function RosterFooter() {
                         Upgrade
                       </Link>
                     </span>
+                    {spend !== null && spend > 0 && (
+                      <span className="mt-0.5 block text-xs text-heroslate" title="Metered API spend this account has used">
+                        Usage ${spend.toFixed(spend < 1 ? 3 : 2)}
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />
