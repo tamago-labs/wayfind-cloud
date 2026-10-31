@@ -85,7 +85,8 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
 /* ---------------- helpers ---------------- */
 
 const CORS = {
-  "Access-Control-Allow-Origin": process.env.CORS_ORIGIN ?? "*",
+  // No Access-Control-Allow-Origin here: the Function URL layer sets it
+  // (allowedOrigins in backend.ts). Sending it twice breaks browsers.
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json",
