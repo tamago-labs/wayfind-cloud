@@ -44,3 +44,9 @@ amplifyconfiguration*
 scripts/microvm/.env
 scripts/microvm/.microvm-state.json
 scripts/microvm/**/*.zip
+
+# computer golden-image pipeline (local creds + state + stage + zips)
+scripts/computer-image/.env
+scripts/computer-image/.computer-image-state.json
+scripts/computer-image/**/*.zip
+scripts/computer-image/stage/

@@ -75,6 +75,11 @@ export function metaApiKey(): string {
 
 const providerCache = new Map<string, OpenAIProvider>();
 
+/** Drop cached model clients so a key rotation (e.g. /run injection) takes effect. */
+export function clearProviderCache(): void {
+  providerCache.clear();
+}
+
 function providerClient(id: string, p: CatalogProvider): OpenAIProvider {
   // Cache on endpoint too: catalog edits or env overrides must not go stale.
   const cacheKey = `${id}|${p.baseURL}`;

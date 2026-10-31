@@ -29,12 +29,27 @@ export const MODAL_API_KEY = process.env.MODAL_API_KEY ?? keys.MODAL_API_KEY ?? 
 
 export const PORT = Number(process.env.PORT ?? 8080);
 
-export function requireApiKey(): string {  if (!PROVIDER_API_KEY) {
-    console.error('Missing PROVIDER_API_KEY (Meta) — set it in .env or the workspace keystore.');
-    process.exit(1);
+/** Live check (env or keystore written later by /run) — never the import snapshot. */
+export function keysReady(): boolean {
+  return Boolean(process.env.PROVIDER_API_KEY ?? drawKeyLive('PROVIDER_API_KEY')) &&
+    Boolean(process.env.MODAL_API_KEY ?? drawKeyLive('MODAL_API_KEY'));
+}
+
+function drawKeyLive(name: string): string | null {
+  try {
+    const p = join(WORKSPACE_DIR, '.wayfind', 'keys.json');
+    if (!existsSync(p)) return null;
+    const v = (JSON.parse(readFileSync(p, 'utf8')) as Record<string, string>)[name];
+    return typeof v === 'string' && v ? v : null;
+  } catch {
+    return null;
   }
-  if (!MODAL_API_KEY) {
-    console.error('Missing MODAL_API_KEY (chat model) — set it in .env or the workspace keystore.');
+}
+
+/** Local-dev gate: cloud boot skips this (keys arrive via /run). */
+export function requireApiKey(): string {
+  if (!keysReady()) {
+    console.error('Missing API keys (.env or workspace keystore). In cloud, POST /hooks/run first.');
     process.exit(1);
   }
   return PROVIDER_API_KEY;

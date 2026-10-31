@@ -224,6 +224,12 @@ Recorded 2026-10-29 (hello-world spike, since cleaned up):
 - Test VM `microvm-43ae7eb8-0053-3da7-92cc-872fa43a198d`, endpoint `*.lambda-microvm.ap-southeast-1.on.aws`, terminated + image deleted after
 - SDK notes: `GetMicrovmImage`/`DeleteMicrovmImage` require the full ARN (bare name → `ValidationException`); deleted images/terminated VMs 404 on get (treat as done — scripts handle both).
 
+Recorded 2026-10-31 (golden computer image, Phase 1):
+- Image `arn:aws:lambda:ap-southeast-1:057386374967:microvm-image:wayfind-computer` v1.0 (build: CREATING→CREATED ~13×15s polls; first build pulls `node:24-alpine`)
+- Bundle 21.2 MB zip (`dist/` + prod-only `node_modules` + `workspace/providers.json` catalog; zero keys — zip audited, no `.env`/keystore)
+- Pipeline `scripts/computer-image/`: `01-package-upload` (tsc build + `--omit=dev` stage + S3) → `02-create-image` → `03-run-computer` (manual boot + `/run` identity + cloud chat test)
+- Server hooks (Phase 2, in-image): `/ready` health, `/hooks/run` (keystore 0600 + env + provider-cache reset + workspace pull), `/hooks/suspend|resume|terminate` (S3 sync under `computers/<computerId>/workspace/`, `.wayfind/` never leaves the VM)
+
 ## 9. Guardrails (apply to every phase)
 
 - Nothing user-facing claims a feature before an acceptance test passes

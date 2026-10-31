@@ -2,13 +2,15 @@
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, resolve, sep } from 'node:path';
+import { dirname, extname, join, resolve, sep } from 'node:path';
 import OpenAI from 'openai';
-import { PORT, MODAL_API_KEY, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, requireApiKey } from './core/config.js';
+import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, keysReady } from './core/config.js';
 import { permissionMode } from './core/guard.js';
 import { hasSearchKey } from './agent/tools/web.js';
-import { initProvider } from './providers/provider.js';
-import { loadCatalog, resolveApiKey } from './providers/providers.js';
+import { initProvider, reinitProvider } from './providers/provider.js';
+import { loadCatalog, resolveApiKey, clearProviderCache } from './providers/providers.js';
+import { writeKey } from './providers/keystore.js';
+import { pullWorkspace, pushWorkspace } from './cloud/sync.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingBotRequests, listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun } from './runs/runner.js';
 import { reportUsage } from './runs/usage.js';
@@ -29,6 +31,97 @@ function corsHeaders(): Record<string, string> {
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json', ...corsHeaders() });
   res.end(JSON.stringify(body));
+}
+
+/** Per-VM cloud identity, injected by POST /hooks/run. Null locally. */
+let cloudIdentity: { ownerId?: string; computerId?: string } | null = null;
+/** S3 workspace sync target, injected by POST /hooks/run. Null locally. */
+let workspaceSync: { bucket: string; prefix: string } | null = null;
+
+/** Lambda runtime hook prefix (docs: /aws/lambda-microvms/runtime/v1/<hook>). */
+const RT_PREFIX = '/aws/lambda-microvms/runtime/v1';
+
+interface RunHookBody {
+  ownerId?: string;
+  computerId?: string;
+  secrets?: Record<string, string>;
+  apiUrl?: string;
+  taskRunId?: string;
+  workspace?: { bucket?: string; prefix?: string };
+}
+
+async function doRunHook(body: RunHookBody): Promise<{ ok: boolean; initialized: boolean; identity: typeof cloudIdentity }> {
+  if (body.secrets && typeof body.secrets === 'object') {
+    for (const [k, v] of Object.entries(body.secrets)) {
+      if (typeof v === 'string' && v && /^[A-Za-z0-9_]+$/.test(k)) writeKey(k, v);
+    }
+  }
+  if (typeof body.apiUrl === 'string' && body.apiUrl) process.env.WAYFIND_API_URL = body.apiUrl;
+  if (typeof body.taskRunId === 'string' && body.taskRunId) process.env.TASK_RUN_ID = body.taskRunId;
+  if (typeof body.ownerId === 'string' && body.ownerId) {
+    cloudIdentity = { ...(cloudIdentity ?? {}), ownerId: body.ownerId.slice(0, 128) };
+  }
+  if (typeof body.computerId === 'string' && body.computerId) {
+    cloudIdentity = { ...(cloudIdentity ?? {}), computerId: body.computerId.slice(0, 128) };
+  }
+  if (body.workspace?.bucket && body.workspace?.prefix) {
+    workspaceSync = { bucket: body.workspace.bucket, prefix: body.workspace.prefix };
+    // Restore this computer's files (missing-only — never clobbers).
+    try {
+      await pullWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+    } catch (err) {
+      console.error('[hooks/run] workspace pull failed:', err instanceof Error ? err.message : err);
+    }
+  }
+  // New keys → drop cached model clients so they take effect now.
+  clearProviderCache();
+  reinitProvider();
+  return { ok: true, initialized: keysReady(), identity: cloudIdentity };
+}
+
+async function doSuspend(): Promise<{ ok: boolean; pushed?: number; bytes?: number; skipped?: string; error?: string }> {
+  if (!workspaceSync) return { ok: true, skipped: 'no workspace sync configured' };
+  try {
+    const { pushed, bytes } = await pushWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+    return { ok: true, pushed, bytes };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[hooks/suspend] workspace push failed:', msg);
+    return { ok: false, error: `push failed: ${msg}` };
+  }
+}
+
+async function doResume(): Promise<{ ok: boolean; pulled?: number; skipped?: number | string; error?: string }> {
+  if (!workspaceSync) return { ok: true, skipped: 'no workspace sync configured' };
+  try {
+    const { pulled, skipped } = await pullWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+    return { ok: true, pulled, skipped };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `pull failed: ${msg}` };
+  }
+}
+
+async function doTerminate(): Promise<{ ok: boolean }> {
+  if (workspaceSync) {
+    try {
+      await pushWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+    } catch (err) {
+      console.error('[hooks/terminate] final push failed:', err instanceof Error ? err.message : err);
+    }
+  }
+  return { ok: true };
+}
+
+/** Boot never crashes on missing keys: cloud VMs start keyless and wait
+ * for /hooks/run; local dev gets the loud warning instead of a boot. */
+function requireApiKeyOptIn(): void {
+  if (!keysReady()) {
+    console.error(
+      'No API keys (.env or workspace keystore) — booting uninitialized. ' +
+        'POST /hooks/run to inject (cloud) or add computer/.env (local).',
+    );
+  }
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -108,12 +201,85 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return void res.end();
   }
 
-  // Lifecycle hooks (mounted by the image under /aws/lambda-microvms/runtime/v1/*).
-  if (pathname === '/ready' && method === 'GET') return void json(res, 200, { ok: true });
-  if (pathname === '/hooks/run' && method === 'POST') return void json(res, 200, { ok: true });
-  if (pathname === '/hooks/suspend' && method === 'POST') return void json(res, 200, { ok: true });
-  if (pathname === '/hooks/resume' && method === 'POST') return void json(res, 200, { ok: true });
-  if (pathname === '/hooks/terminate' && method === 'POST') return void json(res, 200, { ok: true });
+  // Lifecycle hooks. Two path sets, one implementation:
+  // - Lambda runtime paths (/aws/lambda-microvms/runtime/v1/*): Lambda
+  //   itself calls these. /run MUST return 200 or the endpoint never
+  //   forwards traffic (callers see 502). /ready is POST during builds.
+  // - Our /hooks/* + GET /ready: same handlers for scripts/manager calls.
+  // Cloud identity: one golden image, many VMs — /run injects per-VM
+  // identity + secrets (passed by the caller, never baked).
+  // .wayfind/ (keystore) never leaves the VM: suspend/terminate sync the
+  // workspace to S3, /run re-injects identity on every boot.
+  if (
+    (pathname === '/ready' || pathname === `${RT_PREFIX}/ready`) &&
+    (method === 'GET' || method === 'POST')
+  ) {
+    try {
+      mkdirSync(join(WORKSPACE_DIR, '.wayfind'), { recursive: true });
+    } catch {
+      return void json(res, 500, { ok: false, error: 'workspace not writable' });
+    }
+    return void json(res, 200, { ok: true, initialized: keysReady(), identity: cloudIdentity });
+  }
+  if ((pathname === '/validate' || pathname === `${RT_PREFIX}/validate`) && method === 'POST') {
+    return void json(res, 200, { ok: true, initialized: keysReady() });
+  }
+  if (
+    (pathname === '/hooks/run' || pathname === `${RT_PREFIX}/run`) &&
+    method === 'POST'
+  ) {
+    try {
+      const raw = JSON.parse(await readBody(req)) as {
+        ownerId?: string;
+        computerId?: string;
+        secrets?: Record<string, string>;
+        apiUrl?: string;
+        taskRunId?: string;
+        workspace?: { bucket?: string; prefix?: string };
+        microvmId?: string;
+        runHookPayload?: string;
+      };
+      // Lambda's own /run call carries {microvmId, runHookPayload} — accept
+      // IDs from either shape so traffic starts even before our secrets POST.
+      let body = raw;
+      if (!raw.ownerId && !raw.computerId && typeof raw.runHookPayload === 'string' && raw.runHookPayload) {
+        try {
+          const ids = JSON.parse(raw.runHookPayload) as { ownerId?: string; computerId?: string };
+          body = { ...raw, ...(typeof ids.ownerId === 'string' ? { ownerId: ids.ownerId } : {}), ...(typeof ids.computerId === 'string' ? { computerId: ids.computerId } : {}) };
+        } catch {
+          // Non-JSON payload — still acknowledge so traffic starts.
+        }
+      }
+      if (typeof raw.microvmId === 'string' && raw.microvmId && !body.computerId) {
+        body = { ...body, computerId: raw.microvmId };
+      }
+      const out = await doRunHook(body);
+      return void json(res, 200, out);
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+  if (
+    (pathname === '/hooks/suspend' || pathname === `${RT_PREFIX}/suspend`) &&
+    method === 'POST'
+  ) {
+    const out = await doSuspend();
+    return void json(res, out.ok ? 200 : 500, out);
+  }
+  if (
+    (pathname === '/hooks/resume' || pathname === `${RT_PREFIX}/resume`) &&
+    method === 'POST'
+  ) {
+    const out = await doResume();
+    return void json(res, out.ok ? 200 : 500, out);
+  }
+  if (
+    (pathname === '/hooks/terminate' || pathname === `${RT_PREFIX}/terminate`) &&
+    method === 'POST'
+  ) {
+    const out = await doTerminate();
+    return void json(res, 200, out);
+  }
   if (pathname === '/status' && method === 'GET') {
     return void json(res, 200, {
       ok: true,
@@ -126,6 +292,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (pathname === '/task' && method === 'POST') {
+    // Cloud VMs boot keyless — /hooks/run injects identity + secrets.
+    if (!keysReady()) {
+      return void json(res, 503, { error: 'computer not initialized — POST /hooks/run first' });
+    }
     try {
       const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments, ownerId } = JSON.parse(await readBody(req)) as {
         text?: string;
@@ -511,7 +681,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     try {
       const { text, ownerId } = JSON.parse(await readBody(req)) as { text?: string; ownerId?: string };
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text }' });
-      const client = new OpenAI({ apiKey: MODAL_API_KEY, baseURL: PROVIDER_BASE_URL });
+      if (!keysReady()) {
+        return void json(res, 503, { error: 'computer not initialized — POST /hooks/run first' });
+      }
+      // Live key (never the import-time snapshot — /run may inject later).
+      const { drawKey } = await import('./providers/keystore.js');
+      const client = new OpenAI({ apiKey: process.env.MODAL_API_KEY ?? drawKey('MODAL_API_KEY') ?? '', baseURL: PROVIDER_BASE_URL });
       // NOTE: muse-spark spends part of the token budget on hidden reasoning
       // (usage.reasoning_tokens) — a small max_tokens starves the visible
       // reply and yields null content. Keep the budget generous; the answer
@@ -557,7 +732,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   return void json(res, 404, { error: 'not found' });
 }
 
-requireApiKey();
+requireApiKeyOptIn();
 initProvider();
 const server = createServer((req, res) => {
   void handle(req, res).catch((err: unknown) => {
