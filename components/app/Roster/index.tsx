@@ -19,6 +19,7 @@ export default function Roster({
   onNew,
   open,
   onClose,
+  gated = false,
 }: RosterProps) {
   return (
     <>
@@ -34,7 +35,7 @@ export default function Roster({
       >
         <RosterHeader onToggleSearch={onToggleSearch} onNew={onNew} />
         <RosterSearch query={query} onQuery={onQuery} showSearch={showSearch} />
-        <RosterList items={items} cur={cur} onSelect={onSelect} />
+        <RosterList items={items} cur={cur} onSelect={onSelect} disabled={gated} />
         <RosterFooter />
       </aside>
     </>

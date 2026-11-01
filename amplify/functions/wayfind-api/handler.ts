@@ -375,7 +375,7 @@ export const handler = async (
       if (computer.microvmId && (computer.provisionStatus === "running" || computer.provisionStatus === "suspended")) {
         try {
           if (!(await vmAlive(computer.microvmId))) {
-            await resetStaleRow(computer.id);
+            await resetStaleRow(computer.id, computer.microvmId);
             computer = { ...computer, provisionStatus: "not_provisioned", microvmId: "" };
           }
         } catch (err) {
@@ -396,7 +396,7 @@ export const handler = async (
           if (r.id === computer.id || !r.microvmId) continue;
           try {
             if (!(await vmAlive(r.microvmId))) {
-              await resetStaleRow(r.id);
+              await resetStaleRow(r.id, r.microvmId);
               console.log(`[wayfind-api] cleared stale computer row ${r.id}`);
             }
           } catch {
@@ -433,7 +433,7 @@ export const handler = async (
       // The VM may be gone (suspend-window expiry, out-of-band delete) while
       // the row still claims it. Terminate heals silently; resume/suspend say so.
       if (!(await vmAlive(microvmId))) {
-        await resetStaleRow(computer.id);
+        await resetStaleRow(computer.id, microvmId);
         if (body.action === "terminate") {
           const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
           return json(200, { data: updated });
@@ -496,7 +496,7 @@ export const handler = async (
         return json(404, { error: "no provisioned MicroVM for this account" });
       }
       if (microvmId && !(await vmAlive(microvmId))) {
-        if (computer) await resetStaleRow(computer.id);
+        if (computer) await resetStaleRow(computer.id, microvmId);
         return json(410, { error: "that MicroVM no longer exists - press Start computer for a fresh one" });
       }
       if (computer?.microvmId && microvmId !== computer.microvmId) {
@@ -536,7 +536,7 @@ export const handler = async (
         return json(404, { error: "no provisioned MicroVM for this account" });
       }
       if (!(await vmAlive(computer.microvmId))) {
-        await resetStaleRow(computer.id);
+        await resetStaleRow(computer.id, computer.microvmId);
         return json(410, { error: "that MicroVM no longer exists - press Start computer for a fresh one" });
       }
       let token: string;
@@ -665,8 +665,26 @@ async function vmAlive(microvmId: string): Promise<boolean> {
   }
 }
 
-/** Clear a row whose VM is gone so the next Start provisions fresh. */
-async function resetStaleRow(computerId: string): Promise<void> {
+/** Clear a row whose VM is gone so the next Start provisions fresh. Logs the
+ * observed VM state first: GetMicrovm keeps terminated VMs queryable with
+ * stateReason/startedAt/terminatedAt — the only record of why a VM died
+ * young (lifetime cap, reclaim, crash). Check CloudWatch for this line. */
+async function resetStaleRow(computerId: string, microvmId?: string | null): Promise<void> {
+  if (microvmId) {
+    try {
+      const res = await microvms.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
+      const started = res.startedAt?.getTime();
+      const ended = res.terminatedAt?.getTime() ?? Date.now();
+      const lifetimeMin = started ? Math.round((ended - started) / 60_000) : -1;
+      console.log(
+        `[wayfind-api] resetStaleRow ${computerId} vm=${microvmId} state=${res.state as string} reason=${res.stateReason ?? "—"} lifetimeMin=${lifetimeMin}`,
+      );
+    } catch (err) {
+      console.log(
+        `[wayfind-api] resetStaleRow ${computerId} vm=${microvmId} getFailed=${err instanceof Error ? err.name : String(err)}`,
+      );
+    }
+  }
   await dataClient.models.Computer.update({
     id: computerId,
     provisionStatus: "not_provisioned",

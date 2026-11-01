@@ -16,4 +16,6 @@ export interface RosterProps {
   onNew: () => void;
   open: boolean;
   onClose: () => void;
+  /** Grey out + ignore selects while the cloud computer isn't ready. */
+  gated?: boolean;
 }

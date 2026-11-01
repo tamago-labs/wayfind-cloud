@@ -13,7 +13,9 @@ import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
 import { answerBotRequest, answerQuestion, decideApproval, getHistory, isCloudTransport, pollPending, postTask, streamRun, streamRunProgressive, summarizeRole } from '@/lib/agent';
-import { getTransport, TRANSPORT_EVENT } from '@/lib/transport';
+import { backendConfigured } from '@/lib/wayfind-api';
+import { getTransport, setTransportValue, TRANSPORT_EVENT } from '@/lib/transport';
+import { retryComputerStart, useComputer } from './Roster/useComputer';
 import { isImageProgress, newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
@@ -50,6 +52,21 @@ export default function AppShell() {
       window.removeEventListener('storage', onChange);
     };
   }, []);
+
+  // Cloud computer readiness gate: while the VM isn't usable (booting,
+  // failed, no row yet) the roster + composer grey out instead of failing
+  // sends. Suspended counts as ready — autoResumeEnabled wakes the VM on
+  // first traffic, so gating it would brick the wake.
+  const { computer, busy: computerBusy, error: computerError } = useComputer();
+  const cloudActive = transport === 'cloud' && backendConfigured();
+  const computerStatus = computer?.provisionStatus ?? 'unknown';
+  const computerReady = computerStatus === 'running' || computerStatus === 'suspended';
+  const gated = cloudActive && !computerReady;
+  const bootHint = computerError
+    ? `Couldn't start your computer — ${computerError}`
+    : computerStatus === 'provisioning' || computerBusy
+      ? 'Booting your computer…'
+      : 'Setting up your computer…';
 
   // Roster comes from the database; seed.ts stays as shape reference only.
   // Re-runs on sign-in and whenever a bot is seeded/changed elsewhere
@@ -535,6 +552,7 @@ export default function AppShell() {
           onNew={() => setBotModalOpen(true)}
           open={sideOpen}
           onClose={() => setSideOpen(false)}
+          gated={gated}
         />
         <main className="grid min-w-0 flex-1 place-items-center bg-thread">
           <div className="text-center">
@@ -569,6 +587,7 @@ export default function AppShell() {
         onNew={() => setBotModalOpen(true)}
         open={sideOpen}
         onClose={() => setSideOpen(false)}
+        gated={gated}
       />
 
       <main className="flex min-w-0 flex-1 flex-col bg-thread">
@@ -603,13 +622,19 @@ export default function AppShell() {
         </header>
 
         {transport === 'cloud' ? (
-          <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-emerald-100/70 px-4 py-1.5 text-center text-xs font-bold text-emerald-900">
-            Cloud — replies come from your cloud computer
-            {typeof window !== 'undefined' && window.localStorage.getItem('wayfind-vm-endpoint')
-              ? ` (${new URL(window.localStorage.getItem('wayfind-vm-endpoint') as string).hostname.slice(0, 24)}…)`
-              : ' (no endpoint yet — start it below)'}
-            .
-          </div>
+          gated ? (
+            <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
+              {bootHint}
+            </div>
+          ) : (
+            <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-emerald-100/70 px-4 py-1.5 text-center text-xs font-bold text-emerald-900">
+              Cloud — replies come from your cloud computer
+              {typeof window !== 'undefined' && window.localStorage.getItem('wayfind-vm-endpoint')
+                ? ` (${new URL(window.localStorage.getItem('wayfind-vm-endpoint') as string).hostname.slice(0, 24)}…)`
+                : ' (no endpoint yet — start it below)'}
+              .
+            </div>
+          )
         ) : (
           <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
             Local dev — replies come from your computer server. Make sure it’s running on :8080.
@@ -625,6 +650,10 @@ export default function AppShell() {
           onOpenSkills={() => setSkillsOpen(true)}
           ownerId={user?.userId}
           mentionNames={bot.isChiefOfStaff ? bots.filter((b) => b.id && b.id !== bot.id).map((b) => b.name) : []}
+          disabled={gated}
+          disabledHint={gated ? bootHint : undefined}
+          onRetry={gated ? () => retryComputerStart() : undefined}
+          onGoLocal={gated ? () => setTransportValue('local') : undefined}
         />
       </main>
 

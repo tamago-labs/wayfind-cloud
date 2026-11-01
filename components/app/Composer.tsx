@@ -18,6 +18,14 @@ interface ComposerProps {
   ownerId?: string;
   /** Other bots for @mentions (chief thread only). Empty = no autocomplete. */
   mentionNames?: string[];
+  /** Grey out while the cloud computer isn't ready. */
+  disabled?: boolean;
+  /** Status line shown above the box when disabled (e.g. "Booting your computer…"). */
+  disabledHint?: string;
+  /** Retry the computer start (shown when disabled and provided). */
+  onRetry?: () => void;
+  /** Fall back to local transport (shown when disabled and provided). */
+  onGoLocal?: () => void;
 }
 
 /** Trailing @mention being typed, e.g. "@Re" in "ask @Re". Null when none. */
@@ -26,7 +34,7 @@ function mentionQuery(draft: string): string | null {
   return m ? m[1] : null;
 }
 
-export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, ownerId, mentionNames = [] }: ComposerProps) {
+export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, ownerId, mentionNames = [], disabled = false, disabledHint, onRetry, onGoLocal }: ComposerProps) {
   const [plusOpen, setPlusOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   // Staged attachments: uploaded to the workspace immediately (they live
@@ -150,10 +158,27 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          send();
+          if (!disabled) send();
         }}
-        className="relative mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-slate-200 bg-white p-1.5 shadow-sm focus-within:border-cta"
+        aria-disabled={disabled}
+        className={`relative mx-auto flex max-w-2xl items-center gap-2 rounded-full border border-slate-200 bg-white p-1.5 shadow-sm focus-within:border-cta ${disabled ? 'opacity-60' : ''}`}
       >
+        {disabled && disabledHint && (
+          <span className="absolute -top-9 left-1/2 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full bg-navy px-4 py-1.5 text-xs font-bold text-white shadow-lg" role="status">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {disabledHint}
+            {onRetry && (
+              <button type="button" onClick={onRetry} className="underline hover:text-slate-200">
+                Retry
+              </button>
+            )}
+            {onGoLocal && (
+              <button type="button" onClick={onGoLocal} className="underline hover:text-slate-200">
+                Use local
+              </button>
+            )}
+          </span>
+        )}
         <ComposerMenu
           open={plusOpen}
           onClose={() => setPlusOpen(false)}
@@ -165,13 +190,15 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           aria-label="Composer actions"
           aria-expanded={plusOpen}
           onClick={() => setPlusOpen((o) => !o)}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200"
+          disabled={disabled}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200 disabled:opacity-50"
         >
           <Plus className="h-[18px] w-[18px]" strokeWidth={2.2} />
         </button>
         <input
           value={draft}
           onChange={(e) => onDraft(e.target.value)}
+          disabled={disabled}
           onKeyDown={(e) => {
             if (e.key === 'Tab' && mentions.length > 0) {
               e.preventDefault();
@@ -196,7 +223,8 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           aria-label="Attach images or PDF"
           title="Attach images or PDF (saved to Library, shown to the Bot)"
           onClick={() => fileRef.current?.click()}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200"
+          disabled={disabled}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200 disabled:opacity-50"
         >
           {uploading > 0 ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : <Paperclip className="h-[18px] w-[18px]" strokeWidth={2.2} />}
         </button>
@@ -204,14 +232,16 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           type="button"
           aria-label="Voice message"
           onClick={() => setVoiceOpen(true)}
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200"
+          disabled={disabled}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-heroslate hover:bg-slate-200 disabled:opacity-50"
         >
           <Mic className="h-[18px] w-[18px]" strokeWidth={2.2} />
         </button>
         <button
           type="submit"
           aria-label="Send"
-          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-cta text-white hover:bg-ctahover"
+          disabled={disabled}
+          className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-cta text-white hover:bg-ctahover disabled:opacity-50"
         >
           <Send className="h-[18px] w-[18px]" strokeWidth={2.4} />
         </button>

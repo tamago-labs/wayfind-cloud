@@ -12,8 +12,9 @@ import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
 import SettingsModal from './SettingsModal';
 import { newBotColors, newBotShapes } from '../seed';
-import { backendConfigured, computerAction, provisionComputer, requestComputer } from '@/lib/wayfind-api';
+import { computerAction, provisionComputer } from '@/lib/wayfind-api';
 import { VM_ENDPOINT_KEY, TRANSPORT_EVENT, useTransport } from '@/lib/transport';
+import { ensureComputerStart, refreshComputer, runComputerOp, useComputer } from './useComputer';
 
 const dataClient = generateClient<Schema>();
 
@@ -24,14 +25,10 @@ export default function RosterFooter() {
   const [displayName, setDisplayName] = useState('');
   const [plan, setPlan] = useState('free');
   const [spend, setSpend] = useState<number | null>(null);
-  const [computer, setComputer] = useState<{
-    id: string;
-    provisionStatus?: string | null;
-    endpoint?: string | null;
-    microvmId?: string | null;
-  } | null>(null);
-  const [computerBusy, setComputerBusy] = useState(false);
-  const [computerError, setComputerError] = useState('');
+  // Shared computer lifecycle (lib acts, AppShell gates): status, boot and
+  // ops live in useComputer so the composer/roster can grey out while the
+  // VM isn't ready.
+  const { computer, busy: computerBusy, error: computerError } = useComputer();
   // Transport toggle: local :8080 vs cloud VM endpoint. Shared via
   // lib/transport.ts so the AppShell banner and request layer agree.
   const [transport, setTransport] = useTransport();
@@ -143,33 +140,21 @@ export default function RosterFooter() {
     };
   }, [user?.userId]);
 
-  // Computer row: load once, poll while provisioning. Transport toggle
-  // writes localStorage keys that lib/agent.ts reads per request.
-  const loadComputer = async (silent = false) => {
-    if (!backendConfigured()) return;
-    if (!silent) setComputerError('');
-    try {
-      const { data } = (await requestComputer()) as { data?: typeof computer };
-      if (data) setComputer(data);
-    } catch (err) {
-      if (!silent) setComputerError(err instanceof Error ? err.message : 'Computer status failed');
-    }
-  };
+  // Computer lifecycle: auto-start once per sign-in (new users default to
+  // cloud + boot, see useComputer), poll while provisioning, refresh when
+  // Settings opens so the Computer tab never shows a stale snapshot.
   useEffect(() => {
     if (!user?.userId) return;
-    void loadComputer();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ensureComputerStart(user.userId);
   }, [user?.userId]);
   useEffect(() => {
     if (computer?.provisionStatus !== 'provisioning') return;
-    const t = setInterval(() => void loadComputer(true), 10_000);
+    const t = setInterval(() => void refreshComputer(true), 10_000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computer?.provisionStatus]);
-  // Refresh the row whenever Settings opens so the Computer tab never
-  // shows a stale snapshot (e.g. "suspended" after auto-resume woke the VM).
   useEffect(() => {
-    if (settingsOpen) void loadComputer(true);
+    if (settingsOpen) void refreshComputer(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen]);
   // Persist the VM endpoint whenever we have one, regardless of toggle
@@ -183,20 +168,7 @@ export default function RosterFooter() {
     }
   }, [computer?.endpoint]);
 
-  const runComputerOp = async (op: () => Promise<unknown>) => {
-    if (computerBusy) return;
-    setComputerBusy(true);
-    setComputerError('');
-    try {
-      const { data } = (await op()) as { data?: typeof computer };
-      if (data) setComputer(data);
-      else await loadComputer(true);
-    } catch (err) {
-      setComputerError(err instanceof Error ? err.message : 'Computer op failed');
-    } finally {
-      setComputerBusy(false);
-    }
-  };
+  // (runComputerOp lives in useComputer so AppShell/ComputerTab share it)
 
 
   const initial = (displayName || email).charAt(0).toUpperCase() || 'P';
