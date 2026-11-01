@@ -12,7 +12,7 @@ import BotPanel, { type BotEdits } from './BotPanel';
 import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
-import { answerBotRequest, answerQuestion, decideApproval, getHistory, pollPending, postTask, streamRun, summarizeRole } from '@/lib/agent';
+import { answerBotRequest, answerQuestion, decideApproval, getHistory, isCloudTransport, pollPending, postTask, streamRun, streamRunProgressive, summarizeRole } from '@/lib/agent';
 import { getTransport, TRANSPORT_EVENT } from '@/lib/transport';
 import { isImageProgress, newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
@@ -244,7 +244,14 @@ export default function AppShell() {
           });
         const pollTimer = setInterval(() => void pollPending(runId, { onApproval, onQuestion, onBotRequest }), 2500);
         try {
-          await streamRun(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
+          if (isCloudTransport()) {
+            // Buffered relay: poll the events endpoint ~1/s and render
+            // progressively (carries chunks + approvals + questions +
+            // bot requests, so no separate pending-poll is needed).
+            await streamRunProgressive(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
+          } else {
+            await streamRun(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
+          }
         } finally {
           clearInterval(pollTimer);
         }

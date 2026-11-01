@@ -233,6 +233,13 @@ Recorded 2026-10-31 (golden computer image, Phase 1):
 - Pipeline `scripts/computer-image/`: `01-package-upload` (tsc build + `--omit=dev` stage + S3) → `02-create-image` → `03-run-computer` (manual boot + `/run` identity + cloud chat test)
 - Server hooks (Phase 2, in-image): `/ready` health, `/hooks/run` (keystore 0600 + env + provider-cache reset + workspace pull), `/hooks/suspend|resume|terminate` (S3 sync under `computers/<computerId>/workspace/`, `.wayfind/` never leaves the VM)
 
+Recorded 2026-11-01 (image rebuild: events endpoint + guard fix):
+- Rebuilt same ARN (delete blocked by running VMs → graceful `/hooks/terminate` (S3 push) + `TerminateMicrovm`, then `02-create-image --replace`); still v1.0
+- New route `GET /runs/:id/events?cursor=n` → `{events, nextCursor, done}` (pollable twin of `/stream`, same event shapes) for buffered transports
+- `grounded_search` added to guard `READ_ONLY` (was ask-parking every web search; matches `websearch` intent)
+- Browser→VM direct is structurally impossible: token proxy 403s unauthenticated OPTIONS (no ACAO), honors no query-token — all cloud traffic relays via `wayfind-api /computer/proxy/*`
+- Service caps: `maximumDurationInSeconds` ≤ 28800 (8h); `suspendedDurationSeconds: 300` terminated VMs ~5m after suspend — now 604800 (7d)
+
 ## 9. Guardrails (apply to every phase)
 
 - Nothing user-facing claims a feature before an acceptance test passes

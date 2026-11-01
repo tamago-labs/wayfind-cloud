@@ -675,6 +675,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const streamMatch = pathname.match(/^\/stream\/([A-Za-z0-9-]+)$/);
   if (streamMatch && method === 'GET') return void sse(res, streamMatch[1]);
 
+  // Pollable twin of /stream for buffered transports (cloud API relay):
+  // GET /runs/:id/events?cursor=n -> { events, nextCursor, done }. The
+  // frontend long-polls this ~1/s and renders progressively. Same shapes
+  // as the SSE data lines, so one parser serves both.
+  const eventsMatch = pathname.match(/^\/runs\/([A-Za-z0-9-]+)\/events$/);
+  if (eventsMatch && method === 'GET') {
+    const r = getRun(eventsMatch[1]);
+    if (!r) return void json(res, 404, { error: 'unknown run' });
+    const cursor = Math.max(0, Number(url.searchParams.get('cursor') ?? 0) || 0);
+    return void json(res, 200, { events: r.events.slice(cursor), nextCursor: r.events.length, done: r.done });
+  }
+
   // One cheap model call: compress a user's first message (their bot's job
   // description) into a short role label. No tools, no session.
   if (pathname === '/summarize-role' && method === 'POST') {

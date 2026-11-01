@@ -116,6 +116,49 @@ async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
   });
 }
 
+type RunEvent = { type: string; chunk?: string; agent?: string; output?: string; error?: string } & Record<
+  string,
+  unknown
+>;
+
+/** Shared event dispatch for streamRun and streamRunProgressive. Returns the
+ * updated output; throws on error events. */
+function applyRunEvent(e: RunEvent, handlers: StreamHandlers, output: string): string {
+  if (e.type === 'chunk' && typeof e.chunk === 'string') {
+    output += e.chunk;
+    handlers.onChunk?.(e.chunk);
+  } else if (e.type === 'agent' && typeof e.agent === 'string') {
+    handlers.onAgent?.(e.agent);
+  } else if (e.type === 'approval' && typeof e.approvalId === 'string') {
+    handlers.onApproval?.({
+      approvalId: e.approvalId as string,
+      permission: typeof e.permission === 'string' ? (e.permission as string) : undefined,
+      target: typeof e.target === 'string' ? (e.target as string) : undefined,
+    });
+  } else if (e.type === 'question' && typeof e.qid === 'string' && Array.isArray(e.questions)) {
+    handlers.onQuestion?.({
+      qid: e.qid as string,
+      questions: e.questions as {
+        question: string;
+        header?: string;
+        options: Array<{ label: string; description?: string }>;
+      }[],
+    });
+  } else if (e.type === 'bot_request' && typeof e.bid === 'string' && typeof e.botName === 'string') {
+    handlers.onBotRequest?.({
+      bid: e.bid as string,
+      botName: e.botName as string,
+      botRole: typeof e.botRole === 'string' ? (e.botRole as string) : undefined,
+      botDescription: typeof e.botDescription === 'string' ? (e.botDescription as string) : undefined,
+    });
+  } else if (e.type === 'done') {
+    if (typeof e.output === 'string') output = e.output;
+  } else if (e.type === 'error') {
+    throw new Error(typeof e.error === 'string' ? e.error : 'agent run failed');
+  }
+  return output;
+}
+
 /** Resolve when the run emits done; reject on error/timeout. Ignores `: ping` heartbeats. */
 export async function streamRun(runId: string, handlers: StreamHandlers, timeoutMs = 600_000): Promise<string> {
   const res = await fetch(`${requireAgentBase()}/stream/${runId}`, {
@@ -141,55 +184,78 @@ export async function streamRun(runId: string, handlers: StreamHandlers, timeout
       for (const line of part.split('\n')) {
         const m = line.match(/^data: (.*)$/);
         if (!m) continue; // heartbeat comments etc.
-        let e: { type: string; chunk?: string; agent?: string; output?: string; error?: string } & Record<
-          string,
-          unknown
-        >;
+        let e: RunEvent;
         try {
           e = JSON.parse(m[1]);
         } catch {
           continue;
         }
-        if (e.type === 'chunk' && typeof e.chunk === 'string') {
-          output += e.chunk;
-          handlers.onChunk?.(e.chunk);
-        } else if (e.type === 'agent' && typeof e.agent === 'string') {
-          handlers.onAgent?.(e.agent);
-        } else if (e.type === 'approval' && typeof e.approvalId === 'string') {
-          handlers.onApproval?.({
-            approvalId: e.approvalId as string,
-            permission: typeof e.permission === 'string' ? (e.permission as string) : undefined,
-            target: typeof e.target === 'string' ? (e.target as string) : undefined,
-          });
-        } else if (e.type === 'question' && typeof e.qid === 'string' && Array.isArray(e.questions)) {
-          handlers.onQuestion?.({
-            qid: e.qid as string,
-            questions: e.questions as {
-              question: string;
-              header?: string;
-              options: Array<{ label: string; description?: string }>;
-            }[],
-          });
-        } else if (e.type === 'bot_request' && typeof e.bid === 'string' && typeof e.botName === 'string') {
-          handlers.onBotRequest?.({
-            bid: e.bid as string,
-            botName: e.botName as string,
-            botRole: typeof e.botRole === 'string' ? (e.botRole as string) : undefined,
-            botDescription: typeof e.botDescription === 'string' ? (e.botDescription as string) : undefined,
-          });
-        } else if (e.type === 'done') {
-          if (typeof e.output === 'string') output = e.output;
+        try {
+          output = applyRunEvent(e, handlers, output);
+        } catch (err) {
+          await reader.cancel().catch(() => {});
+          throw err;
+        }
+        if (e.type === 'done') {
           await reader.cancel().catch(() => {});
           return output;
-        } else if (e.type === 'error') {
-          await reader.cancel().catch(() => {});
-          throw new Error(typeof e.error === 'string' ? e.error : 'agent run failed');
         }
       }
     }
   }
   await reader.cancel().catch(() => {});
   throw new Error('agent stream closed before done');
+}
+
+export interface RunEventsPage {
+  events: RunEvent[];
+  nextCursor: number;
+  done: boolean;
+}
+
+/** One page of run events (pollable twin of the SSE stream). */
+export async function getRunEvents(runId: string, cursor: number): Promise<RunEventsPage> {
+  const res = await agentFetch(`/runs/${runId}/events?cursor=${cursor}`);
+  if (!res.ok) throw new Error(`agent /runs/events → ${res.status}`);
+  return (await res.json()) as RunEventsPage;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Progressive run follower for buffered transports (cloud relay): polls the
+ * events endpoint ~1/s and dispatches the same handlers streamRun uses, so
+ * chunks, approvals, questions and bot requests all surface mid-run. Tolerates
+ * up to 3 consecutive fetch failures before giving up. */
+export async function streamRunProgressive(
+  runId: string,
+  handlers: StreamHandlers,
+  opts?: { intervalMs?: number; timeoutMs?: number },
+): Promise<string> {
+  let cursor = 0;
+  let output = '';
+  let failures = 0;
+  const interval = opts?.intervalMs ?? 1000;
+  const deadline = Date.now() + (opts?.timeoutMs ?? 600_000);
+  for (;;) {
+    if (Date.now() > deadline) throw new Error('agent run timed out');
+    let page: RunEventsPage;
+    try {
+      page = await getRunEvents(runId, cursor);
+      failures = 0;
+    } catch (err) {
+      failures += 1;
+      if (failures >= 3) throw err;
+      await sleep(interval);
+      continue;
+    }
+    for (const e of page.events ?? []) {
+      output = applyRunEvent(e, handlers, output);
+      if (e.type === 'done') return output;
+    }
+    cursor = typeof page.nextCursor === 'number' ? page.nextCursor : cursor + (page.events?.length ?? 0);
+    if (page.done) return output;
+    await sleep(interval);
+  }
 }
 
 /** Answer a parked question. The run continues with your answers. */

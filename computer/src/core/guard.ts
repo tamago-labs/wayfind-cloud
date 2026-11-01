@@ -85,7 +85,7 @@ export function decide(rules: Rule[], permission: string, target: string): Actio
  * cards for one "find my pictures" request). Explicit `deny` rules still
  * hold — guarded() throws in execute.
  */
-const READ_ONLY = new Set(['list', 'glob', 'read', 'grep', 'webfetch', 'websearch']);
+const READ_ONLY = new Set(['list', 'glob', 'read', 'grep', 'webfetch', 'websearch', 'grounded_search']);
 
 /**
  * Allowed by default, no card: image generation/editing costs $0.01 per
