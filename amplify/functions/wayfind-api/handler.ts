@@ -143,7 +143,7 @@ export const handler = async (
     if (path.endsWith("/computer/request") && method === "POST") {
       const profile = await ensureProfile(claims);
       const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-      let computer = existing?.[0];
+      let computer = pickComputer(existing);
       if (!computer) {
         const { data: created, errors } = await dataClient.models.Computer.create({
           ownerId,
@@ -157,6 +157,7 @@ export const handler = async (
         }
         computer = created;
       }
+      if (computer) void dedupeComputers(ownerId, computer.id);
       return json(200, { data: computer });
     }
 
@@ -166,7 +167,20 @@ export const handler = async (
     // Awaited inline (boot ~11s + hooks + smoke < 60s, fits the 300s budget).
     if (path.endsWith("/computer/provision") && method === "POST") {
       const profile = await ensureProfile(claims);
-      const computer = await findOrCreateComputer(ownerId, profile.id);
+      let computer = await findOrCreateComputer(ownerId, profile.id);
+      // Self-heal rows whose VM is gone (terminated out-of-band or by the
+      // suspend-window expiry): fall through to a fresh provision.
+      if (computer.microvmId && (computer.provisionStatus === "running" || computer.provisionStatus === "suspended")) {
+        try {
+          if (!(await vmAlive(computer.microvmId))) {
+            await resetStaleRow(computer.id);
+            computer = { ...computer, provisionStatus: "not_provisioned", microvmId: "" };
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return json(502, { error: `computer state check failed: ${msg.slice(0, 200)}` });
+        }
+      }
       if (computer.provisionStatus === "running") return json(200, { data: computer });
       if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
       if (computer.provisionStatus === "suspended") {
@@ -192,9 +206,20 @@ export const handler = async (
         return json(400, { error: "Invalid JSON body" });
       }
       const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-      const computer = computers?.[0];
+      const computer = pickComputer(computers);
+      if (computer && computers && computers.length > 1) void dedupeComputers(ownerId, computer.id);
       if (!computer?.microvmId) return json(404, { error: "no provisioned MicroVM for this account" });
       const microvmId = computer.microvmId;
+      // The VM may be gone (suspend-window expiry, out-of-band delete) while
+      // the row still claims it. Terminate heals silently; resume/suspend say so.
+      if (!(await vmAlive(microvmId))) {
+        await resetStaleRow(computer.id);
+        if (body.action === "terminate") {
+          const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
+          return json(200, { data: updated });
+        }
+        return json(410, { error: "that MicroVM no longer exists - press Start computer for a fresh one" });
+      }
       try {
         if (body.action === "suspend") {
           // Best-effort workspace flush before suspend.
@@ -316,10 +341,14 @@ export const handler = async (
         return json(400, { error: "Invalid JSON body" });
       }
       const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-      const computer = computers?.[0];
+      const computer = pickComputer(computers);
       const microvmId = body.microvmId ?? computer?.microvmId;
       if (!microvmId) {
         return json(404, { error: "no provisioned MicroVM for this account" });
+      }
+      if (microvmId && !(await vmAlive(microvmId))) {
+        if (computer) await resetStaleRow(computer.id);
+        return json(410, { error: "that MicroVM no longer exists - press Start computer for a fresh one" });
       }
       if (computer?.microvmId && microvmId !== computer.microvmId) {
         return json(403, { error: "microvmId does not belong to this account" });
@@ -361,9 +390,69 @@ export const handler = async (
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+type ComputerRow = {
+  id: string;
+  provisionStatus?: string | null;
+  microvmId?: string | null;
+  updatedAt?: string | null;
+};
+
+/** Deterministic pick among an owner's Computer rows. The GSI has no sort
+ * key, so [0] is undefined order — and a create race can leave duplicates.
+ * Prefer the row holding a MicroVM, newest first. */
+function pickComputer<T extends ComputerRow>(rows: T[] | null | undefined): T | undefined {
+  if (!rows || rows.length === 0) return undefined;
+  const active = rows.filter((r) => r.microvmId);
+  const pool = active.length > 0 ? active : [...rows];
+  return [...pool].sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))[0];
+}
+
+/** Best-effort duplicate removal after a pick. */
+async function dedupeComputers(ownerId: string, keepId: string): Promise<void> {
+  try {
+    const { data: rows } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
+    for (const r of rows ?? []) {
+      if (r.id !== keepId) {
+        try {
+          await dataClient.models.Computer.delete({ id: r.id });
+        } catch {
+          // Another invocation may be racing us - the pick stays valid.
+        }
+      }
+    }
+  } catch {
+    // Listing failed - proceed with the picked row.
+  }
+}
+
+/** True when the MicroVM still exists and is resumable/running. */
+async function vmAlive(microvmId: string): Promise<boolean> {
+  try {
+    const res = await microvms.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
+    return res.state !== "TERMINATED" && res.state !== "FAILED";
+  } catch (err) {
+    if (err instanceof Error && err.name.includes("NotFound")) return false;
+    throw err;
+  }
+}
+
+/** Clear a row whose VM is gone so the next Start provisions fresh. */
+async function resetStaleRow(computerId: string): Promise<void> {
+  await dataClient.models.Computer.update({
+    id: computerId,
+    provisionStatus: "not_provisioned",
+    microvmId: "",
+    endpoint: "",
+  });
+}
+
 async function findOrCreateComputer(ownerId: string, profileId: string) {
   const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-  if (existing?.[0]) return existing[0];
+  const picked = pickComputer(existing);
+  if (picked) {
+    if (existing && existing.length > 1) void dedupeComputers(ownerId, picked.id);
+    return picked;
+  }
   const { data: created, errors } = await dataClient.models.Computer.create({
     ownerId,
     userProfileId: profileId,
@@ -429,8 +518,11 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
         egressNetworkConnectors: [
           `arn:aws:lambda:${env.COMPUTER_REGION ?? "ap-southeast-1"}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
         ],
-        idlePolicy: { autoResumeEnabled: true, maxIdleDurationSeconds: 900, suspendedDurationSeconds: 300 },
-        maximumDurationInSeconds: 14_400,
+        // Generous lifetimes for a dev computer: suspend after 15m idle, but
+        // a suspended VM survives 7d (observed: the old 300s value had the
+        // service terminate VMs ~5m after suspend). 7d absolute cap.
+        idlePolicy: { autoResumeEnabled: true, maxIdleDurationSeconds: 900, suspendedDurationSeconds: 604_800 },
+        maximumDurationInSeconds: 604_800,
       }),
     );
     if (!run.microvmId) throw new Error("run-microvm returned no microvmId");
