@@ -239,6 +239,7 @@ Recorded 2026-11-01 (image rebuild: events endpoint + guard fix):
 - `grounded_search` added to guard `READ_ONLY` (was ask-parking every web search; matches `websearch` intent)
 - Browser→VM direct is structurally impossible: token proxy 403s unauthenticated OPTIONS (no ACAO), honors no query-token — all cloud traffic relays via `wayfind-api /computer/proxy/*`
 - Service caps: `maximumDurationInSeconds` ≤ 28800 (8h); `suspendedDurationSeconds: 300` terminated VMs ~5m after suspend — now 604800 (7d)
+- Rebuilt again (server appends unrendered images): runs track `generatedImages` via `GuardOpts.onFileSaved`; completion appends relative `/files/view?path=…` markdown for anything the model failed to echo; frontend `normalizeSrc` resolves relative + loopback URLs to the active transport
 
 ## 9. Guardrails (apply to every phase)
 
