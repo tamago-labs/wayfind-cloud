@@ -736,9 +736,12 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
       ? `${textOut}\n\nSources:\n${sources.map((s) => `- [${s.title}](${s.url})`).join('\n')}`
       : textOut;
   // Generated images are saved to the workspace, but the model does not
-  // reliably echo the tool's markdown — append anything missing so the
-  // image renders in chat instead of landing silently on disk.
-  const missing = runState.generatedImages.filter((p) => !withSources.includes(p));
+  // reliably echo the tool's markdown — it often quotes only the bare
+  // "Saved to generated/…" path, which renders as text. Append a markdown
+  // image for every saved file that isn't already linked as an image.
+  const mdFor = (p: string): string => `/files/view?path=${encodeURIComponent(p)}`;
+  const isLinked = (p: string): boolean => withSources.includes(mdFor(p)) || withSources.includes(`](${p})`);
+  const missing = runState.generatedImages.filter((p) => !isLinked(p));
   const withImages =
     missing.length > 0
       ? `${withSources}\n\n${missing.map((p) => `![generated image](/files/view?path=${encodeURIComponent(p)})`).join('\n')}`
