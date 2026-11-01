@@ -186,6 +186,24 @@ export const handler = async (
       if (computer.provisionStatus === "suspended") {
         return json(409, { error: "computer is suspended - use POST /computer/action {resume}", data: computer });
       }
+      // Converge leftover duplicate rows: dead VMs get cleared (later
+      // dedupe removes the husk); live ones are left alone, never deleted.
+      try {
+        const { data: all } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
+        for (const r of all ?? []) {
+          if (r.id === computer.id || !r.microvmId) continue;
+          try {
+            if (!(await vmAlive(r.microvmId))) {
+              await resetStaleRow(r.id);
+              console.log(`[wayfind-api] cleared stale computer row ${r.id}`);
+            }
+          } catch {
+            // Per-row check failed - leave it for the next call.
+          }
+        }
+      } catch {
+        // Listing failed - provision the picked row anyway.
+      }
       try {
         await provisionComputer(computer.id, ownerId);
         const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
@@ -467,16 +485,26 @@ function pickComputer<T extends ComputerRow>(rows: T[] | null | undefined): T | 
   return [...pool].sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))[0];
 }
 
-/** Best-effort duplicate removal after a pick. */
+/** Best-effort duplicate removal after a pick. Deletion is guarded three
+ * ways so concurrent invocations converge instead of annihilating:
+ * - abort unless the kept row is visible in the fresh list (a keep chosen
+ *   from a stale list must never delete what it cannot see),
+ * - abort on fewer than 2 rows,
+ * - never delete a row holding a microvmId (would orphan a possibly-live,
+ *   still-billing VM — those converge via resetStaleRow instead). */
 async function dedupeComputers(ownerId: string, keepId: string): Promise<void> {
   try {
     const { data: rows } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-    for (const r of rows ?? []) {
-      if (r.id !== keepId) {
+    const pool = rows ?? [];
+    if (pool.length < 2) return;
+    if (!pool.some((r) => r.id === keepId)) return;
+    for (const r of pool) {
+      if (r.id !== keepId && !r.microvmId) {
         try {
           await dataClient.models.Computer.delete({ id: r.id });
+          console.log(`[wayfind-api] deduped empty computer row ${r.id}, kept ${keepId}`);
         } catch {
-          // Another invocation may be racing us - the pick stays valid.
+          // Another invocation won the race - the pick stays valid.
         }
       }
     }
