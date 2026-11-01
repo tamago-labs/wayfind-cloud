@@ -77,6 +77,15 @@ export async function postTask(
   allowedSkills?: string[],
   opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string },
 ): Promise<string> {
+  // The VM reports metered usage to the backend itself; hand it the API
+  // base (the backend can't know its own Function URL). Best-effort: local
+  // dev without a deployed backend simply omits it.
+  let apiUrl: string | undefined;
+  try {
+    apiUrl = apiBaseUrl();
+  } catch {
+    apiUrl = undefined;
+  }
   const res = await fetch(`${requireAgentBase()}/task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await transportAuthHeaders()) },
@@ -90,6 +99,7 @@ export async function postTask(
       ...(opts?.botName ? { botName: opts.botName } : {}),
       ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
       ...(opts?.ownerId ? { ownerId: opts.ownerId } : {}),
+      ...(apiUrl ? { apiUrl } : {}),
     }),
   });
   if (!res.ok) throw new Error(`agent /task → ${res.status}`);

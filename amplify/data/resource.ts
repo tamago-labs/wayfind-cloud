@@ -64,6 +64,10 @@ const schema = a.schema({
       microvmId: a.string(),
       endpoint: a.string(),
       imageVersion: a.string(),
+      // Per-computer usage-report token, minted at provision and injected
+      // via /hooks/run. The VM reports metered calls with this (server-to-
+      // server) since it holds no Cognito identity of its own.
+      usageToken: a.string(),
       requestedAt: a.datetime(),
       decidedAt: a.datetime(),
     })

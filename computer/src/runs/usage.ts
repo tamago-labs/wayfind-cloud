@@ -48,14 +48,20 @@ export async function reportUsage(usage: UsageEvent): Promise<UsageEvent> {
   }
   console.log(`[usage] ${JSON.stringify(usage)}`);
   const base = process.env.WAYFIND_API_URL;
-  const backendRunId = process.env.TASK_RUN_ID;
-  if (!base || !backendRunId) return usage;
+  if (!base) return usage;
+  const usageToken = process.env.USAGE_TOKEN;
   try {
-    await fetch(`${base}/runs/${backendRunId}/usage`, {
+    const res = await fetch(`${base}/runs/${usage.runId}/usage`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...usage, backendRunId }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(usageToken ? { 'X-computer-usage-token': usageToken } : {}),
+      },
+      body: JSON.stringify(usage),
     });
+    if (!res.ok) {
+      console.error(`[usage] post failed: HTTP ${res.status} ${(await res.text()).slice(0, 200)}`);
+    }
   } catch (err) {
     console.error('[usage] post failed:', err instanceof Error ? err.message : err);
   }

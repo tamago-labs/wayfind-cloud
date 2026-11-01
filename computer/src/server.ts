@@ -47,6 +47,9 @@ interface RunHookBody {
   secrets?: Record<string, string>;
   apiUrl?: string;
   taskRunId?: string;
+  /** Per-computer usage-report token (provision-minted, stored on the row).
+   * The VM reports metered calls with it — it holds no Cognito identity. */
+  usageToken?: string;
   workspace?: { bucket?: string; prefix?: string };
 }
 
@@ -58,6 +61,7 @@ async function doRunHook(body: RunHookBody): Promise<{ ok: boolean; initialized:
   }
   if (typeof body.apiUrl === 'string' && body.apiUrl) process.env.WAYFIND_API_URL = body.apiUrl;
   if (typeof body.taskRunId === 'string' && body.taskRunId) process.env.TASK_RUN_ID = body.taskRunId;
+  if (typeof body.usageToken === 'string' && body.usageToken) process.env.USAGE_TOKEN = body.usageToken;
   if (typeof body.ownerId === 'string' && body.ownerId) {
     cloudIdentity = { ...(cloudIdentity ?? {}), ownerId: body.ownerId.slice(0, 128) };
   }
@@ -297,7 +301,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return void json(res, 503, { error: 'computer not initialized — POST /hooks/run first' });
     }
     try {
-      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments, ownerId } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments, ownerId, apiUrl } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
@@ -309,7 +313,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         botName?: string;
         attachments?: string[];
         ownerId?: string;
+        // Frontend-known API base (amplify_outputs): lets usage events
+        // reach the backend without backend self-knowledge of its URL.
+        apiUrl?: string;
       };
+      // Usage reporting needs the API base — refresh from every task (the
+      // frontend always knows it; provision-time injection can't).
+      if (typeof apiUrl === 'string' && apiUrl) process.env.WAYFIND_API_URL = apiUrl;
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
       if (conversationId !== undefined && typeof conversationId !== 'string') {
         return void json(res, 400, { error: 'conversationId must be a string' });
