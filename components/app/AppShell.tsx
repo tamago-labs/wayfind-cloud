@@ -12,7 +12,7 @@ import BotPanel, { type BotEdits } from './BotPanel';
 import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
-import { answerBotRequest, answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
+import { answerBotRequest, answerQuestion, decideApproval, getHistory, pollPending, postTask, streamRun, summarizeRole } from '@/lib/agent';
 import { getTransport, TRANSPORT_EVENT } from '@/lib/transport';
 import { isImageProgress, newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
@@ -181,34 +181,42 @@ export default function AppShell() {
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(user?.userId ? { ownerId: user.userId } : {}),
         });
-        await streamRun(runId, {
-          onChunk: (delta) =>
-            patchTarget((b) => {
-              const msgs = b.msgs.filter((m) => m.t !== 'typing');
-              const last = msgs[msgs.length - 1];
-              if (last && last.t === 'b') msgs[msgs.length - 1] = { t: 'b', x: last.x + delta };
-              else msgs.push({ t: 'b', x: delta });
-              return { ...b, msgs };
-            }),
-          onAgent: (name) =>
-            patchTarget((b) => {
-              const msgs = b.msgs.filter((m) => m.t !== 'typing');
-              const row: Msg = { t: 'tool', x: `${name}` };
-              const last = msgs[msgs.length - 1];
-              if (last && last.t === 'tool') msgs[msgs.length - 1] = row;
-              else msgs.push(row);
-              return { ...b, msgs };
-            }),
-          onQuestion: (q) =>
-            patchTarget((b) => ({
+        // One handler set feeds both the SSE stream and the pending-poll
+        // below, so a parked run surfaces its card even when the stream is
+        // buffered (cloud relay delivers events only at done). Each card is
+        // id-keyed: poll + stream doubles are dropped, not duplicated.
+        const onChunk = (delta: string) =>
+          patchTarget((b) => {
+            const msgs = b.msgs.filter((m) => m.t !== 'typing');
+            const last = msgs[msgs.length - 1];
+            if (last && last.t === 'b') msgs[msgs.length - 1] = { t: 'b', x: last.x + delta };
+            else msgs.push({ t: 'b', x: delta });
+            return { ...b, msgs };
+          });
+        const onAgent = (name: string) =>
+          patchTarget((b) => {
+            const msgs = b.msgs.filter((m) => m.t !== 'typing');
+            const row: Msg = { t: 'tool', x: `${name}` };
+            const last = msgs[msgs.length - 1];
+            if (last && last.t === 'tool') msgs[msgs.length - 1] = row;
+            else msgs.push(row);
+            return { ...b, msgs };
+          });
+        const onQuestion = (q: { qid: string; questions: { question: string; header?: string; options: { label: string; description?: string }[] }[] }) =>
+          patchTarget((b) => {
+            if (b.msgs.some((m) => m.t === 'q' && m.qid === q.qid)) return b;
+            return {
               ...b,
               msgs: [
                 ...b.msgs.filter((m) => m.t !== 'typing'),
                 { t: 'q', qid: q.qid, questions: q.questions },
               ],
-            })),
-          onApproval: (a) =>
-            patchTarget((b) => ({
+            };
+          });
+        const onApproval = (a: { approvalId: string; permission?: string; target?: string }) =>
+          patchTarget((b) => {
+            if (b.msgs.some((m) => m.t === 'ask' && m.approvalId === a.approvalId)) return b;
+            return {
               ...b,
               msgs: [
                 ...b.msgs.filter((m) => m.t !== 'typing'),
@@ -221,16 +229,25 @@ export default function AppShell() {
                   approvalId: a.approvalId,
                 },
               ],
-            })),
-          onBotRequest: (r) =>
-            patchTarget((b) => ({
+            };
+          });
+        const onBotRequest = (r: { bid: string; botName: string; botRole?: string; botDescription?: string }) =>
+          patchTarget((b) => {
+            if (b.msgs.some((m) => m.t === 'botreq' && m.bid === r.bid)) return b;
+            return {
               ...b,
               msgs: [
                 ...b.msgs.filter((m) => m.t !== 'typing'),
                 { t: 'botreq', bid: r.bid, name: r.botName, role: r.botRole, description: r.botDescription },
               ],
-            })),
-        });
+            };
+          });
+        const pollTimer = setInterval(() => void pollPending(runId, { onApproval, onQuestion, onBotRequest }), 2500);
+        try {
+          await streamRun(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
+        } finally {
+          clearInterval(pollTimer);
+        }
         // Run finished — drop any image-progress skeleton rows; the
         // finished image arrives as markdown in the final message.
         patchTarget((b) => ({

@@ -202,6 +202,65 @@ export async function answerQuestion(qid: string, answers: string[][]): Promise<
   return res.ok;
 }
 
+interface PendingApproval {
+  id: string;
+  runId: string;
+  permission: string;
+  target: string;
+}
+
+interface PendingQuestion {
+  id: string;
+  runId: string;
+  questions: Array<{
+    question: string;
+    header?: string;
+    options: Array<{ label: string; description?: string }>;
+  }>;
+}
+
+interface PendingBotRequest {
+  id: string;
+  runId: string;
+  request: { name: string; role?: string; description?: string };
+}
+
+/** Poll the pending-interaction lists for one run and feed the same handlers
+ * the SSE stream uses. The buffered cloud relay delivers stream events only
+ * at done, so a parked run (approval / question / bot request) would
+ * otherwise deadlock the UI into a forever spinner. Filtered to this runId;
+ * harmless when empty. */
+export async function pollPending(
+  runId: string,
+  handlers: Pick<StreamHandlers, 'onApproval' | 'onQuestion' | 'onBotRequest'>,
+): Promise<void> {
+  const [a, q, b] = await Promise.all([
+    agentFetch('/approvals')
+      .then((r) => (r.ok ? r.json() : { approvals: [] }))
+      .catch(() => ({ approvals: [] })),
+    agentFetch('/questions')
+      .then((r) => (r.ok ? r.json() : { questions: [] }))
+      .catch(() => ({ questions: [] })),
+    agentFetch('/bot-requests')
+      .then((r) => (r.ok ? r.json() : { requests: [] }))
+      .catch(() => ({ requests: [] })),
+  ]);
+  for (const p of ((a as { approvals?: PendingApproval[] }).approvals ?? []).filter((p) => p?.runId === runId)) {
+    handlers.onApproval?.({ approvalId: p.id, permission: p.permission, target: p.target });
+  }
+  for (const p of ((q as { questions?: PendingQuestion[] }).questions ?? []).filter((p) => p?.runId === runId)) {
+    handlers.onQuestion?.({ qid: p.id, questions: p.questions });
+  }
+  for (const p of ((b as { requests?: PendingBotRequest[] }).requests ?? []).filter((p) => p?.runId === runId)) {
+    handlers.onBotRequest?.({
+      bid: p.id,
+      botName: p.request.name,
+      botRole: p.request.role,
+      botDescription: p.request.description,
+    });
+  }
+}
+
 /** Resolve a parked bot-creation request. Confirm carries the created bot id (or an error); cancel declines. */
 export async function answerBotRequest(
   bid: string,
