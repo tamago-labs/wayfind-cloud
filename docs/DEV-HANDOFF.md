@@ -6,9 +6,10 @@ without reading chat history. Product truth and phase gates live in
 `docs/PRD.md` (v7). This file is the engineering companion: update it as
 facts land (especially M1 spike results), and tick items off here.
 
-Last updated: 2026-10-29 · Companion to PRD v7
-**AWS Lambda / MicroVM provisioning is done separately by the owner/dev.**
-Nothing in this repo has been run against a real MicroVM yet.
+Last updated: 2026-11-02 · Companion to PRD v7
+**AWS Lambda / MicroVM provisioning runs live in `ap-southeast-1`** (owner's
+account `057386374967`): golden image `wayfind-computer`, provision/suspend/
+resume/terminate + workspace sync all exercised against real MicroVMs — see §8.
 
 ---
 
@@ -18,16 +19,19 @@ Nothing in this repo has been run against a real MicroVM yet.
   (`amplify/auth/resource.ts`). Google `callbackUrls`/`logoutUrls` are
   **localhost-only** — production Google sign-in breaks until real domain
   URLs are added. Known, owner to fix at domain time.
-- **Data (deployed):** 6 models in `amplify/data/resource.ts` —
+- **Data (deployed):** 4 models in `amplify/data/resource.ts` —
   `UserProfile` (plan enum `free|starter|premium|enterprise`,
   `displayName`), `Bot` (`name/role/description/color/shape/status`),
-  `Computer` (gate fields), `Conversation`, `Message`, `CreditLedger`.
-  Owner auth per model + schema-level `allow.resource(wayfindApiFunction,
-  gatekeeper)` for function access.
+  `Computer` (provision lifecycle + `usageToken` for VM server-to-server
+  auth), `CreditLedger` (metered deltas + running balance). No
+  `Conversation`/`Message`/`Skill`/`Run`/`Approval` models — history lives
+  in the VM workspace file, approvals park in VM memory. Owner auth per
+  model + schema-level function access.
 - **App (deployed):** single-page shell (`app/app/page.tsx` →
   `components/app/AppShell.tsx`): DB roster (create/edit/delete Bots),
-  chat UI, approval cards, BotPanel with stub tabs
-  (`TabComputer.tsx`, `TabLibrary.tsx` — placeholders).
+  chat UI (SSE local, pollable-events relay in cloud), approval/question/
+  bot-request cards, BotPanel with real `TabLibrary.tsx` (workspace files;
+  system files hidden) and still-stub `TabComputer.tsx`.
 - **Functions (deployed):** `wayfind-api` (Function URL, Cognito JWT
   verified in handler; routes `/health /me /bots /computer/request
   /chat/message→501`), `gatekeeper` (Computer gate decisions).
@@ -47,15 +51,17 @@ Nothing in this repo has been run against a real MicroVM yet.
 | 2 | Models "Sync models" only flipped local state | `components/landing/Models.tsx` | **Done (M0)**: table (1 included + BYOK·soon). Included-model identity/quota still an open PRD decision |
 | 3 | Landing stated MicroVM computer as existing fact | `components/landing/HowSection.tsx` | **Done (M0)**: "in development / animated preview" framing until M2 |
 | 4 | Pricing tier drift; "Unlimited" unenforced | `components/landing/Pricing.tsx` | **Copy done (M0)**: Starter/Premium/Enterprise-Custom aligned with PRD §4. Enforcement stays a billing-phase item |
-| 5 | Computer/Backup UI are stubs | `BotPanel/TabComputer.tsx`, `TabLibrary.tsx` | M2 (status/backups), M3 (skills/files in Library) |
+| 5 | Computer/Backup UI are stubs | `BotPanel/TabComputer.tsx` (still stub), `TabLibrary.tsx` (**real** since 2026-11 — file list, download, system files hidden) | M2 (status/backups), M3 (skills/files in Library) |
 | 6 | Google sign-in tab promised in-VM browser login | `HowSection.tsx` SignInScreen | **Done (M0)**: tab deleted, replaced with "Backed up & resumable". Replacement is Connect Apps OAuth, not browser login |
 
 ## 3. What we know about Lambda MicroVMs (AWS docs, fetched 2026-10-27)
 
 Source pages: `lambda/latest/dg/microvms-getting-started`,
 `microvms-how-it-works`, `lambda-microvms-guide`. Product/API name is
-**Lambda MicroVMs** (Firecracker underneath), CLI namespace
-`aws lambda-microvms`.
+**Lambda MicroVMs** (Firecracker underneath); SDK package is
+`@aws-sdk/client-lambda-microvms`, but the **IAM namespace is `lambda:`**
+(verified 2026-11-01 via simulate-principal-policy — `lambda-microvms:`
+silently never matches; the CLI model of that era lacks the commands).
 
 **Verified facts (safe to build on):**
 - Image flow: zip (`Dockerfile` + artifacts) in **S3** + managed base
@@ -85,16 +91,24 @@ Source pages: `lambda/latest/dg/microvms-getting-started`,
   burst to 4× baseline billed as active use, nothing while SUSPENDED.
 
 **Not verified — M1 spike must answer (do not quote until then):**
-- Supported **regions** (our backend is `ap-southeast-1`) and quotas.
-- **Maximum run duration** and maximum suspended duration (design assumes
-  a cap exists → S3 checkpoint + relaunch regardless).
-- CPU architecture constraints for images (ARM vs x86).
+- Supported **regions** besides `ap-southeast-1` (works end-to-end) and quotas.
+- CPU architecture constraints for images (ARM vs x86 — builds work with SDK defaults; constraint unknown).
 - Exact per-minute pricing → re-derive the $5 Starter math.
-- Suspend/resume **latency** with the slim real image.
+- Suspend/resume **latency** with the slim real image (hello image: ~10s each way; real-image provision end-to-end ~12s+smoke).
 - Locked-down connector names/ARNs for minimum ingress + allowlisted
   egress; whether shell/SSH connectors exist and should stay disabled.
 - Whether the endpoint suits long streaming responses from the in-VM
-  agent (chunked/SSE behaviour) — affects CLI event streaming design.
+  agent — ANSWERED 2026-11-01: **no**. The token proxy 403s
+  unauthenticated preflights and honors no query-token, so browsers can
+  never talk direct; all cloud traffic relays via
+  `wayfind-api /computer/proxy/*` (buffered) with `GET /runs/:id/events`
+  polling for progressive rendering.
+- Maximum run/suspended durations — ANSWERED 2026-11-01:
+  `maximumDurationInSeconds` hard-capped at 28800 (8h, service-validated);
+  `suspendedDurationSeconds` measures continuous suspension (resets on
+  resume; 7d set ≈ unbounded within the 8h life). A suspend hook returning
+  non-200 TERMINATES the VM instead of suspending — the runtime hook path
+  must never 500.
 
 ## 4. Provisioning checklist (owner/dev-run, separate from this repo)
 
@@ -111,7 +125,7 @@ and record every output in §8 of this file:
    (docs example) → zip → S3 → `create-microvm-image` → poll
    `get-microvm-image` until `CREATED` (check CloudWatch on failure).
 4. `run-microvm` with managed ingress/egress connectors + an idlePolicy
-   (e.g. suspend after 900s idle, suspended max 300s) → auth token →
+   (e.g. suspend after 900s idle, suspended window 604800s) → auth token →
    `curl` the endpoint with `X-aws-proxy-auth`.
 5. Exercise suspend → resume → terminate; time each transition; note
    state after `suspendedDurationSeconds` expires.
@@ -141,16 +155,22 @@ M1 question is slim-image resume latency vs chat UX.
   at `/run` (never baked into the image; rotated server-side), BYOK
   keys are pushed into the keystore through the privileged backend→VM
   channel when the user saves them in settings — never via chat.
-- Streaming: browser opens SSE straight to the VM endpoint with a
-  short-lived port-scoped token minted by `wayfind-api`.
+- Streaming: browsers cannot reach the VM endpoint (token proxy rejects
+  preflights) — all cloud traffic relays via `wayfind-api
+  /computer/proxy/*` (Cognito at the API layer, short-lived VM token
+  minted server-side; SSE buffered, `GET /runs/:id/events?cursor=n`
+  polled ~1/s for progressive rendering).
   `wayfind-api` keeps control plane only: auth, token minting, usage
-  ingest (`POST /runs/:id/usage`), approval relay (browser decision →
+  ingest (`POST /runs/:id/usage`, dual-auth: user bearer or per-computer
+  usage token), presigned sync URLs, approval relay (browser decision →
   VM). Do NOT build a WS relay on Function URLs — they can't do true
   bidirectional WebSocket.
-- Metering: CLI posts usage events after each call; `Run` /
-  `CreditLedger` rows are written from those events. Enforceable
-  because users have no shell of their own; server-side anomaly flags
-  later, not hard gates now.
+- Metering: VM tools report usage events immediately (per-computer
+  `usageToken` from `/hooks/run`, `apiUrl` per `/task`); completions
+  report at done; `CreditLedger` rows carry deltas + running balance.
+  Images are priced ($0.01); chat tokens report quantities but no rates
+  yet, so chat rows are $0.00. Enforceable because users have no shell
+  of their own; server-side anomaly flags later, not hard gates now.
 - Tools exposed to the model: shell (in-VM), filesystem (`/workspace`),
  skills. Tool activity streams to chat as
   transcript events; consequential actions return an **approval
@@ -168,6 +188,16 @@ M1 question is slim-image resume latency vs chat UX.
 
 ## 6. Backup & frontend tracking (M2)
 
+As-built 2026-11-02 (subset of this spec — the rest is still spec):
+suspend/terminate push the workspace to `computers/<computerId>/workspace/`
+via backend-minted presigned URLs (the VM holds no AWS credentials);
+resume/run pull missing-only; `.wayfind/` (keystore) NEVER syncs.
+No `ComputerBackup` rows, no snapshot list/restore UI, no interval timer
+(deferred), no per-user KMS (bucket default encryption only). Keystore
+material lives only in VM memory + per-boot `/hooks/run` injection.
+
+Spec (not yet built):
+
 - Store: S3 bucket (versioning on), prefix per Computer:
   `computers/<computerId>/workspace/`. Sync triggers: `/suspend` hook,
   ~15-min timer while RUNNING, manual `wayfind backup now` / UI button.
@@ -179,9 +209,9 @@ M1 question is slim-image resume latency vs chat UX.
   `/workspace` on next run/resume + `Run` entry noting it), run history
   (task, duration, computer minutes, model credits).
 - Restore must be tested in M2 acceptance: terminate a VM, restore
-  from backup on a fresh one, files intact. Backups contain workspace
-  files including the keystore — so backup buckets are encrypted
-  per-user (KMS); restores rehydrate keys.
+  from backup on a fresh one, files intact. Keystore material NEVER
+  enters backups (excluded from sync); restores re-inject identity +
+  secrets per boot via `/hooks/run`.
 
 ## 7. Near phases — what "cover" realistically means
 
@@ -190,15 +220,20 @@ M1 question is slim-image resume latency vs chat UX.
 | M0 honesty + landing | Models table, Trust→Connectors, Enterprise tier, remove Google-sign-in tab/copy, label/park simulated chat, add prod Google callback URLs note | No backend feature work |
 | **M0 status: DONE 2026-10-27** (`npm run build` green; `/` 150 kB, `/app` 239 kB). Remaining from M0 scope: prod Google callback URLs still localhost-only in `amplify/auth/resource.ts` — needs the real domain from the owner, code change is 2 lines when known. | | |
 | M1 spike | §4 checklist, §8 results table filled, kill/re-scope decision | No product code |
-| M2 Computer v1 | Image+CLI (§5), `computer-manager` Lambda (provision/suspend/resume/meter), gatekeeper→provisioning, backup+panel (§6), direct-in-VM inference + SSE transport | Browser (none in v1); Teach (deferred); routines on Computer |
+| M2 Computer v1 | Image+CLI (§5), provision/suspend/resume/meter in `wayfind-api` (no separate `computer-manager` Lambda — folded into the existing function), gatekeeper→removed (no approval gate), backup+panel (§6 as-built subset), direct-in-VM inference + relayed transport | Browser (none in v1); Teach (deferred); routines on Computer |
 | M3 Skills on the Computer | Skill save/test/approve from CLI sessions, Library tab shows skills/files, routine hooks land | Browser; human-demo recording; takeover UI; group-chat orchestration on Computer |
 | Later | Routines targeting the Computer, Connect Apps (OAuth) tokens brokered to CLI as tools, group chats/handoffs, billing enforcement | Scheduled only when the phase above is proven |
 
 Schema additions when their phase starts (not before): `Skill`,
 `Run` (M2, with first real chat/Computer work), `ComputerBackup` (M2),
 `ConnectedApp` (connectors phase), `MemoryItem`, `Approval`, `Routine`.
+Status 2026-11: none added yet — history lives in the VM workspace file,
+approvals park in VM memory, skills are files + `Bot.skillsEnabled`;
+`Computer` gained lifecycle + `usageToken` fields instead.
 
-Function additions: `computer-manager` (M2), `bot-worker` only if
+Function additions: provision/suspend/resume/meter folded into
+`wayfind-api` (no `computer-manager` — re-evaluate only if the handler
+outgrows its 300s budget), `bot-worker` only if
 non-Computer chat work still needs a long-running Lambda after the
 Computer exists (re-evaluate at M2 — the VM may absorb it),
 `watcher` (routines/connectors phase). No webhook Lambda; webhooks stay
@@ -210,12 +245,14 @@ routes on `wayfind-api`.
 |---|---|---|
 | Region used / available regions | `ap-southeast-1` works end-to-end (create/run/curl/suspend/resume/terminate/delete). Other regions not probed. | 2026-10-29 |
 | Image arch | Hello image used SDK defaults (no `cpuConfigurations` set). No browser in v1 — no Chromium question. | 2026-10-29 |
-| Cold run / resume latency | Hello-world (tiny snapshot): PENDING→RUNNING **10.6s**; explicit suspend **10.5s**; explicit resume→RUNNING **10.2s**; app answered 200 after resume. Slim real image will be slower — re-measure then. | 2026-10-29 |
-| Max run / suspended durations observed | Not hit: test VM capped at `maximumDurationInSeconds: 14400` (4h), `suspendedDurationSeconds: 300` expiry not observed. | 2026-10-29 |
+| Cold run / resume latency | Hello-world (tiny snapshot): PENDING→RUNNING **10.6s**; explicit suspend **10.5s**; explicit resume→RUNNING **10.2s**; app answered 200 after resume. Real image: provision end-to-end (boot + hooks + smoke chat) ~12-60s. | 2026-10-29 / 2026-11-01 |
+| Max run / suspended durations observed | Service caps now known: `maximumDurationInSeconds` ≤ 28800 (8h, validation-enforced); `suspendedDurationSeconds` = continuous suspension window (resets on resume; 7d set). Suspend-hook non-200 → TERMINATE instead of suspending (observed 2026-11-01: hook 500 from S3 push with no VM creds). | 2026-11-01 |
 | Cost: 1h running vs 24h suspended | Not yet — needs a ~24h mostly-suspended observation. | |
 | Connector ARNs used (ingress/egress) | Managed defaults work in `ap-southeast-1`: `arn:aws:lambda:ap-southeast-1:aws:network-connector:aws-network-connector:ALL_INGRESS` + `INTERNET_EGRESS`. | 2026-10-29 |
-| Quota limits hit | None (single tiny VM). Account memory quota for concurrent VMs still unknown. | 2026-10-29 |
+| Quota limits hit | None (single tiny VM at a time; ~15 VMs total, all terminated after tests). Account memory quota for concurrent VMs still unknown. | 2026-11-01 |
 | $5-tier math still holds? (Y/N, new numbers) | Too early — needs real-image resume latency + cost numbers. Slim image (no browser) helps. | |
+| VM auth + sync without VM credentials | VM holds no AWS creds (`new S3Client({})` → nothing). Solved 2026-11-02 with backend-minted presigned PUT/GET URLs (usage-token auth, 25MB/file cap); VM `sync.ts` does HTTPS transfers. Runtime suspend hook hardened to never 500 on push failure. | 2026-11-02 |
+| Usage metering live? | Yes 2026-11-02: tools + completions POST to `/runs/:id/usage` (dual-auth: user bearer or per-computer usage token from `/hooks/run`); `CreditLedger` rows carry deltas + running balance; images priced at $0.01; chat tokens unpriced (no rates yet). | 2026-11-02 |
 
 Provisioning outputs to record here when they exist: artifact bucket,
 build role ARN, image name/ARN + version, region, connector ARNs.
@@ -246,10 +283,11 @@ Recorded 2026-11-01 (image rebuild: events endpoint + guard fix):
 
 - Nothing user-facing claims a feature before an acceptance test passes
   (PRD checkbox rule). Simulated/demo UI must say so on the surface.
-- Secrets via Amplify secrets/Secrets Manager; never env literals,
- never in chat, never in transcripts/logs. Model keys live only in
- the VM keystore + per-user-encrypted backups; connector OAuth tokens
- never enter the VM.
+- Secrets via Amplify secrets; never env literals,
+  never in chat, never in transcripts/logs. Model keys travel per-boot
+  via `/hooks/run` into VM memory; the keystore (`.wayfind/`) never
+  leaves the VM and never enters backups; connector OAuth tokens
+  never enter the VM.
 - Approvals are enforced outside the VM/CLI; a Bot cannot approve
   itself, and memory is never a safety boundary.
 - One Computer per account is shared by all its Bots — anything on it

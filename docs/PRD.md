@@ -3,7 +3,9 @@
 Status: living document. Single tracker for phases, decisions and acceptance
 gates. Update status here as work lands; do not rely on chat history.
 
-Last updated: 2026-10-27 (v7 — MicroVM/Computer build plan + landing fixes)
+Last updated: 2026-11-02 (v7 + post-v7 reality amendments — see Changelog;
+the Computer is live, gatekeeper removed, transport is relayed, metering
+is live; see `docs/DEV-HANDOFF.md` §8 for the verified numbers)
 
 > **Why v6 exists:** v3–v5 planned Wayfind as a dashboard product
 > (stats, approvals page, ledger page, morning-brief page). The owner
@@ -127,14 +129,14 @@ teach-by-demonstration, public Bot template marketplace.
 | Concept | Meaning |
 |---|---|
 | **Bot / Finder** | A named teammate: avatar (Finder mascot), one primary job, own memory + conversations. Data: `Bot` |
-| **Computer** | The account's one cloud computer (MicroVM sandbox), shared by all Bots: files, terminal, logins. Data: `Computer` |
-| **Chat** | A conversation with one Bot (or a group). Messages + tool activity + approval cards + files, in one transcript. Data: `Conversation`, `Message` |
-| **Connect app** | An account-wide connected service (Gmail, Slack…). Tokens on our backend, never in the computer/chat. Data: `ConnectedApp` |
-| **Memory** | Per-Bot durable facts/preferences/summaries; edited by messaging. Data: `Bot.memory` + `MemoryItem` |
-| **Skill** | Saved reusable method: when to use, inputs, steps, validation, output, approval boundaries. Data: `Skill` |
-| **Routine** | A Bot running work on a schedule or event; has run history. Data: `Routine`, `Run` |
-| **Approval** | An inline request in chat to do something consequential. Approved/edited/rejected by the user. Data: `Approval` |
-| **Gatekeeper** | The check before a Computer is provisioned: verified account, one Computer per account, region/capacity, abuse limits. Data: `ComputerRequest` |
+| **Computer** | The account's one cloud computer (MicroVM sandbox), shared by all Bots: files, terminal. No browser in v1. Data: `Computer` (+`usageToken` for VM server-to-server auth) |
+| **Chat** | A conversation with one Bot (or a group). Messages + tool activity + approval cards + files, in one transcript. History lives in the VM workspace file, surfaced per Bot thread (no `Conversation`/`Message` models). |
+| **Connect app** | (Phase 5 — none wired) An account-wide connected service. Tokens on our backend, never in the computer/chat. Planned data: `ConnectedApp` |
+| **Memory** | Per-Bot durable facts/preferences/summaries; edited by messaging. As-built: conversation history per thread (no `Bot.memory`/`MemoryItem` models yet) |
+| **Skill** | Saved reusable method: when to use, inputs, steps, validation, output, approval boundaries. As-built: SKILL.md files + per-Bot allowlist (no `Skill` model) |
+| **Routine** | (Phase 7 — none built) A Bot running work on a schedule or event; has run history. Planned data: `Routine`, `Run` |
+| **Approval** | An inline request in chat to do something consequential. Approved/edited/rejected by the user. As-built: parked in VM memory, no `Approval` model |
+| **Gatekeeper** | REMOVED 2026-11-01. Was the pre-provisioning check; now any signed-in user may provision, one-Computer-per-account enforced in the `wayfind-api` handler. No `ComputerRequest` model. |
 | **Morning brief** | Not a separate product — it is a *default routine + skill* ("Chief of staff") that posts a digest into chat. |
 
 Starter roles (adapted from Grok use-cases to indie operators):
@@ -174,58 +176,69 @@ sign-in story (§10); nothing claims the Computer exists until it does.
 └─────────────────────────┴──────────────────────────┴──────────────────┘
 ```
 
-Routes:
+Routes (as-built 2026-11: single-page `/app` shell — roster + chat +
+BotPanel tabs; no separate `/app/bots|apps|skills|routines|computer`
+routes, those live as panel tabs):
 - `/app` — roster + selected Bot chat (the home; lands on last/first Bot).
-- `/app/bots/[id]` — Bot details: About (name, avatar, job), Memory,
-  Skills, Routines + run history. (Chat stays one click away.)
-- `/app/apps` — Connect apps (account-wide): provider, scopes, status.
-- `/app/skills` — skill library (account-wide, enable per Bot).
-- `/app/routines` — all routines across Bots: schedule/event, owner Bot,
-  last/next run, pause/resume.
-- `/app/computer` — the shared Computer: status, storage, sessions,
-  suspend/resume, reset (danger), gatekeeper state before provisioning.
-- `/app/settings` — account, plan, usage (minutes/credits), danger zone.
+- BotPanel tabs — Details (name/avatar/job), Library (workspace files),
+  Computer (status placeholder), Skills (catalog + per-Bot allowlist),
+  Permissions/Providers (guard rules, model endpoint/key status).
+- Footer profile menu — display name, plan + upgrade link, metered spend,
+  Settings (permissions/providers/skills), sign out.
 
 Approvals and activity history are **not separate top-level pages** —
 approvals live as cards in chat; history is the transcript + routine run
 history (+ account audit view under Settings later if needed).
 
-### Inference inside the Computer (decided v7.2 — supersedes cloud router)
+### Inference inside the Computer (decided v7.2 — supersedes cloud router;
+transport amended 2026-11-01: browsers cannot reach the VM endpoint, so
+streaming relays through `wayfind-api /computer/proxy/*` with progressive
+`GET /runs/:id/events` polling — see DEV-HANDOFF §8)
 
 The agent CLI calls model providers directly from inside the MicroVM,
-Claude-Code-style: skills, MCP servers and a keystore live in
+Claude-Code-style: skills and a keystore live in
 `/workspace`. The included-model key is provisioned at `/run` (never
-baked into the image); BYOK keys are pushed into the keystore by the
-backend when the user saves them in settings — never via chat. There is
-no model relay: streaming goes browser→VM direct (SSE) with short-lived
-port-scoped tokens minted by `wayfind-api`, which keeps control plane
-only (auth, token minting, usage ingest, approval relay). Usage events
-posted by the CLI write the `Run`/`CreditLedger` rows, so every model
-call stays visible/costed in the frontend. (Supersedes the v7 `POST
-/inference` router: it put a billed relay hop on every token for key
-hygiene that keystore scoping + per-user-encrypted backups now cover.)
+baked into the image); BYOK push on settings-save is NOT built — only the
+`/hooks/run` secrets injection exists today. There is no model relay:
+streaming goes browser→API-relay→VM with per-request Cognito auth plus a
+short-lived VM token minted server-side; `wayfind-api` keeps control plane
+only (auth, tokens, usage ingest, presigned sync URLs, approval relay).
+Usage events posted by the VM write `CreditLedger` rows (dual-auth: user
+bearer or per-computer usage token), so metered calls stay visible/costed
+in the frontend; chat tokens are currently unpriced. (Supersedes the v7
+`POST /inference` router: it put a billed relay hop on every token for key
+hygiene that keystore scoping now covers; backups exclude the keystore —
+no per-user encryption exists.)
 
-## 7. Model and agent runtime (xAI seam)
+## 7. Model and agent runtime (as-built 2026-11 — supersedes the xAI seam below)
 
-- `docs.x.ai` exposes the **Grok API**: OpenAI-compatible Responses API
-  (`https://api.x.ai/v1`, e.g. model `grok-4.7`), function calling, web
- search, structured outputs. The CLI treats providers uniformly through
- one model client (OpenAI-compatible; `grok-4.7` as the reference
- "Grok-class" model), plus a cheap model for watchers/routine prep,
- escalation only when a task needs it.
-- Existing seam: `amplify/functions/wayfind-api/config/provider.ts`
- (today LongCat, OpenAI-compatible) moves into the CLI agent as its
- model client; per-Run cost logging is posted back as usage events.
- Only paid APIs, BYOK in the VM keystore — no pooled consumer
- subscriptions.
-- Watchers (RSS/web/app events) are non-LLM pollers; a model wakes only
-  on real change or on schedule. That is what makes routines cheap.
+- As-built providers (no xAI/Grok API integrated): **Modal-hosted
+  Muse Spark** (`meta-models/Muse-Spark-Open-816B-A42B`, chat) and
+  **Meta-direct** (`api.meta.ai`: `muse-image-1.0` generation,
+  `muse-spark-1.3` grounded search/file reading, speech-to-text). The CLI
+  treats providers uniformly through one model client
+  (`computer/src/providers/`), plus cheap paths for image/voice/search.
+  Only paid APIs, keys in the VM keystore via `/hooks/run` — no pooled
+  consumer subscriptions.
+- Watchers (RSS/web/app events) are NOT built; no routine/scheduler
+  exists yet. That is what would make routines cheap — still future.
+- (Historical xAI reference kept below for the Grok-class comparison;
+  do not build against it.)
+
+- Historical reference (not integrated, do not build against it):
+  `docs.x.ai` Grok API (`https://api.x.ai/v1`, e.g. `grok-4.7`) informed
+  the Grok-class comparison only. The old `wayfind-api/config/provider.ts`
+  (LongCat) seam is gone with the v7 router.
+- Watchers (RSS/web/app non-LLM pollers waking the model on change)
+  are NOT built. That is what would make routines cheap — still future.
 
 ## 8. The Computer on Lambda MicroVMs (verified facts)
 
 Sources fetched 2026-10-27: `microvms-getting-started`,
 `microvms-how-it-works`, `lambda-microvms-guide`. Product/API is
-**Lambda MicroVMs** (Firecracker underneath), CLI `lambda-microvms`.
+**Lambda MicroVMs** (Firecracker underneath); SDK package is
+`@aws-sdk/client-lambda-microvms`, **IAM namespace is `lambda:`**
+(verified 2026-11 — `lambda-microvms:` silently never matches).
 
 Verified: image = S3 zip (Dockerfile + artifacts) + managed AL2023 base
 image + IAM build role → `create-microvm-image` builds, starts the app,
@@ -242,38 +255,42 @@ connector names confirmed in the spike).
 
 Consequences for our Computer: the in-VM agent is an HTTP server (task in
 → transcript events/artifacts/approval requests out). Orchestration,
-approvals, connector tokens and metering live **outside** the VM in
-Lambda/AppSync. `/suspend` checkpoints the workspace to S3 so termination
-(max duration / suspended expiry — exact limits are spike questions,
-like regions vs our `ap-southeast-1` backend, quotas and per-minute
-pricing) never loses work. One Computer per account, gated by §5
-Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
+approvals and metering live **outside** the VM in
+Lambda/AppSync (`wayfind-api` — no separate computer-manager was built).
+`/suspend` checkpoints the workspace to S3 (backend-minted presigned URLs
+— the VM holds no AWS creds) so termination (8h absolute max, 7d suspended
+window — both service-enforced, verified 2026-11) never loses work. One
+Computer per account, no approval gate (removed 2026-11-01). "Always-on"
+is never promised: it suspends, and resumes fast.
 
-### 8.1 Computer implementation plan (v7 — what the VM actually contains)
+### 8.1 Computer implementation plan (v7 — what the VM actually contains, as-built 2026-11)
 
-- **Image:** slim managed AL2023 base + Node + the **wayfind CLI agent**
- (`wayfind chat|run|skill|backup|status`, no browser in v1 - v7.3)
- + HTTP agent server on its
-  endpoint. Workspace at `/workspace` (durable; everything else is
-  replaceable). Hooks: `/ready` health · `/run` mint per-Computer
-  identity (never at build time, §8) + pull workspace from S3 ·
-  `/suspend` sync workspace → S3 + write backup record · `/terminate`
-  final sync attempt.
-- **Tools the CLI gives a Bot:** shell, files,
- `skills/<name>/SKILL.md` loader/runner. No other magic: if it isn't a
- tool call in the transcript, it didn't happen.
+- **Image:** slim `node:24-alpine` + the **wayfind agent server**
+  (`chat|run/status/skills` via `computer/src/cli.ts`, no browser in v1)
+  + HTTP agent server on its endpoint. Workspace at `/workspace`
+  (durable; everything else is replaceable). Hooks: `/ready` health ·
+  `/run` mint per-Computer identity (never at build time, §8) + pull
+  workspace from S3 · `/suspend` sync workspace → S3 · `/terminate`
+  final sync attempt. Plus `GET /runs/:id/events` (pollable twin of the
+  SSE stream, for buffered transports).
+- **Tools the agent gives a Bot:** shell, files (list/glob/read/grep),
+  edit, web fetch/search, grounded search, image generate/edit, file
+  reader (images/PDFs), skills loader, questions, task (subagents),
+  message-bot/bot-request (chief only). If it isn't a tool call in the
+  transcript, it didn't happen. Research-variant agents are text-only.
 - **Inference:** direct from the VM (§7 box). The VM holds model keys
  in its keystore (included key provisioned at `/run`, BYOK pushed via
  the privileged backend channel); connector OAuth tokens stay on the
  backend and never enter the VM.
-- **Backup & tracking (frontend-visible, owner-decided):** workspace syncs
-  to an S3-versioned store on suspend, every ~15 min while running, and
-  on demand. Each sync writes a `ComputerBackup` (time, size, trigger,
-  status). The app Computer panel (today's stub `TabComputer`) shows:
-  computer status, **last backup, snapshot list, Restore button**, and
-  run history with per-run cost. Restore = point the Computer at a
-  snapshot and re-sync down; restores are explicit user actions, never
-  automatic.
+- **Backup & tracking (as-built 2026-11; panel UI still stub):**
+  workspace syncs to `computers/<computerId>/workspace/` on suspend and
+  terminate via backend-minted presigned URLs (see §8 — the VM holds no
+  AWS creds); missing-only pull on run. No `ComputerBackup` rows, no
+  snapshot list/restore UI, no interval timer, no per-user encryption.
+  The app Computer panel (today's stub `TabComputer`) is still to build:
+  computer status, last backup, snapshot list, **Restore button**, run
+  history with per-run cost. Restore today = Start a fresh VM (full
+  workspace restore from S3); restores are never automatic mid-run.
 - **Teach: deferred.** v1 has no browser, so there is nothing to
  record. Teach returns post-v1 if/when browser lands.
 - **Dropped:** browser "Sign in with Google" (and any in-VM web sign-in
@@ -283,10 +300,11 @@ Gatekeeper. "Always-on" is never promised: it suspends, and resumes fast.
 - **Provisioning boundary:** creating the S3 artifact bucket, IAM build
   role, MicroVM image and runs (`create-microvm-image`, `run-microvm`, …)
   is **done separately by the owner/dev** following the AWS getting-
-  started guide. This repo owns: the Dockerfile/CLI code, the control-
-  plane Lambdas (`computer-manager`), the schema, and the frontend.
-  Provisioning outputs (image ARN/version, region, connector ARNs) are
-  recorded in `docs/DEV-HANDOFF.md` when they exist.
+  started guide (`docs/DEV-HANDOFF.md` §4 pipeline scripts). This repo
+  owns: the Dockerfile/agent code, the control-plane routes in
+  `wayfind-api` (no separate computer-manager — folded in), the schema,
+  and the frontend. Provisioning outputs (image ARN/version, region,
+  connector ARNs) are recorded in `docs/DEV-HANDOFF.md` when they exist.
 
 ## 9. Brand, mascots, theme (confirmed, shipped)
 
@@ -330,37 +348,28 @@ and `allow.publicApiKey()` CRUD with owner auth; remove the public
 `FunctionUrlAuthType.NONE` wayfind-api URL or put it behind auth; secrets
 to Amplify secrets/Secrets Manager (not env literals).
 
-Models (AppSync/DynamoDB):
-- `UserProfile`: owner, email, region, plan, createdAt.
-- `Computer`: owner (1 per account), status
-  (`not_requested|pending|approved|queued|provisioning|running|suspended|terminated`),
-  microvmId?, imageVersion?, region, gateReason, requestedAt, decidedAt.
-- `Bot`: owner, name, finder (avatar id), job (title), description (the
-  durable "your job is…" brief), status, pinned, section?, computerId.
-- `Conversation`: owner, botId? (null for group), participantBotIds?,
-  title, lastMessageAt. `Message`: conversationId, sender
-  (`user|bot|system`), botId?, content, attachments (S3 refs), toolActivity
-  (JSON), approvalId?, createdAt.
-- `MemoryItem`: botId, kind (`preference|fact|summary|rule`), content,
-  source (`chat|system`), updatedAt.
-- `ConnectedApp`: owner, provider, scopes, status, vaultRef (encrypted
-  token reference only — never raw tokens).
-- `Skill`: owner, name, whenToUse, instructions, outputSpec,
-  approvalBoundaries, enabledBotIds.
-- `Routine`: owner, botId, skillId?, instruction, trigger
-  (schedule cron/tz | event source+rule | webhook), status
-  (`active|paused`), lastRunAt, nextRunAt.
-- `Run`: routineId?/botId, trigger, status, summary, artifacts (S3 refs),
-  cost {computerMinutes, modelCredits}, startedAt, endedAt.
-- `Approval`: conversationId, messageId?, botId, actionType, payloadSummary,
-  status (`pending|approved|edited|rejected`), decidedAt.
+Models (AppSync/DynamoDB — as-built 2026-11: only these four exist;
+everything else below is planned, not built):
+- `UserProfile`: owner, email, displayName, region, plan, createdAt.
+- `Computer`: owner (1 per account), provision lifecycle
+  (`not_provisioned|provisioning|running|suspended|terminated`;
+  `gateStatus` field remains but unenforced), microvmId?, endpoint?,
+  `usageToken` (VM server-to-server auth), imageVersion?, region,
+  requestedAt, decidedAt. No gatekeeper, no `ComputerRequest`.
+- `Bot`: owner, name, color/shape (Finder avatar), role, description
+  (the durable "your job is…" brief), status, pinned?, section?,
+  skillsEnabled? (allowlist), isChiefOfStaff?.
 - `CreditLedger`: owner, delta, reason, balanceAfter, runId?.
+- NOT built: `Conversation`, `Message` (history lives in the VM workspace
+  file), `MemoryItem`, `ConnectedApp`, `Skill` (files + allowlist
+  instead), `Routine`, `Run`, `Approval` (parked in VM memory),
+  `ComputerRequest`.
 
-Gatekeeper Lambda on `Computer` request: 1) verified account, 2) no other
-active Computer, 3) region capacity flag, 4) abuse heuristics → approved
-(provision in Phase 6; before that the Computer shows "approved — opens
-with computer rollout") or queued/rejected with a shown reason. Every
-decision logged (who/when/rule).
+Gatekeeper: REMOVED 2026-11-01 (the Lambda and its decisions are gone).
+Any signed-in user may provision; one-Computer-per-account plus row
+hygiene are enforced in the `wayfind-api` handler itself. The `Computer`
+table keeps an unenforced `gateStatus` field; no `ComputerRequest` model
+was ever created.
 
 ### 11.1 How much we build — inventory (decided 2026-10-27)
 
@@ -375,30 +384,32 @@ instructions/skillFilePath, outputSpec, approvalBoundaries, enabledBotIds),
 `Run` (arrives with the first real chat, not Phase 7), and
 `ComputerBackup` (computerId, s3Version/prefix, sizeBytes, trigger:
 `suspend|interval|manual`, status) for the backup panel in §8.1.
-Current deployed state: the 6 Phase-3 models are live; `Bot` uses
-`role/color/shape` (user mascots), `UserProfile.plan` is
-`free|starter|premium|enterprise`, and schema-level
-`allow.resource(wayfindApiFunction/gatekeeper)` grants the functions data
-access (per-model owner auth unchanged for users).
+Current deployed state (2026-11-02 — supersedes the "6 models" plan):
+4 models live (`UserProfile`, `Bot`, `Computer` +`usageToken`,
+`CreditLedger`); `Bot` uses `role/color/shape` (user mascots) plus
+`description/pinned/section/skillsEnabled/isChiefOfStaff`;
+`UserProfile.plan` is `free|starter|premium|enterprise`; schema-level
+`allow.resource(wayfindApiFunction)` grants the function data access
+(per-model owner auth unchanged for users).
 Plus 1 Amplify Storage (S3) bucket: chat attachments + run artifacts
-(+ workspace checkpoints in Phase 6). Deletes: wallet-era `UserProfile`,
+(+ workspace checkpoints, live since 2026-11). Deletes: wallet-era `UserProfile`,
 `SavedReview`, `PriceSnapshot` models and their publicApiKey auth.
 
-**Functions: 2 exist today → 3 in Phase 3, 5 at full build.**
+**Functions: 1 Amplify function exists (`wayfind-api`, 300s); the rest were
+folded or deferred, not built as separate Lambdas.**
 `price-tracker` is retired (old RWA product).
 
 | # | Function | Status | Trigger / API | Timeout |
 |---|---|---|---|---|
-| 1 | `wayfind-api` | **keep + refactor** | HTTPS Function URL (same pattern as today), Cognito JWT verified in handler | 300s |
-| 2 | `bot-worker` | new (Phase 4) | async invoke from `wayfind-api` / Scheduler — **the long-running agent** | 900s (Lambda max) |
-| 3 | `gatekeeper` | new (Phase 3) | invoked by `wayfind-api` on Computer request (logic also unit-testable standalone) | 30s |
-| 4 | `watcher` | new (Phase 5/7) | fixed schedule `every 15m` (same `schedule:` pattern as price-tracker); non-LLM RSS/web/app-event checks → wakes `bot-worker` only on change | 300s |
-| 5 | `computer-manager` | new (Phase 6) | called by `wayfind-api` + a 1-min metering/status poll schedule; MicroVM run/suspend/resume/terminate | 300s |
+| 1 | `wayfind-api` | **live** | HTTPS Function URL, Cognito JWT verified in handler | 300s |
+| 2 | `bot-worker` | not built — agent loop runs inside the MicroVM; no Lambda clock at all | — | — |
+| 3 | `gatekeeper` | REMOVED 2026-11-01 | — | — |
+| 4 | `watcher` | not built (Phase 5/7) | — | — |
+| 5 | `computer-manager` | not built — provision/suspend/resume/meter are routes in `wayfind-api` | — | — |
 
 No separate webhook function: webhooks are routes on `wayfind-api`.
 No auth-trigger Lambda: `UserProfile` is created on first authenticated
-API call. Each function that touches data gets `allow.resource(...)`
-in the schema (the pattern `priceTracker`/`wayfindApiFunction` use today).
+API call.
 
 ### 11.2 The API — same shape as the current `wayfind-api`
 
@@ -412,43 +423,49 @@ at the AWS layer **only because** every route verifies the JWT itself
 (webhook routes verify provider signatures instead); CORS locked to our
 domain; secrets via Amplify secrets, not env literals.
 
-Routes (v1):
-- `POST /chat/message` {conversationId?, botId, text, attachments?} →
-  creates Message + Run, async-invokes `bot-worker`, returns `202 {runId}`.
-- `GET /chat/stream?runId=` → **response-streaming** Function URL
-  (`awslambda.streamifyResponse`; `lambda-stream` is already a dependency):
-  token/tool-activity stream for the open chat. Durability comes from
-  Messages written by the worker, not from the stream.
-- `POST /runs` {botId, instruction, skillId?} · `GET /runs/:id` ·
- `POST /runs/:id/stop` ("stop now") · `POST /runs/:id/usage`
- (CLI usage events → `Run`/`CreditLedger` rows).
-- `POST /approvals/:id` {decision: approve|edit|reject, editedPayload?} —
-  resumes the waiting worker/Run.
-- `POST /computer/request` · `POST /computer/action` {suspend|resume|reset}
-  (Phase 6 actions; request works from Phase 3 via `gatekeeper`).
-- `POST /routines` / `DELETE /routines/:id` — CRUD side-effects that
-  create/delete EventBridge Scheduler entries targeting `bot-worker`.
-- `POST /webhooks/slack` · `/webhooks/github` · `/webhooks/stripe` —
-  signature-verified, enqueue work, return 200 fast.
+Routes (as-built 2026-11 — AppSync still handles Bot roster reads;
+everything else runs through `wayfind-api`):
+- `POST /computer/request` — get-or-create the caller's Computer row.
+- `POST /computer/provision` — boot the VM (RunMicrovm + identity/secret
+  injection + smoke chat), idempotent-ish with stale-row self-heal.
+- `POST /computer/action` {suspend|resume|terminate} — caller's VM only.
+- `POST /computer/token` — short-lived VM auth token (used by scripts;
+  browser chat goes through the relay instead and never sees it).
+- `ANY /computer/proxy/*` — browser→VM relay (Cognito at this layer,
+  server-minted VM token; SSE buffered, binary-safe).
+- `POST /computer/sync/upload-urls|download-urls` — presigned S3 URLs for
+  workspace sync (usage-token auth; the VM holds no AWS creds).
+- `GET /runs/:id/events` is served by the VM, not the backend (pollable
+  twin of its SSE stream).
+- `POST /runs/:id/usage` — usage events → `CreditLedger` rows (dual-auth:
+  user bearer or per-computer usage token).
+- `POST /chat/message` → honest 501 (chat runs through the VM `/task`
+  path, not the backend).
 - Everything else (Bot CRUD, roster, settings, ledger reads) goes through
   AppSync (`generateClient`) with owner auth — no Lambda needed.
+- NOT built: `/chat/stream`, `/runs`, `/runs/:id/stop`, `/approvals/:id`
+  (approvals live at the VM: `GET /approvals`, `POST /approvals/:id`),
+  `/routines`, `/webhooks/*`.
 
 ### 11.3 Long-running work — how it survives Lambda's limits
 
-Lambda hard limits shape the design (Function URL streaming also caps at
-the function's own timeout, max 15 min; API Gateway would cap at 29s,
+Lambda hard limits shape the design (the relayed SSE is buffered at the
+function's own 300s timeout, max 15 min; API Gateway would cap at 29s,
 which is why we keep the Function-URL pattern):
 
 | Duration | Mechanism |
 |---|---|
-| Chat turn / task < 15 min | `bot-worker` single invocation (900s), `@openai/agents` loop, writes transcript + `Run` progress as it goes |
-| 15 min – ~2 h | Worker checkpoints `Run.state` (Dynamo + S3 artifacts) and **re-invokes itself** with the same `runId` (continuation); user sees one unbroken Run |
-| Hours / interactive | The agent loop runs **inside the Computer** (MicroVM, Phase 6) — no Lambda clock at all; Lambdas only start/stop/meter it |
-| Scheduled / event | EventBridge Scheduler (routines) + `watcher` (15m polls) + webhooks → all funnel into `bot-worker` |
+| Chat turn / task < 5 min | Agent loop runs **inside the Computer** (MicroVM — no Lambda clock at all); browser polls run events ~1/s through the relay |
+| 5 min – 8 h | Same — the VM keeps running; Lambda only relays, starts/stops/meters it |
+| 8 h absolute | MicroVM service cap — VM terminates; next Start provisions fresh with the workspace restored from S3 |
+| Scheduled / event | NOT built (no routines/watcher/webhooks yet) |
 
-Approvals pause a Run by saving state and ending the invocation; the
-`/approvals/:id` call re-invokes the worker to resume — so a Bot can wait
-for a human for days at zero compute cost.
+Approvals pause a run by parking the SDK RunState in VM memory (zero
+compute billed while parked — the VM itself may suspend underneath);
+the frontend polls the pending lists so cards surface even through the
+buffered relay, and the decision POST resumes the run. A Bot can wait
+for a human indefinitely as long as the VM lives (≤8h); parked-then-
+terminated runs do not resume.
 
 ## 12. Phases
 
@@ -469,6 +486,26 @@ real-or-labelled app chat → **M1** MicroVM spike → **M2** Computer v1
 (CLI + direct-in-VM inference + backup panel) → **M3** skills on the Computer (Teach deferred - no browser in v1). Provisioning steps for M1+ are owner/dev-run
 (`docs/DEV-HANDOFF.md`); code lands here phase by phase and is reviewed
 before anything claims it works.
+
+### 12.1 Reality check 2026-11-02 (amends the phases above — structure kept)
+
+- **Computer is live (M2 partial):** provision/suspend/resume/terminate +
+  presigned workspace sync + `CreditLedger` metering all exercised
+  against real MicroVMs (`ap-southeast-1`). Not yet: `TabComputer`
+  status/backup UI, snapshot restore UI, interval auto-push,
+  Repo-Coder-to-PR acceptance run.
+- **Gatekeeper is gone** (removed 2026-11-01) — M2/M6 references to
+  gatekeeper provisioning are historical. Any signed-in user may
+  provision; one-per-account enforced in-handler.
+- **No `computer-manager` / `bot-worker` / `watcher`** — folded into
+  `wayfind-api` routes or not built. Do not plan against those names.
+- **Transport is relayed, not direct SSE** — browser→VM direct is
+  structurally impossible (token-proxy preflight wall); cloud chat polls
+  `GET /runs/:id/events` through `/computer/proxy/*`.
+- **Phase 4 as written (Conversation/Message persistence, bot-worker)
+  is superseded:** history lives in the VM workspace file, the agent
+  loop runs in the VM, metering lands in `CreditLedger` (chat rows
+  currently $0.00 — no per-1M rates yet).
 **M0 status: DONE 2026-10-27** — Models is a table, Trust section is now
 Connectors (+trust strip), Enterprise-Custom tier added, Google-sign-in
 tab replaced by "Backed up & resumable", Computer section framed as
@@ -546,9 +583,11 @@ tokens never appear in chat or the Computer.
   latency + running-vs-suspended cost measured; $5 math re-derived or
   re-priced. Kill/re-scope criteria are written down before M2 starts.
 - **M2 Computer v1:** CLI agent + shell/files/skills (§8.1),
- direct-in-VM inference with keystore + SSE transport (v7.2, no model
- relay), gatekeeper provisioning through `computer-manager`, S3 backup
-  (suspend/interval/manual) + Computer panel: status, last backup,
+  direct-in-VM inference with keystore + SSE transport (v7.2 — transport
+  since amended to API relay, §12.1; gatekeeper removed and
+  computer-manager folded into `wayfind-api`), S3 backup
+  (suspend/interval/manual — as-built: suspend/terminate only, no
+  interval, no snapshot UI) + Computer panel: status, last backup,
   snapshots, restore, run history/minute metering → `CreditLedger`.
   Acceptance: a Repo Coder Bot works an issue to a draft PR on the
   Computer, suspends idle, resumes with state, and its workspace
@@ -566,7 +605,7 @@ runs unattended for a week and posts reviewable output into chat.
 ### Phase 8 — Group chats, handoffs, beta hardening
 Group chats (2–6 Bots, @mentions, one owner per stage), bot→bot async
 handoffs, sections/pin/hide/duplicate in the roster, share-a-Bot template
-links, abuse controls (TTL, egress caps) at the gatekeeper, merchant-of-
+links, abuse controls (TTL, egress caps) in `wayfind-api`, merchant-of-
 record billing + credit enforcement, cohort rollout by region.
 
 ## 13. Open decisions
@@ -580,23 +619,30 @@ record billing + credit enforcement, cohort rollout by region.
  table with 1 included model + BYOK; Enterprise = Custom/talk-to-us;
  backups frontend-visible with snapshot restore.
 - [x] v7.2 owner decision (2026-10-29): VM-first inference — CLI calls
- providers directly from the VM (skills/MCP/keystore inside, Claude-Code-style);
- browser→VM direct SSE with API-minted tokens; no model relay;
- BYOK keys pushed to the VM keystore via the privileged channel;
+  providers directly from the VM (skills/keystore inside, Claude-Code-style);
+  browser→VM direct SSE with API-minted tokens; no model relay;
+  BYOK keys via the privileged channel;
   backups per-user encrypted since the keystore is in the workspace.
+  (2026-11-02: transport is API relay + event polling, not direct SSE —
+  §12.1; BYOK push and per-user backup encryption were never built.)
 - [x] v7.3 owner decision (2026-10-29): no browser in v1 — no Chromium,
  no relay, no browser tooling. Bots work through shell, files, skills
  and Connect Apps. Teach browser-recording deferred post-v1. Slim
  image keeps snapshots small and resume fast.
 - [ ] Included default model identity + quota for the Models table
-      (landing currently says "Muse Glimmer" — confirm or replace).
+      (as-built: Modal-hosted Muse Spark for chat, Meta-direct for
+      image/search/voice — the "Muse Glimmer" label predates this;
+      confirm or replace).
 - [ ] Owner review: landing v3 + app shell (desktop + mobile) — visual gate.
-- [ ] Computer region + MicroVM limits — M1 spike evidence only.
+- [x] Computer region + MicroVM limits — proven `ap-southeast-1`
+  (DEV-HANDOFF §8): 8h absolute max, 7d suspended window, suspend-on-idle,
+  presigned sync. Remaining: per-minute cost numbers.
 - [ ] First connector beyond Slack — from Phase 3 Bot picks (expected
       Gmail/Calendar).
 - [ ] Production Google auth: add real domain callback/logout URLs
       (`amplify/auth/resource.ts` is localhost-only today).
 - [ ] Default model per tier (Grok-class vs cheap) — from Phase 4 costs.
+  (As-built models are Modal/Meta, not Grok — tier split undecided.)
 - [ ] Merchant-of-record before Phase 8 (Paddle/Lemon Squeezy class;
       Stripe region permitting).
 - [ ] Coordinator as a separate Bot template vs group-chat owner pattern —
@@ -618,6 +664,14 @@ record billing + credit enforcement, cohort rollout by region.
   2026-10-27") — re-verify before any public comparison.
 
 ## 15. Changelog
+
+- 2026-11-02: **Computer live (M2 partial), docs corrected.** Provision/
+  suspend/resume/terminate + presigned workspace sync + `CreditLedger`
+  metering verified on real MicroVMs; gatekeeper removed; transport is
+  API relay + event polling (direct browser→VM impossible); `TabLibrary`
+  real, spend line in footer; models actually 4 (`UserProfile`, `Bot`,
+  `Computer`, `CreditLedger`); providers actually Modal-hosted Muse
+  Spark + Meta-direct. §5/§6.2/§7/§8/§8.1/§11/§12 amended — see §12.1.
 
 - 2026-10-29 (v7.3): **No browser in v1** (owner decision): no Chromium,
  no relay, no browser tooling or Teach recording. Bots work through
