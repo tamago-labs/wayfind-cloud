@@ -115,6 +115,11 @@ async function ensureProfile(claims: Claims) {
 
 /* ---------------- handler ---------------- */
 
+// Bump on every backend behavior change so we can verify what's deployed
+// (download the function bundle or hit /health — Amplify keeps stale code
+// live when a build fails, and nothing else surfaces that).
+const BACKEND_REV = "2026-11-01-relay+guarded-dedupe+stale-heal";
+
 export const handler = async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
@@ -125,7 +130,7 @@ export const handler = async (
 
   // Public health check
   if (path.endsWith("/health")) {
-    return json(200, { ok: true, service: "wayfind-api", phase: 3 });
+    return json(200, { ok: true, service: "wayfind-api", phase: 3, rev: BACKEND_REV });
   }
 
   // Everything below requires a verified Cognito token
