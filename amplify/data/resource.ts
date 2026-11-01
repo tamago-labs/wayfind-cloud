@@ -53,7 +53,6 @@ const schema = a.schema({
       userProfileId: a.id(),
       userProfile: a.belongsTo("UserProfile", "userProfileId"),
       gateStatus: a.enum(["pending", "approved", "queued", "rejected"]),
-      gateReason: a.string(),
       provisionStatus: a.enum([
         "not_provisioned",
         "provisioning",

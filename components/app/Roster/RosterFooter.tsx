@@ -28,7 +28,6 @@ export default function RosterFooter() {
     provisionStatus?: string | null;
     endpoint?: string | null;
     microvmId?: string | null;
-    gateReason?: string | null;
   } | null>(null);
   const [computerBusy, setComputerBusy] = useState(false);
   const [computerError, setComputerError] = useState('');
@@ -374,10 +373,8 @@ export default function RosterFooter() {
               </>
             )}
           </div>
-          {(computerError || computer?.gateReason) && (
-            <p className="mt-1 text-[11px] font-semibold text-red-600">
-              {computerError || computer?.gateReason}
-            </p>
+          {computerError && (
+            <p className="mt-1 text-[11px] font-semibold text-red-600">{computerError}</p>
           )}
           {computer?.provisionStatus === 'running' && transport !== 'cloud' && (
             <p className="mt-1 text-[11px] text-heroslate">Your cloud computer is running — flip to cloud to chat with it.</p>

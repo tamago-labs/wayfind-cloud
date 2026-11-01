@@ -472,11 +472,9 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
       decidedAt: new Date().toISOString(),
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     await dataClient.models.Computer.update({
       id: computerId,
       provisionStatus: "terminated",
-      gateReason: `provision failed: ${msg.slice(0, 300)}`,
     });
     throw err;
   }
