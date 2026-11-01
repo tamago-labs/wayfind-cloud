@@ -429,7 +429,10 @@ async function dedupeComputers(ownerId: string, keepId: string): Promise<void> {
 async function vmAlive(microvmId: string): Promise<boolean> {
   try {
     const res = await microvms.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
-    return res.state !== "TERMINATED" && res.state !== "FAILED";
+    // Cast: the service returns TERMINATED/FAILED at runtime, but the SDK's
+    // state union lags behind and a direct literal compare fails tsc.
+    const state = res.state as string | undefined;
+    return state !== "TERMINATED" && state !== "FAILED";
   } catch (err) {
     if (err instanceof Error && err.name.includes("NotFound")) return false;
     throw err;
