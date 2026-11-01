@@ -24,7 +24,9 @@ const FOLLOW_UP_NO = 'Okay, I’ve held it. Tell me what to change.';
 
 const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
 const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
-const GREETING: Msg = { t: 'b', x: 'Hi! Give me my role in your first message: what to do, what never to do, and what to remember.' };
+// Bots already greeted this session (module-level: survives remounts and
+// StrictMode double-effects so the hello run fires exactly once per bot).
+const helloAttempted = new Set<string>();
 
 type ViewBot = SeedBot & { id: string | null; isChiefOfStaff: boolean; skillsEnabled: string[] | null };
 
@@ -107,7 +109,10 @@ export default function AppShell() {
     };
   }, [user?.userId]);
 
-  // Hydrate per-bot history from the agent server (each Bot id is its conversation).
+  // Hydrate per-bot history from the agent server (each Bot id is its
+  // conversation). Empty history + ready computer → the bot introduces
+  // itself with a real model run (once per bot); failures stay silent and
+  // the thread simply starts empty.
   useEffect(() => {
     const b = bots[cur];
     if (!b?.id || b.msgs.length > 0) return;
@@ -115,27 +120,31 @@ export default function AppShell() {
     void (async () => {
       try {
         const history = await getHistory(b.id as string);
-        if (!alive || history.length === 0) return;
-          patchBot(cur, (prev) =>
-            prev.msgs.length > 0
-              ? prev
-                : {
-                    ...prev,
-                    // Drop stale image-progress rows — the skeleton only
-                    // lives while a run is in flight.
-                    msgs: history
-                      .filter((m) => !(m.role === 'tool' && isImageProgress(m.text)))
-                      .map((m) =>
+        if (!alive) return;
+        if (history.length === 0) {
+          greetBot(b);
+          return;
+        }
+        patchBot(cur, (prev) =>
+          prev.msgs.length > 0
+            ? prev
+            : {
+                ...prev,
+                // Drop stale image-progress rows — the skeleton only
+                // lives while a run is in flight.
+                msgs: history
+                  .filter((m) => !(m.role === 'tool' && isImageProgress(m.text)))
+                  .map((m) =>
                     m.role === 'assistant'
                       ? { t: 'b' as const, x: m.text }
                       : m.role === 'tool'
                         ? { t: 'tool' as const, x: m.text }
                         : { t: 'u' as const, x: m.text },
                   ),
-                },
-          );
+              },
+        );
       } catch (err) {
-        // history stays empty; the thread shows the greeting
+        // history stays empty; the thread starts clean
         console.error('[AppShell] history fetch failed:', err);
       }
     })();
@@ -143,7 +152,7 @@ export default function AppShell() {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cur, bots[cur]?.id, bots[cur]?.msgs.length]);
+  }, [cur, bots[cur]?.id, bots[cur]?.msgs.length, gated]);
 
   const bot = bots[cur] ?? bots[0];
 
@@ -158,7 +167,7 @@ export default function AppShell() {
 
   const send = (attachments: string[] = []) => sendText(draft, attachments);
 
-  const sendText = (raw: string, attachments: string[] = []) => {
+  const sendText = (raw: string, attachments: string[] = [], opts?: { hello?: boolean }) => {
     const v = raw.trim();
     if ((!v && attachments.length === 0) || !bot || bot.busy) return;
     const targetIndex = cur;
@@ -168,10 +177,13 @@ export default function AppShell() {
     const targetIsChief = bot.isChiefOfStaff;
     const targetSkills = bot.skillsEnabled;
     setDraft('');
+    // Hello runs are bot-initiated: no user bubble, just the typing row.
+    // Failures stay silent so the thread simply starts empty.
+    const hello = opts?.hello === true;
     patchBot(targetIndex, (b) => ({
       ...b,
       busy: true,
-      msgs: [...b.msgs, { t: 'u', x: v || '(attached files)', ...(attachments.length > 0 ? { files: attachments } : {}) }, { t: 'typing' }],
+      msgs: hello ? [...b.msgs, { t: 'typing' }] : [...b.msgs, { t: 'u', x: v || '(attached files)', ...(attachments.length > 0 ? { files: attachments } : {}) }, { t: 'typing' }],
     }));
     // Stable identity for the whole run: roster inserts shift indices, so
     // every patch below keys on the bot id. Falls back to the captured
@@ -289,10 +301,12 @@ export default function AppShell() {
           }
           return { ...b, busy: false, msgs };
         });
-        // First chat defines the role: AI compresses the user's job
-        // description into a short label and saves it (manual edits win —
-        // this only fires while the role is still empty, never for the chief).
-        if (targetId && !targetRole && !targetIsChief) {
+        // First chat defines the role (skipped for hello runs — the intro
+        // text must never be summarized into a role): AI compresses the
+        // user's job description into a short label and saves it (manual
+        // edits win — this only fires while the role is still empty, never
+        // for the chief).
+        if (targetId && !targetRole && !targetIsChief && !hello) {
           void (async () => {
             try {
               const role = await summarizeRole(v, user?.userId);
@@ -308,14 +322,31 @@ export default function AppShell() {
       } catch (err) {
         // Surface the real failure (e.g. the SDK serialize message) instead
         // of a generic line — the user can paste it straight back for debug.
+        // Hello runs stay silent: a failed intro leaves a clean thread.
         const detail = err instanceof Error ? err.message : String(err);
         console.error('[AppShell] agent send failed:', detail);
         finish((b) => ({
           ...b,
-          msgs: [...b.msgs.filter((m) => m.t !== 'typing'), { t: 'b', x: `That run failed: ${detail.slice(0, 300)}` }],
+          msgs: hello
+            ? [...b.msgs.filter((m) => m.t !== 'typing')]
+            : [...b.msgs.filter((m) => m.t !== 'typing'), { t: 'b', x: `That run failed: ${detail.slice(0, 300)}` }],
         }));
       }
     })();
+  };
+
+  // Bot-initiated hello: one model run per bot, fired when its thread is
+  // known-empty and the computer is ready. Exactly-once via the module set.
+  const greetBot = (b: ViewBot) => {
+    if (!b.id || helloAttempted.has(b.id) || gated) return;
+    helloAttempted.add(b.id);
+    sendText(
+      b.role
+        ? 'Introduce yourself briefly in character and ask for the first task.'
+        : 'Introduce yourself briefly and ask the user to define your role: what to do, what never to do, and what to remember.',
+      [],
+      { hello: true },
+    );
   };
 
   const approve = (msgIndex: number, ok: boolean) => {

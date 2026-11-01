@@ -144,13 +144,16 @@ export default function FolderPickerModal({ files, onClose, onDone }: FolderPick
               Uploaded {files.length} file{files.length === 1 ? '' : 's'} to {where}
             </p>
           ) : (
-            <button
-              onClick={() => void upload()}
-              disabled={phase === 'uploading'}
-              className="w-full rounded-full bg-cta py-2.5 text-sm font-bold text-white hover:bg-ctahover disabled:opacity-60"
-            >
-              {phase === 'uploading' ? 'Uploading…' : `Upload to ${where}`}
-            </button>
+            <>
+              <button
+                onClick={() => void upload()}
+                disabled={phase === 'uploading'}
+                className="w-full rounded-full bg-cta py-2.5 text-sm font-bold text-white hover:bg-ctahover disabled:opacity-60"
+              >
+                {phase === 'uploading' ? 'Uploading…' : `Upload to ${where}`}
+              </button>
+              <p className="mt-2 text-center text-xs text-heroslate">Each file must be 10MB or less.</p>
+            </>
           )}
         </div>
       </div>
