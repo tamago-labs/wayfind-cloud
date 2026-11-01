@@ -1,10 +1,41 @@
 'use client';
 
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github.css';
 import VmImage, { normalizeSrc } from './VmImage';
+
+/** Generated image with tap-to-enlarge. The overlay reuses VmImage (bearer
+ * included) instead of a new-tab link, which could not carry auth in cloud
+ * mode and 401'd. */
+function ZoomableImage({ src, alt, className }: { src: string; alt: string; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const full = normalizeSrc(src);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title="Open full size"
+        className="block w-full cursor-zoom-in"
+      >
+        <VmImage src={full} alt={alt} className={className} />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={alt}
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-50 grid cursor-zoom-out place-items-center bg-navy/80 p-4"
+        >
+          <VmImage src={full} alt={alt} className="max-h-[85vh] w-auto max-w-full rounded-xl object-contain" />
+        </div>
+      )}
+    </>
+  );
+}
 
 /** Markdown for bot messages: GFM + code highlight, compact chat styling. */
 export default function Markdown({ text }: { text: string }) {
@@ -14,20 +45,13 @@ export default function Markdown({ text }: { text: string }) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
         components={{
-          // Generated images render inline; click opens full size.
+          // Generated images render inline; tap opens full size in-app.
           img: ({ src, alt }) => (
-            <a
-              href={typeof src === 'string' ? normalizeSrc(src) : ''}
-              target="_blank"
-              rel="noreferrer"
-              title="Open full size"
-            >
-              <VmImage
-                src={typeof src === 'string' ? src : ''}
-                alt={typeof alt === 'string' ? alt : ''}
-                className="my-2 max-h-96 w-full rounded-xl object-cover"
-              />
-            </a>
+            <ZoomableImage
+              src={typeof src === 'string' ? src : ''}
+              alt={typeof alt === 'string' ? alt : ''}
+              className="my-2 max-h-96 w-full rounded-xl object-cover"
+            />
           ),
         }}
       >

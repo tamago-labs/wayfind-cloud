@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { cloudEndpoint, downloadFileUrl, transportAuthHeaders, viewFileUrl } from '@/lib/agent';
+import { useEffect, useRef, useState } from 'react';
+import { cloudEndpoint, downloadFileUrl, isCloudTransport, transportAuthHeaders, viewFileUrl } from '@/lib/agent';
 
 /** The image tool bakes an absolute server-local URL into its markdown
  * (`http://127.0.0.1:8080/files/view?path=…`) — correct on the VM, dead in
@@ -37,9 +37,12 @@ export function normalizeSrc(src: string): string {
   return downloadFileUrl(p);
 }
 
-/** Image that works on both transports. Absolute URLs stay plain <img> in
- * local mode; in cloud mode the relay needs the auth header, which
- * <img> cannot send — so fetch as blob and render an object URL. */
+/** Image that works on both transports. Local mode uses the plain URL (no
+ * auth needed, no CORS issue for <img>). Cloud mode needs the bearer, which
+ * <img> cannot send — so fetch as blob and render an object URL, keeping
+ * the previous image visible while a new src loads (stale-while-revalidate:
+ * progressive streams change src per chunk, and blanking each time
+ * flashes). Starts blank in cloud so a 401 never paints first. */
 export default function VmImage({
   src,
   alt,
@@ -50,29 +53,71 @@ export default function VmImage({
   className?: string;
 }) {
   const normalized = normalizeSrc(src);
-  const [url, setUrl] = useState(normalized);
+  const cloud = isCloudTransport();
+  const [url, setUrl] = useState<string | null>(cloud ? null : normalized);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const objectUrlRef = useRef<string | null>(null);
   useEffect(() => {
+    setFailed(false);
+    if (!cloud) {
+      setUrl(normalized);
+      return;
+    }
+    if (!/^https?:\/\//.test(normalized)) {
+      setUrl(normalized);
+      return;
+    }
     let alive = true;
-    let objectUrl: string | null = null;
-    setUrl(normalized);
-    if (!/^https?:\/\//.test(normalized)) return;
-    void (async () => {
-      try {
-        const headers = await transportAuthHeaders();
-        if (!alive || Object.keys(headers).length === 0) return;
-        const res = await fetch(normalized, { headers });
-        if (!res.ok || !alive) return;
-        objectUrl = URL.createObjectURL(await res.blob());
-        if (alive) setUrl(objectUrl);
-      } catch {
-        // Fall back to the plain src (local mode / public URL).
-      }
-    })();
+    // Debounce: chunks arrive ~1/s while streaming; fetch once quiet.
+    const t = setTimeout(
+      () =>
+        void (async () => {
+          try {
+            const headers = await transportAuthHeaders();
+            if (!alive) return;
+            const res = await fetch(normalized, { headers });
+            if (!res.ok || !alive) throw new Error(`image ${res.status}`);
+            const objectUrl = URL.createObjectURL(await res.blob());
+            if (!alive) {
+              URL.revokeObjectURL(objectUrl);
+              return;
+            }
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = objectUrl;
+            setUrl(objectUrl);
+          } catch {
+            if (alive) setFailed(true);
+          }
+        })(),
+      600,
+    );
     return () => {
       alive = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      clearTimeout(t);
     };
-  }, [normalized]);
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img src={url} alt={alt} loading="lazy" className={className} />;
+  }, [normalized, cloud, retry]);
+  useEffect(
+    () => () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    },
+    [],
+  );
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt={alt} loading="lazy" className={className} />;
+  }
+  if (failed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setRetry((r) => r + 1)}
+        title="Image failed to load — retry"
+        className={`grid min-h-24 place-items-center rounded-xl bg-slate-100 px-4 py-6 text-xs font-semibold text-heroslate hover:bg-slate-200 ${className ?? ''}`}
+      >
+        Image failed to load — tap to retry
+      </button>
+    );
+  }
+  return <span role="img" aria-label={alt} className={`block min-h-24 animate-pulse rounded-xl bg-slate-100 ${className ?? ''}`} />;
 }
