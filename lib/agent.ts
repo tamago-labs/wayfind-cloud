@@ -17,6 +17,21 @@ function agentBase(): string {
   return cloudEndpoint() ?? AGENT_URL;
 }
 
+/** Request paths go through here: cloud mode without a stored endpoint is a
+ * loud error, never a silent localhost fallback. (Image/file URL builders
+ * keep agentBase() — a broken thumbnail beats a crashed render.) */
+function requireAgentBase(): string {
+  const cloud = cloudEndpoint();
+  if (
+    typeof window !== 'undefined' &&
+    window.localStorage.getItem('wayfind-transport') === 'cloud' &&
+    !cloud
+  ) {
+    throw new Error('Cloud mode is on but no computer endpoint is stored — start your computer first.');
+  }
+  return cloud ?? AGENT_URL;
+}
+
 let vmToken: { token: string; exp: number } | null = null;
 
 /** Proxy-auth headers for the VM endpoint ({} in local mode). Refreshes
@@ -62,7 +77,7 @@ export async function postTask(
   allowedSkills?: string[],
   opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string },
 ): Promise<string> {
-  const res = await fetch(`${agentBase()}/task`, {
+  const res = await fetch(`${requireAgentBase()}/task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await vmAuthHeaders()) },
     body: JSON.stringify({
@@ -95,7 +110,7 @@ export interface StreamHandlers {
 
 /** Same as fetch, but against the active transport with VM auth headers. */
 async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${agentBase()}${path}`, {
+  return fetch(`${requireAgentBase()}${path}`, {
     ...init,
     headers: { ...(init?.headers ?? {}), ...(await vmAuthHeaders()) },
   });
@@ -103,7 +118,7 @@ async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
 
 /** Resolve when the run emits done; reject on error/timeout. Ignores `: ping` heartbeats. */
 export async function streamRun(runId: string, handlers: StreamHandlers, timeoutMs = 600_000): Promise<string> {
-  const res = await fetch(`${agentBase()}/stream/${runId}`, {
+  const res = await fetch(`${requireAgentBase()}/stream/${runId}`, {
     headers: { Accept: 'text/event-stream', ...(await vmAuthHeaders()) },
   });
   if (!res.ok || !res.body) throw new Error(`agent /stream → ${res.status}`);

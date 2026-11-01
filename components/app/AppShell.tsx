@@ -13,6 +13,7 @@ import SkillsPickerModal from './SkillsPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
 import { answerBotRequest, answerQuestion, decideApproval, getHistory, postTask, streamRun, summarizeRole } from '@/lib/agent';
+import { getTransport, TRANSPORT_EVENT } from '@/lib/transport';
 import { isImageProgress, newBotColors, newBotShapes, type Msg, type SeedBot } from './seed';
 
 const dataClient = generateClient<Schema>();
@@ -36,6 +37,19 @@ export default function AppShell() {
   const [botModalOpen, setBotModalOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  // Chat transport mirror of the RosterFooter toggle (local :8080 vs cloud
+  // VM). Re-renders the banner on flip via the shared transport event.
+  const [transport, setTransport] = useState<'local' | 'cloud'>('local');
+  useEffect(() => {
+    setTransport(getTransport());
+    const onChange = () => setTransport(getTransport());
+    window.addEventListener(TRANSPORT_EVENT, onChange);
+    window.addEventListener('storage', onChange);
+    return () => {
+      window.removeEventListener(TRANSPORT_EVENT, onChange);
+      window.removeEventListener('storage', onChange);
+    };
+  }, []);
 
   // Roster comes from the database; seed.ts stays as shape reference only.
   // Re-runs on sign-in and whenever a bot is seeded/changed elsewhere
@@ -554,9 +568,19 @@ export default function AppShell() {
 
         </header>
 
-        <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
-          Local dev — replies come from your computer server. Make sure it’s running on :8080.
-        </div>
+        {transport === 'cloud' ? (
+          <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-emerald-100/70 px-4 py-1.5 text-center text-xs font-bold text-emerald-900">
+            Cloud — replies come from your cloud computer
+            {typeof window !== 'undefined' && window.localStorage.getItem('wayfind-vm-endpoint')
+              ? ` (${new URL(window.localStorage.getItem('wayfind-vm-endpoint') as string).hostname.slice(0, 24)}…)`
+              : ' (no endpoint yet — start it below)'}
+            .
+          </div>
+        ) : (
+          <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
+            Local dev — replies come from your computer server. Make sure it’s running on :8080.
+          </div>
+        )}
         <Thread bot={bot} onApprove={approve} onAnswer={answer} onBotRequest={confirmBotRequest} />
         <Composer
           botName={bot.name}

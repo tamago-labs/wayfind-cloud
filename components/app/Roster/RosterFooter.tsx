@@ -13,6 +13,7 @@ import ProfileModal from './ProfileModal';
 import SettingsModal from './SettingsModal';
 import { newBotColors, newBotShapes } from '../seed';
 import { backendConfigured, computerAction, provisionComputer, requestComputer } from '@/lib/wayfind-api';
+import { VM_ENDPOINT_KEY, TRANSPORT_EVENT, useTransport } from '@/lib/transport';
 
 const dataClient = generateClient<Schema>();
 
@@ -31,10 +32,9 @@ export default function RosterFooter() {
   } | null>(null);
   const [computerBusy, setComputerBusy] = useState(false);
   const [computerError, setComputerError] = useState('');
-  // Transport toggle: local :8080 vs cloud VM endpoint. Persisted.
-  const [transport, setTransport] = useState<'local' | 'cloud'>(() =>
-    typeof window !== 'undefined' && window.localStorage.getItem('wayfind-transport') === 'cloud' ? 'cloud' : 'local',
-  );
+  // Transport toggle: local :8080 vs cloud VM endpoint. Shared via
+  // lib/transport.ts so the AppShell banner and request layer agree.
+  const [transport, setTransport] = useTransport();
   const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   useEffect(() => {
@@ -166,13 +166,16 @@ export default function RosterFooter() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computer?.provisionStatus]);
+  // Persist the VM endpoint whenever we have one, regardless of toggle
+  // position — flipping to cloud before the row loads must not strand chat
+  // on localhost (lib/agent.ts throws loudly instead of falling back).
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem('wayfind-transport', transport);
-    if (transport === 'cloud' && computer?.endpoint) {
-      window.localStorage.setItem('wayfind-vm-endpoint', `https://${computer.endpoint}`);
+    if (computer?.endpoint) {
+      window.localStorage.setItem(VM_ENDPOINT_KEY, `https://${computer.endpoint}`);
+      window.dispatchEvent(new Event(TRANSPORT_EVENT));
     }
-  }, [transport, computer?.endpoint]);
+  }, [computer?.endpoint]);
 
   const runComputerOp = async (op: () => Promise<unknown>) => {
     if (computerBusy) return;
@@ -314,7 +317,7 @@ export default function RosterFooter() {
               Computer · {computer?.provisionStatus ?? '…'}
             </span>
             <button
-              onClick={() => setTransport((t) => (t === 'cloud' ? 'local' : 'cloud'))}
+              onClick={() => setTransport(transport === 'cloud' ? 'local' : 'cloud')}
               title={transport === 'cloud' ? 'Chat via local :8080' : 'Chat via cloud VM'}
               className="rounded-full border border-navy/15 px-2 py-0.5 text-[11px] font-bold text-heroslate hover:border-cta hover:text-cta"
             >

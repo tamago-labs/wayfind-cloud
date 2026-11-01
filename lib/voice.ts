@@ -6,7 +6,11 @@ const LOCAL_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
 function voiceBase(): string {
   if (typeof window === 'undefined') return LOCAL_URL;
   if (window.localStorage.getItem('wayfind-transport') !== 'cloud') return LOCAL_URL;
-  return window.localStorage.getItem('wayfind-vm-endpoint') ?? LOCAL_URL;
+  const endpoint = window.localStorage.getItem('wayfind-vm-endpoint');
+  if (!endpoint) {
+    throw new Error('Cloud mode is on but no computer endpoint is stored — start your computer first.');
+  }
+  return endpoint;
 }
 
 export async function transcribeVoice(wav: Blob, ownerId?: string): Promise<VoiceResult> {
