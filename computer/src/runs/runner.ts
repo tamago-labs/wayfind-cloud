@@ -68,6 +68,9 @@ export interface Run {
   botName?: string;
   /** Cognito sub threaded from POST /task. Per-user metering key. */
   ownerId?: string;
+  /** Workspace images this run saved (generate/edit_image) — completion
+   * appends markdown for any the model failed to echo. */
+  generatedImages: string[];
   stateJson?: string;
   output: string;
   toolCalls: number;
@@ -472,13 +475,19 @@ function auditTo(runId: string, allowedSkills?: string[]): GuardOpts {
     onApproval: (a) => {
       console.log(`[${a.auto ? 'auto-allow' : 'ask-audit'}] run ${runId}: ${a.permission} "${a.target}"`);
     },
+    // Files chat should show (generated images): completion appends
+    // markdown for any the model failed to echo.
+    onFileSaved: (relPath) => {
+      const runState = getRun(runId);
+      if (!runState || runState.generatedImages.includes(relPath)) return;
+      runState.generatedImages.push(relPath);
+    },
     // Metered calls report immediately (works for parked runs too).
     // Observe-only — usage never blocks execution.
     onUsage: (call) => {
       const runState = getRun(runId);
       if (!runState) return;
-      void reportUsage({
-        runId,
+      void reportUsage({        runId,
         model: runState.model,
         provider: runState.provider,
         kind: call.kind,
@@ -726,10 +735,18 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
     sources.length > 0 && !/sources:/i.test(textOut)
       ? `${textOut}\n\nSources:\n${sources.map((s) => `- [${s.title}](${s.url})`).join('\n')}`
       : textOut;
-  runState.output = withSources;
+  // Generated images are saved to the workspace, but the model does not
+  // reliably echo the tool's markdown — append anything missing so the
+  // image renders in chat instead of landing silently on disk.
+  const missing = runState.generatedImages.filter((p) => !withSources.includes(p));
+  const withImages =
+    missing.length > 0
+      ? `${withSources}\n\n${missing.map((p) => `![generated image](/files/view?path=${encodeURIComponent(p)})`).join('\n')}`
+      : withSources;
+  runState.output = withImages;
   runState.toolCalls = toolCallCount(runState.id);
-  runState.events.push({ type: 'done', output: withSources, toolCalls: runState.toolCalls });
-  appendTranscript(runState.id, 'assistant', withSources, runState.parentId, runState.conversationId);
+  runState.events.push({ type: 'done', output: withImages, toolCalls: runState.toolCalls });
+  appendTranscript(runState.id, 'assistant', withImages, runState.parentId, runState.conversationId);
   if (seenTypes) console.log(`[debug] stream event types: ${[...seenTypes].join(', ')}`);
   await reportUsage({
     runId: runState.id,
@@ -737,9 +754,9 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
     provider: runState.provider,
     kind: 'chat',
     unit: 'chars',
-    quantity: withSources.length,
+    quantity: withImages.length,
     durationMs: Date.now() - startedAt,
-    outputChars: withSources.length,
+    outputChars: withImages.length,
     toolCalls: runState.toolCalls,
     tokens: sumResponseTokens(result.rawResponses),
     costPer1M: resolveModel(runState.sel.provider, runState.sel.model).cost,
@@ -842,6 +859,7 @@ function newRunState(opts: StartRunOpts): Run {
     done: false,
     parked: false,
     interruptions: [],
+    generatedImages: [],
     output: '',
     toolCalls: 0,
     startedAt: new Date().toISOString(),

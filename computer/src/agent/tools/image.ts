@@ -118,6 +118,7 @@ export function createImageTools(opts: GuardOpts): Array<ReturnType<typeof tool>
         });
         opts.onUsage?.({ kind: 'image', unit: 'images', quantity: b64.length, detail: a.prompt.slice(0, 120) });
         const rel = saveGenerated(b64[0], format, stemOf());
+        opts.onFileSaved?.(rel);
         return `${viewMarkdown(rel, a.prompt.slice(0, 80))}\n\nSaved to ${rel}. ${usageLine(1)}`;
       },
       opts,
@@ -158,6 +159,7 @@ export function createImageTools(opts: GuardOpts): Array<ReturnType<typeof tool>
         });
         opts.onUsage?.({ kind: 'image', unit: 'images', quantity: b64.length, detail: `edit ${a.image_path}` });
         const rel = saveGenerated(b64[0], format, `${stemOf()}-edit`);
+        opts.onFileSaved?.(rel);
         return `${viewMarkdown(rel, a.prompt.slice(0, 80))}\n\nSaved to ${rel} (edited from ${a.image_path}). ${usageLine(1)}`;
       },
       opts,

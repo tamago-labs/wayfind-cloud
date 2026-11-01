@@ -33,6 +33,10 @@ export interface GuardOpts {
   onApproval?: (approval: ApprovalRequest) => void;
   /** Fired by tools after each metered call; the runner reports it. */
   onUsage?: (call: MeteredCall) => void;
+  /** Fired by tools when they save a workspace file chat should show
+   * (generated/edited images). The runner appends markdown for any the
+   * model failed to echo, so images never silently land only on disk. */
+  onFileSaved?: (relPath: string) => void;
   /** Per-bot skill allowlist. Undefined = all installed skills enabled; [] = none. */
   allowedSkills?: string[];
 }
@@ -53,7 +57,6 @@ const callLogs = new Map<string, Array<{ tool: string; target: string }>>;
  */
 const runGrants = new Map<string, Set<string>>();
 const grantKey = (permission: string, target: string): string => `${permission}::${target}`;
-
 export function grantForRun(runId: string, permission: string, target: string): void {
   const grants = runGrants.get(runId) ?? new Set<string>();
   grants.add(grantKey(permission, target));

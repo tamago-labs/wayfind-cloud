@@ -6,31 +6,35 @@ import { cloudEndpoint, downloadFileUrl, transportAuthHeaders, viewFileUrl } fro
 /** The image tool bakes an absolute server-local URL into its markdown
  * (`http://127.0.0.1:8080/files/view?path=…`) — correct on the VM, dead in
  * the browser (nothing listens on the user's loopback in cloud mode, and it
- * bypasses the relay). Rewrite loopback/VM-host file URLs to the active
- * transport's file URL so they load everywhere. */
+ * bypasses the relay). The runner also appends transport-relative
+ * `/files/view?path=…` links. Rewrite both to the active transport's file
+ * URL so they load everywhere. */
 export function normalizeSrc(src: string): string {
   let u: URL;
   try {
-    u = new URL(src);
+    // Dummy base keeps relative agent paths parseable; only /files/ paths
+    // are ever rewritten, so app routes and text are untouched.
+    u = new URL(src, 'http://placeholder.invalid');
   } catch {
     return src;
   }
-  const vmHost = (() => {
-    try {
-      const ep = cloudEndpoint();
-      return ep ? new URL(ep).hostname : '';
-    } catch {
-      return '';
-    }
-  })();
-  const isAgentHost =
-    u.hostname === '127.0.0.1' || u.hostname === 'localhost' || (vmHost !== '' && u.hostname === vmHost);
-  if (!isAgentHost) return src;
   const p = u.searchParams.get('path');
-  if (!p) return src;
-  if (u.pathname.endsWith('/files/view')) return viewFileUrl(p);
-  if (u.pathname.endsWith('/files/download')) return downloadFileUrl(p);
-  return src;
+  if (!p || (!u.pathname.startsWith('/files/view') && !u.pathname.startsWith('/files/download'))) return src;
+  if (u.host !== 'placeholder.invalid') {
+    const vmHost = (() => {
+      try {
+        const ep = cloudEndpoint();
+        return ep ? new URL(ep).hostname : '';
+      } catch {
+        return '';
+      }
+    })();
+    const isAgentHost =
+      u.hostname === '127.0.0.1' || u.hostname === 'localhost' || (vmHost !== '' && u.hostname === vmHost);
+    if (!isAgentHost) return src;
+  }
+  if (u.pathname.startsWith('/files/view')) return viewFileUrl(p);
+  return downloadFileUrl(p);
 }
 
 /** Image that works on both transports. Absolute URLs stay plain <img> in
