@@ -570,6 +570,13 @@ export const handler = async (
         const msg = err instanceof Error ? err.message : String(err);
         return json(502, { error: `computer unreachable: ${msg.slice(0, 200)}` });
       }
+      // Reconcile-on-traffic: the VM answers only when awake, and our VMs
+      // run with autoResumeEnabled — so a served relay response proves a
+      // "suspended" row has woken up. Heal the status without an extra
+      // GetMicrovm call; fire-and-forget so the relay never blocks on it.
+      if (computer.provisionStatus !== "running") {
+        void dataClient.models.Computer.update({ id: computer.id, provisionStatus: "running" }).catch(() => {});
+      }
       const upType = upstream.headers.get("content-type") ?? "application/octet-stream";
       const buf = Buffer.from(await upstream.arrayBuffer());
       const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);

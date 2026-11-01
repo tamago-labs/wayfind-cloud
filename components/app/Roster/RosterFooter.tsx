@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Cloud, CloudOff, Loader2, LogOut, Pencil, Settings } from 'lucide-react';
+import { LogOut, Pencil, Settings } from 'lucide-react';
 import { useAuthenticator } from '@aws-amplify/ui-react';
 import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
@@ -166,6 +166,12 @@ export default function RosterFooter() {
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computer?.provisionStatus]);
+  // Refresh the row whenever Settings opens so the Computer tab never
+  // shows a stale snapshot (e.g. "suspended" after auto-resume woke the VM).
+  useEffect(() => {
+    if (settingsOpen) void loadComputer(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settingsOpen]);
   // Persist the VM endpoint whenever we have one, regardless of toggle
   // position — flipping to cloud before the row loads must not strand chat
   // on localhost (lib/agent.ts throws loudly instead of falling back).
@@ -309,81 +315,6 @@ export default function RosterFooter() {
           </span>
           </button>
         </div>
-      {backendConfigured() && (
-        <div className="mt-2 rounded-2xl bg-white/70 px-3 py-2 shadow-sm">
-          <div className="flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-navy">
-              {transport === 'cloud' ? <Cloud className="h-3.5 w-3.5" /> : <CloudOff className="h-3.5 w-3.5" />}
-              Computer · {computer?.provisionStatus ?? '…'}
-            </span>
-            <button
-              onClick={() => setTransport(transport === 'cloud' ? 'local' : 'cloud')}
-              title={transport === 'cloud' ? 'Chat via local :8080' : 'Chat via cloud VM'}
-              className="rounded-full border border-navy/15 px-2 py-0.5 text-[11px] font-bold text-heroslate hover:border-cta hover:text-cta"
-            >
-              {transport === 'cloud' ? 'cloud ✓' : 'local'}
-            </button>
-          </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            {(!computer || computer.provisionStatus === 'not_provisioned' || computer.provisionStatus === 'terminated') && (
-              <button
-                onClick={() => void runComputerOp(provisionComputer)}
-                disabled={computerBusy}
-                className="rounded-full bg-navy px-3 py-1 text-xs font-bold text-white hover:bg-[#1c3350] disabled:opacity-50"
-              >
-                {computerBusy ? 'Starting…' : 'Start computer'}
-              </button>
-            )}
-            {computer?.provisionStatus === 'provisioning' && (
-              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-heroslate">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Booting your computer…
-              </span>
-            )}
-            {computer?.provisionStatus === 'running' && (
-              <>
-                <button
-                  onClick={() => void runComputerOp(() => computerAction('suspend'))}
-                  disabled={computerBusy}
-                  className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-navy hover:border-cta hover:text-cta disabled:opacity-50"
-                >
-                  Suspend
-                </button>
-                <button
-                  onClick={() => void runComputerOp(() => computerAction('terminate'))}
-                  disabled={computerBusy}
-                  className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-heroslate hover:text-red-600 disabled:opacity-50"
-                >
-                  Terminate
-                </button>
-              </>
-            )}
-            {computer?.provisionStatus === 'suspended' && (
-              <>
-                <button
-                  onClick={() => void runComputerOp(() => computerAction('resume'))}
-                  disabled={computerBusy}
-                  className="rounded-full bg-navy px-3 py-1 text-xs font-bold text-white hover:bg-[#1c3350] disabled:opacity-50"
-                >
-                  Resume
-                </button>
-                <button
-                  onClick={() => void runComputerOp(() => computerAction('terminate'))}
-                  disabled={computerBusy}
-                  className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-heroslate hover:text-red-600 disabled:opacity-50"
-                >
-                  Terminate
-                </button>
-              </>
-            )}
-          </div>
-          {computerError && (
-            <p className="mt-1 text-[11px] font-semibold text-red-600">{computerError}</p>
-          )}
-          {computer?.provisionStatus === 'running' && transport !== 'cloud' && (
-            <p className="mt-1 text-[11px] text-heroslate">Your cloud computer is running — flip to cloud to chat with it.</p>
-          )}
-        </div>
-      )}
       <ProfileModal
         open={nameOpen}
         onClose={() => setNameOpen(false)}
@@ -391,7 +322,17 @@ export default function RosterFooter() {
         initialName={displayName}
         onSaved={setDisplayName}
       />
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        computer={computer}
+        computerBusy={computerBusy}
+        computerError={computerError}
+        transport={transport}
+        setTransport={setTransport}
+        onProvision={() => void runComputerOp(provisionComputer)}
+        onComputerAction={(action) => void runComputerOp(() => computerAction(action))}
+      />
     </div>
   );
 }

@@ -3,7 +3,10 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { KeyRound, ShieldCheck, Sparkles } from 'lucide-react';
+import { Cloud, KeyRound, ShieldCheck, Sparkles } from 'lucide-react';
+import { backendConfigured } from '@/lib/wayfind-api';
+import type { Transport } from '@/lib/transport';
+import ComputerTab, { type ComputerInfo } from './ComputerTab';
 import {
   getPermissions,
   setPermissions,
@@ -16,7 +19,7 @@ import {
   type InstalledSkill,
 } from '@/lib/agent';
 
-type Tab = 'permissions' | 'providers' | 'skills';
+type Tab = 'computer' | 'permissions' | 'providers' | 'skills';
 
 const ACTIONS = ['allow', 'ask', 'deny'] as const;
 
@@ -267,6 +270,13 @@ function ProvidersTab() {
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  computer: ComputerInfo | null;
+  computerBusy: boolean;
+  computerError: string;
+  transport: Transport;
+  setTransport: (t: Transport) => void;
+  onProvision: () => void;
+  onComputerAction: (action: 'suspend' | 'resume' | 'terminate') => void;
 }
 
 function SkillsTab() {
@@ -357,8 +367,19 @@ function SkillsTab() {
   );
 }
 
-export default function SettingsModal({ open, onClose }: SettingsModalProps) {
-  const [tab, setTab] = useState<Tab>('providers');
+export default function SettingsModal({
+  open,
+  onClose,
+  computer,
+  computerBusy,
+  computerError,
+  transport,
+  setTransport,
+  onProvision,
+  onComputerAction,
+}: SettingsModalProps) {
+  const showComputer = backendConfigured();
+  const [tab, setTab] = useState<Tab>('computer');
 
   useEffect(() => {
     if (!open) return;
@@ -369,7 +390,14 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // Fall back to providers if the computer tab isn't available.
+  useEffect(() => {
+    if (open && !showComputer) setTab('providers');
+    else if (open) setTab('computer');
+  }, [open, showComputer]);
+
   const tabs: Array<{ id: Tab; label: string; icon: typeof ShieldCheck }> = [
+    ...(showComputer ? [{ id: 'computer' as Tab, label: 'Computer', icon: Cloud }] : []),
     { id: 'providers', label: 'Providers', icon: KeyRound },
     { id: 'skills', label: 'Skills', icon: Sparkles },
     { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
@@ -412,7 +440,23 @@ export default function SettingsModal({ open, onClose }: SettingsModalProps) {
               ))}
             </div>
             <div className="min-w-0 flex-1 overflow-y-auto">
-              {tab === 'providers' ? <ProvidersTab /> : tab === 'skills' ? <SkillsTab /> : <PermissionsTab />}
+              {tab === 'computer' && showComputer ? (
+                <ComputerTab
+                  computer={computer}
+                  computerBusy={computerBusy}
+                  computerError={computerError}
+                  transport={transport}
+                  setTransport={setTransport}
+                  onProvision={onProvision}
+                  onAction={onComputerAction}
+                />
+              ) : tab === 'providers' ? (
+                <ProvidersTab />
+              ) : tab === 'skills' ? (
+                <SkillsTab />
+              ) : (
+                <PermissionsTab />
+              )}
             </div>
           </motion.div>
         </motion.div>
