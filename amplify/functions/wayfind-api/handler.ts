@@ -165,6 +165,7 @@ export const handler = async (
       tokens?: { input?: number; output?: number };
       costPer1M?: { input?: number; output?: number };
       costUsd?: number;
+      spendUsd?: number;
       userId?: string;
     } = {};
     try {
@@ -189,8 +190,11 @@ export const handler = async (
     const runId = path.split("/").slice(-2, -1)[0];
     let delta = 0;
     const { tokens, costPer1M } = body;
-    if (typeof body.costUsd === "number") {
-      delta = -Math.abs(body.costUsd);
+    // costUsd (explicit caller claim) or spendUsd (VM-computed) — the VM
+    // reporter sends spendUsd; accept both so priced calls meter.
+    const claimed = typeof body.costUsd === "number" ? body.costUsd : body.spendUsd;
+    if (typeof claimed === "number") {
+      delta = -Math.abs(claimed);
     } else if (
       typeof tokens?.input === "number" &&
       typeof tokens?.output === "number" &&
