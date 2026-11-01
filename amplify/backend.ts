@@ -41,6 +41,8 @@ apiLambda.addToRolePolicy(
       "lambda:TerminateMicrovm",
       "lambda:GetMicrovm",
       "lambda:GetMicrovmImage",
+      // RunMicrovm with connectors requires passing the managed connectors.
+      "lambda:PassNetworkConnector",
     ],
     resources: ["*"], // microvm-ids are per-run; ownership enforced in handler
   }),
