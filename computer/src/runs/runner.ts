@@ -104,6 +104,29 @@ const pendingQuestions = new Map<
   { runId: string; questions: QuestionPrompt[]; requestedAt: string; resolve: (answers: string[][]) => void }
 >();
 
+/** Fired when a top-level run settles (done, error, or parked). Server
+ * uses it for the debounced post-run workspace push, so a platform kill
+ * loses at most one run instead of everything since the last suspend. */
+type SettledListener = () => void;
+const settledListeners = new Set<SettledListener>();
+
+export function onRunSettled(l: SettledListener): () => void {
+  settledListeners.add(l);
+  return () => {
+    settledListeners.delete(l);
+  };
+}
+
+function notifySettled(): void {
+  settledListeners.forEach((l) => {
+    try {
+      l();
+    } catch {
+      // A push scheduler must never break run completion.
+    }
+  });
+}
+
 export function listPendingQuestions(): PendingQuestion[] {
   return [...pendingQuestions.entries()].map(([id, p]) => ({
     id,
@@ -837,6 +860,10 @@ async function executeRun(runState: Run, text: string, opts: StartRunOpts): Prom
     runState.parked = false;
     clearRunLog(runState.id);
     throw err instanceof Error ? err : new Error(msg);
+  } finally {
+    // Top-level only: children settle before their parent, whose push
+    // covers everything.
+    if (!runState.parentId) notifySettled();
   }
 }
 

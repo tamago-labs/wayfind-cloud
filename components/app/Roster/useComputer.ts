@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { backendConfigured, computerAction, provisionComputer, requestComputer } from '@/lib/wayfind-api';
-import { TRANSPORT_KEY, setTransportValue } from '@/lib/transport';
+import { TRANSPORT_KEY, VM_ENDPOINT_KEY, TRANSPORT_EVENT, setTransportValue } from '@/lib/transport';
 import type { ComputerInfo } from './ComputerTab';
 
 interface ComputerStore {
@@ -62,6 +62,13 @@ export async function refreshComputer(silent = false): Promise<void> {
   try {
     const { data } = (await requestComputer()) as { data?: Row };
     set({ computer: toInfo(data) });
+    // Drop the dead endpoint so the banner/agent never display/use a VM
+    // that no longer exists (localStorage outlives the MicroVM).
+    const st = data?.provisionStatus;
+    if ((st === 'not_provisioned' || st === 'terminated') && typeof window !== 'undefined') {
+      window.localStorage.removeItem(VM_ENDPOINT_KEY);
+      window.dispatchEvent(new Event(TRANSPORT_EVENT));
+    }
   } catch (err) {
     if (!silent) set({ error: err instanceof Error ? err.message : 'Computer status failed' });
   }
@@ -81,9 +88,11 @@ export async function runComputerOp(op: () => Promise<unknown>): Promise<void> {
   }
 }
 
-// Auto-start: once per sign-in, in the background. Suspended rows are left
-// alone on purpose — autoResumeEnabled wakes the VM on first traffic and the
-// relay heals the row to running, so no explicit resume is needed.
+// Auto-start: once per sign-in, in the background. Provision is
+// self-healing (running → no-op, dead-but-labeled row → reset + boot), so
+// it replaces the old request-then-conditional which skipped stale rows.
+// Suspended rows 409 — that means usable (autoResumeEnabled wakes the VM on
+// first traffic and the relay heals the row), never a failure.
 let ensuredFor: string | null = null;
 let lastOwnerId: string | null = null;
 
@@ -93,23 +102,32 @@ export function ensureComputerStart(ownerId: string): void {
   if (ensuredFor === ownerId) return;
   ensuredFor = ownerId;
   void (async () => {
+    set({ busy: true, error: '' });
     try {
       // New-user default: no transport choice stored yet → cloud, so the
       // first run boots a VM instead of pointing at a dead :8080.
       if (typeof window !== 'undefined' && window.localStorage.getItem(TRANSPORT_KEY) === null) {
         setTransportValue('cloud');
       }
-      const { data } = (await requestComputer()) as { data?: Row };
-      set({ computer: toInfo(data) });
-      const st = data?.provisionStatus;
       // Respect an explicit local choice — don't bill a cloud boot the user
       // didn't ask for.
-      if (typeof window !== 'undefined' && window.localStorage.getItem(TRANSPORT_KEY) !== 'cloud') return;
-      if (!data || st === 'not_provisioned' || st === 'terminated') {
-        await runComputerOp(provisionComputer);
+      if (typeof window !== 'undefined' && window.localStorage.getItem(TRANSPORT_KEY) !== 'cloud') {
+        await refreshComputer(true);
+        return;
+      }
+      try {
+        const { data } = (await provisionComputer()) as { data?: Row };
+        set({ computer: toInfo(data) });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // 409 suspended = asleep but alive; first traffic wakes it.
+        if (/suspended/i.test(msg)) await refreshComputer(true);
+        else throw err;
       }
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Auto-start failed' });
+    } finally {
+      set({ busy: false });
     }
   })();
 }
@@ -118,6 +136,42 @@ export function ensureComputerStart(ownerId: string): void {
 export function retryComputerStart(): void {
   ensuredFor = null;
   if (lastOwnerId) ensureComputerStart(lastOwnerId);
+}
+
+/** Mid-session death: the relay 410s (row already reset server-side) and
+ * lib/agent.ts broadcasts `wayfind:computer-gone`. Flip immediately so the
+ * UI gates instead of staying green-but-dead, then re-provision debounced —
+ * history hydration fires one 410 per bot, only the first may boot. */
+let goneTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function handleComputerGone(): void {
+  if (typeof window === 'undefined') return;
+  if (window.localStorage.getItem(TRANSPORT_KEY) !== 'cloud') return;
+  const st = snap.computer?.provisionStatus;
+  // Already recovering/booting (or never started) — the normal paths own it.
+  if (snap.busy || st === 'provisioning' || !snap.computer) return;
+  set({ computer: { ...snap.computer, provisionStatus: 'not_provisioned' }, error: '' });
+  window.localStorage.removeItem(VM_ENDPOINT_KEY);
+  window.dispatchEvent(new Event(TRANSPORT_EVENT));
+  if (goneTimer) return;
+  goneTimer = setTimeout(() => {
+    goneTimer = null;
+    const cur = snap.computer?.provisionStatus;
+    if (cur === 'running' || cur === 'suspended' || snap.busy) return;
+    void (async () => {
+      set({ busy: true });
+      try {
+        const { data } = (await provisionComputer()) as { data?: Row };
+        set({ computer: toInfo(data) });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/suspended/i.test(msg)) await refreshComputer(true);
+        else set({ error: msg });
+      } finally {
+        set({ busy: false });
+      }
+    })();
+  }, 3000);
 }
 
 export function resumeComputer(): Promise<void> {

@@ -120,10 +120,17 @@ export interface StreamHandlers {
 
 /** Same as fetch, but against the active transport with VM auth headers. */
 async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
-  return fetch(`${requireAgentBase()}${path}`, {
+  const res = await fetch(`${requireAgentBase()}${path}`, {
     ...init,
     headers: { ...(init?.headers ?? {}), ...(await transportAuthHeaders()) },
   });
+  // The relay 410s when the VM is gone (row already reset server-side; the
+  // VM itself never emits 410). Broadcast so the shared computer store can
+  // flip to reconnecting and auto-reprovision instead of green-but-dead UI.
+  if (res.status === 410 && isCloudTransport() && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('wayfind:computer-gone'));
+  }
+  return res;
 }
 
 type RunEvent = { type: string; chunk?: string; agent?: string; output?: string; error?: string } & Record<

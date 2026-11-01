@@ -14,7 +14,7 @@ import SettingsModal from './SettingsModal';
 import { newBotColors, newBotShapes } from '../seed';
 import { computerAction, provisionComputer } from '@/lib/wayfind-api';
 import { VM_ENDPOINT_KEY, TRANSPORT_EVENT, useTransport } from '@/lib/transport';
-import { ensureComputerStart, refreshComputer, runComputerOp, useComputer } from './useComputer';
+import { ensureComputerStart, handleComputerGone, refreshComputer, runComputerOp, useComputer } from './useComputer';
 
 const dataClient = generateClient<Schema>();
 
@@ -157,6 +157,13 @@ export default function RosterFooter() {
     if (settingsOpen) void refreshComputer(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsOpen]);
+  // Mid-session VM death: lib/agent.ts broadcasts on relay 410s — flip to
+  // reconnecting and auto-reprovision (debounced in the handler).
+  useEffect(() => {
+    const onGone = () => handleComputerGone();
+    window.addEventListener('wayfind:computer-gone', onGone);
+    return () => window.removeEventListener('wayfind:computer-gone', onGone);
+  }, []);
   // Persist the VM endpoint whenever we have one, regardless of toggle
   // position — flipping to cloud before the row loads must not strand chat
   // on localhost (lib/agent.ts throws loudly instead of falling back).

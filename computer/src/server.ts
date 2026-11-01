@@ -12,7 +12,8 @@ import { loadCatalog, resolveApiKey, clearProviderCache } from './providers/prov
 import { writeKey } from './providers/keystore.js';
 import { pullWorkspace, pushWorkspace, type SyncCtx } from './cloud/sync.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
-import { getRun, getHistory, listPendingApprovals, listPendingBotRequests, listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun } from './runs/runner.js';
+import { getRun, getHistory, listPendingApprovals, listPendingBotRequests,
+  listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun, onRunSettled } from './runs/runner.js';
 import { reportUsage } from './runs/usage.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
@@ -812,4 +813,23 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 });
 server.listen(PORT, () => {
   console.log(`wayfind agent listening on :${PORT} (workspace ${WORKSPACE_DIR})`);
+});
+
+// Post-run workspace push (trailing debounce): a platform kill loses at
+// most one run instead of everything since the last suspend, and it keeps
+// the suspend-hook flush tiny so the hook beats its timeout.
+let postRunPushTimer: NodeJS.Timeout | null = null;
+onRunSettled(() => {
+  if (postRunPushTimer) clearTimeout(postRunPushTimer);
+  postRunPushTimer = setTimeout(() => {
+    postRunPushTimer = null;
+    const ctx = syncCtx();
+    if (!ctx) return;
+    void pushWorkspace(ctx)
+      .then(({ pushed, unchanged }) => {
+        if (pushed > 0) console.log(`[sync] post-run push: ${pushed} file(s), ${unchanged} unchanged`);
+      })
+      .catch((err) => console.error('[sync] post-run push failed:', err instanceof Error ? err.message : err));
+  }, 30_000);
+  postRunPushTimer.unref?.();
 });
