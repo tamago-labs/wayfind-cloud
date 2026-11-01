@@ -243,25 +243,35 @@ export default function AppShell() {
             };
           });
         const pollTimer = setInterval(() => void pollPending(runId, { onApproval, onQuestion, onBotRequest }), 2500);
+        let finalOutput = '';
         try {
           if (isCloudTransport()) {
             // Buffered relay: poll the events endpoint ~1/s and render
             // progressively (carries chunks + approvals + questions +
             // bot requests, so no separate pending-poll is needed).
-            await streamRunProgressive(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
+            finalOutput = await streamRunProgressive(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
           } else {
-            await streamRun(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
+            finalOutput = await streamRun(runId, { onChunk, onAgent, onQuestion, onApproval, onBotRequest });
           }
         } finally {
           clearInterval(pollTimer);
         }
-        // Run finished — drop any image-progress skeleton rows; the
-        // finished image arrives as markdown in the final message.
-        patchTarget((b) => ({
-          ...b,
-          busy: false,
-          msgs: b.msgs.filter((m) => !(m.t === 'tool' && isImageProgress(m.x))),
-        }));
+        // Run finished — the returned output is authoritative: the server
+        // appends anything the streamed chunks missed (unrendered generated
+        // images, Sources block). Sync the last bot message to it, then drop
+        // any image-progress skeleton rows.
+        patchTarget((b) => {
+          const msgs = b.msgs.filter((m) => !(m.t === 'tool' && isImageProgress(m.x)));
+          if (finalOutput) {
+            const idx = msgs.map((m) => m.t).lastIndexOf('b');
+            if (idx >= 0 && msgs[idx].t === 'b' && msgs[idx].x !== finalOutput) {
+              msgs[idx] = { t: 'b', x: finalOutput };
+            } else if (idx < 0) {
+              msgs.push({ t: 'b', x: finalOutput });
+            }
+          }
+          return { ...b, busy: false, msgs };
+        });
         // First chat defines the role: AI compresses the user's job
         // description into a short label and saves it (manual edits win —
         // this only fires while the role is still empty, never for the chief).
