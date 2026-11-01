@@ -523,9 +523,11 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
         ],
         // Generous lifetimes for a dev computer: suspend after 15m idle, but
         // a suspended VM survives 7d (observed: the old 300s value had the
-        // service terminate VMs ~5m after suspend). 7d absolute cap.
+        // service terminate VMs ~5m after suspend). Absolute cap is 8h
+        // (service max for maximumDurationInSeconds) - the workspace restores
+        // from S3 on the next provision, so expiry is friction, not loss.
         idlePolicy: { autoResumeEnabled: true, maxIdleDurationSeconds: 900, suspendedDurationSeconds: 604_800 },
-        maximumDurationInSeconds: 604_800,
+        maximumDurationInSeconds: 28_800,
       }),
     );
     if (!run.microvmId) throw new Error("run-microvm returned no microvmId");
