@@ -258,7 +258,7 @@ export default function RosterFooter() {
                         Upgrade
                       </Link>
                     </span>
-                    {spend !== null && spend > 0 && (
+                    {spend !== null && (
                       <span className="mt-0.5 block text-xs text-heroslate" title="Metered API spend this account has used">
                         Usage ${spend.toFixed(spend < 1 ? 3 : 2)}
                       </span>
