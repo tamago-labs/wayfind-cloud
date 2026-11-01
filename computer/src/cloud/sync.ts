@@ -1,13 +1,18 @@
-// Workspace S3 sync for cloud suspend/resume/terminate hooks.
-// Pushes workspace files to computers/<computerId>/workspace/ on suspend,
-// pulls missing files back on run/resume. Secrets NEVER sync: .wayfind/
-// (keystore) stays on the VM — identity is re-injected at every /run.
-import { ListObjectsV2Command, PutObjectCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+// Workspace sync for cloud suspend/resume/terminate hooks.
+//
+// The VM holds no AWS credentials, so all bytes move over HTTPS with
+// short-lived presigned URLs minted by the backend (server-to-server auth
+// via the per-computer usage token). Push uploads new/changed files on
+// suspend/terminate; pull restores missing files on run/resume. Secrets
+// NEVER sync: .wayfind/ (keystore) stays on the VM — identity is
+// re-injected at every /run. Per-file cap 25MB (buffered PUTs).
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { WORKSPACE_DIR } from '../core/config.js';
 
 const ROOT = resolve(WORKSPACE_DIR);
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_FILES = 2000;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -22,61 +27,86 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-function keyFor(prefix: string, full: string): string {
-  return `${prefix.replace(/\/+$/, '')}/${relative(ROOT, full).split(sep).join('/')}`;
+function relOf(full: string): string {
+  return relative(ROOT, full).split(sep).join('/');
 }
 
-async function bodyToBuffer(body: unknown): Promise<Buffer> {
-  const stream = body as AsyncIterable<Uint8Array>;
-  const chunks: Uint8Array[] = [];
-  for await (const c of stream) chunks.push(c);
-  return Buffer.concat(chunks);
+export interface SyncCtx {
+  apiBase: string;
+  token: string;
+  computerId: string;
 }
 
-export async function pushWorkspace(bucket: string, prefix: string): Promise<{ pushed: number; bytes: number }> {
-  const s3 = new S3Client({});
+async function syncFetch(ctx: SyncCtx, route: string, body: unknown): Promise<Response> {
+  const res = await fetch(`${ctx.apiBase}/computer/sync/${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-computer-usage-token': ctx.token },
+    body: JSON.stringify({ computerId: ctx.computerId, ...(body as Record<string, unknown>) }),
+  });
+  if (!res.ok) {
+    throw new Error(`sync/${route} → ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  return res;
+}
+
+export async function pushWorkspace(ctx: SyncCtx): Promise<{ pushed: number; bytes: number; skippedLarge: number }> {
   const files = existsSync(ROOT) ? walk(ROOT) : [];
+  const entries: Array<{ path: string; size: number; full: string }> = [];
+  let skippedLarge = 0;
+  for (const full of files.slice(0, MAX_FILES)) {
+    const st = statSync(full);
+    if (st.size > MAX_FILE_BYTES) {
+      skippedLarge += 1;
+      continue;
+    }
+    entries.push({ path: relOf(full), size: st.size, full });
+  }
+  const byPath = new Map(entries.map((e) => [e.path, e]));
+  const urlRes = await syncFetch(ctx, 'upload-urls', {
+    files: entries.map(({ path, size }) => ({ path, size })),
+  });
+  const { urls } = (await urlRes.json()) as { urls?: Record<string, string> };
   let pushed = 0;
   let bytes = 0;
-  for (const full of files) {
-    const st = statSync(full);
-    if (st.size > 100 * 1024 * 1024) continue; // sanity cap per file
-    await s3.send(
-      new PutObjectCommand({ Bucket: bucket, Key: keyFor(prefix, full), Body: createReadStream(full) }),
-    );
+  for (const [path, url] of Object.entries(urls ?? {})) {
+    const entry = byPath.get(path);
+    if (!entry) continue;
+    // Re-check size at upload time (file may have changed since listing).
+    if (statSync(entry.full).size > MAX_FILE_BYTES) {
+      skippedLarge += 1;
+      continue;
+    }
+    const put = await fetch(url, { method: 'PUT', body: readFileSync(entry.full) });
+    if (!put.ok) throw new Error(`PUT ${path} → ${put.status}: ${(await put.text()).slice(0, 120)}`);
     pushed += 1;
-    bytes += st.size;
+    bytes += entry.size;
   }
-  return { pushed, bytes };
+  return { pushed, bytes, skippedLarge };
 }
 
-export async function pullWorkspace(bucket: string, prefix: string): Promise<{ pulled: number; skipped: number }> {
-  const s3 = new S3Client({});
-  const clean = prefix.replace(/\/+$/, '');
+export async function pullWorkspace(ctx: SyncCtx): Promise<{ pulled: number; skipped: number }> {
+  const listRes = await syncFetch(ctx, 'download-urls', {});
+  const { files } = (await listRes.json()) as { files?: Array<{ path: string; size: number; url: string }> };
   let pulled = 0;
   let skipped = 0;
-  let token: string | undefined;
-  for (;;) {
-    const res = await s3.send(
-      new ListObjectsV2Command({ Bucket: bucket, Prefix: `${clean}/`, ContinuationToken: token }),
-    );
-    for (const obj of res.Contents ?? []) {
-      if (!obj.Key || obj.Key.endsWith('/')) continue;
-      const rel = obj.Key.slice(clean.length + 1);
-      if (!rel || rel === '.wayfind' || rel.startsWith('.wayfind/')) continue;
-      const full = resolve(ROOT, rel);
-      if (full !== ROOT && !full.startsWith(ROOT + sep)) continue;
-      if (existsSync(full)) {
-        skipped += 1; // never overwrite running state
-        continue;
-      }
-      const got = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: obj.Key }));
-      mkdirSync(dirname(full), { recursive: true });
-      writeFileSync(full, await bodyToBuffer(got.Body));
-      pulled += 1;
+  for (const f of (files ?? []).slice(0, MAX_FILES)) {
+    const parts = f.path.split('/').filter((s) => s !== '' && s !== '.');
+    if (parts.length === 0 || parts.some((s) => s === '..') || parts[0] === '.wayfind') continue;
+    const full = resolve(ROOT, ...parts);
+    if (full !== ROOT && !full.startsWith(ROOT + sep)) continue;
+    if (existsSync(full)) {
+      skipped += 1; // never overwrite running state
+      continue;
     }
-    if (!res.IsTruncated) break;
-    token = res.NextContinuationToken;
+    if (typeof f.size === 'number' && f.size > MAX_FILE_BYTES) {
+      skipped += 1;
+      continue;
+    }
+    const got = await fetch(f.url);
+    if (!got.ok) throw new Error(`GET ${f.path} → ${got.status}`);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, Buffer.from(await got.arrayBuffer()));
+    pulled += 1;
   }
   return { pulled, skipped };
 }

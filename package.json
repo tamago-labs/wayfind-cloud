@@ -13,6 +13,7 @@
     "@aws-sdk/client-lambda": "^3.0.0",
     "@aws-sdk/client-lambda-microvms": "^3.1159.0",
     "@aws-sdk/client-s3": "^3.1159.0",
+    "@aws-sdk/s3-request-presigner": "^3.1161.0",
     "@openai/agents": "^0.18.0",
     "@tailwindcss/typography": "^0.5.20",
     "archiver": "^8.0.0",

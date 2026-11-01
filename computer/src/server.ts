@@ -10,7 +10,7 @@ import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider, reinitProvider } from './providers/provider.js';
 import { loadCatalog, resolveApiKey, clearProviderCache } from './providers/providers.js';
 import { writeKey } from './providers/keystore.js';
-import { pullWorkspace, pushWorkspace } from './cloud/sync.js';
+import { pullWorkspace, pushWorkspace, type SyncCtx } from './cloud/sync.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingBotRequests, listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun } from './runs/runner.js';
 import { reportUsage } from './runs/usage.js';
@@ -37,6 +37,8 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 let cloudIdentity: { ownerId?: string; computerId?: string } | null = null;
 /** S3 workspace sync target, injected by POST /hooks/run. Null locally. */
 let workspaceSync: { bucket: string; prefix: string } | null = null;
+/** Boot pull backfill runs once, on the first /task carrying an API base. */
+let bootPulled = false;
 
 /** Lambda runtime hook prefix (docs: /aws/lambda-microvms/runtime/v1/<hook>). */
 const RT_PREFIX = '/aws/lambda-microvms/runtime/v1';
@@ -71,10 +73,15 @@ async function doRunHook(body: RunHookBody): Promise<{ ok: boolean; initialized:
   if (body.workspace?.bucket && body.workspace?.prefix) {
     workspaceSync = { bucket: body.workspace.bucket, prefix: body.workspace.prefix };
     // Restore this computer's files (missing-only — never clobbers).
-    try {
-      await pullWorkspace(workspaceSync.bucket, workspaceSync.prefix);
-    } catch (err) {
-      console.error('[hooks/run] workspace pull failed:', err instanceof Error ? err.message : err);
+    // Presigned pull needs the API base: provision sends it via /hooks/run,
+    // otherwise the first /task (frontend always sends it) triggers the pull.
+    const ctx = syncCtx();
+    if (ctx) {
+      try {
+        await pullWorkspace(ctx);
+      } catch (err) {
+        console.error('[hooks/run] workspace pull failed:', err instanceof Error ? err.message : err);
+      }
     }
   }
   // New keys → drop cached model clients so they take effect now.
@@ -83,10 +90,22 @@ async function doRunHook(body: RunHookBody): Promise<{ ok: boolean; initialized:
   return { ok: true, initialized: keysReady(), identity: cloudIdentity };
 }
 
+/** Sync context for presigned transfers: API base + usage token from env,
+ * computer id from the injected cloud identity. Null when sync is
+ * unavailable (local dev, or provision predating COMPUTER_API_URL). */
+function syncCtx(): SyncCtx | null {
+  const apiBase = (process.env.WAYFIND_API_URL ?? '').replace(/\/+$/, '');
+  const token = process.env.USAGE_TOKEN ?? '';
+  const computerId = cloudIdentity?.computerId;
+  if (!workspaceSync || !apiBase || !token || !computerId) return null;
+  return { apiBase, token, computerId };
+}
+
 async function doSuspend(): Promise<{ ok: boolean; pushed?: number; bytes?: number; skipped?: string; error?: string }> {
-  if (!workspaceSync) return { ok: true, skipped: 'no workspace sync configured' };
+  const ctx = syncCtx();
+  if (!ctx) return { ok: true, skipped: 'no workspace sync configured' };
   try {
-    const { pushed, bytes } = await pushWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+    const { pushed, bytes } = await pushWorkspace(ctx);
     return { ok: true, pushed, bytes };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -96,9 +115,10 @@ async function doSuspend(): Promise<{ ok: boolean; pushed?: number; bytes?: numb
 }
 
 async function doResume(): Promise<{ ok: boolean; pulled?: number; skipped?: number | string; error?: string }> {
-  if (!workspaceSync) return { ok: true, skipped: 'no workspace sync configured' };
+  const ctx = syncCtx();
+  if (!ctx) return { ok: true, skipped: 'no workspace sync configured' };
   try {
-    const { pulled, skipped } = await pullWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+    const { pulled, skipped } = await pullWorkspace(ctx);
     return { ok: true, pulled, skipped };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -107,9 +127,10 @@ async function doResume(): Promise<{ ok: boolean; pulled?: number; skipped?: num
 }
 
 async function doTerminate(): Promise<{ ok: boolean }> {
-  if (workspaceSync) {
+  const ctx = syncCtx();
+  if (ctx) {
     try {
-      await pushWorkspace(workspaceSync.bucket, workspaceSync.prefix);
+      await pushWorkspace(ctx);
     } catch (err) {
       console.error('[hooks/terminate] final push failed:', err instanceof Error ? err.message : err);
     }
@@ -263,10 +284,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return void json(res, 400, { error: 'Invalid JSON body' });
     }
   }
-  if (
-    (pathname === '/hooks/suspend' || pathname === `${RT_PREFIX}/suspend`) &&
-    method === 'POST'
-  ) {
+  // Service-initiated suspend (idle hook): MUST NOT 500 — a failed push
+  // must never cost the whole computer (observed: 500 → terminate). The
+  // push result is logged; the VM suspends regardless.
+  if (pathname === `${RT_PREFIX}/suspend` && method === 'POST') {
+    const out = await doSuspend().catch((err) => ({
+      ok: false as const,
+      error: `suspend failed: ${err instanceof Error ? err.message : String(err)}`,
+    }));
+    if (!out.ok) console.error('[runtime/suspend] proceeding despite:', out.error);
+    return void json(res, 200, out);
+  }
+  if (pathname === '/hooks/suspend' && method === 'POST') {
     const out = await doSuspend();
     return void json(res, out.ok ? 200 : 500, out);
   }
@@ -320,6 +349,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // Usage reporting needs the API base — refresh from every task (the
       // frontend always knows it; provision-time injection can't).
       if (typeof apiUrl === 'string' && apiUrl) process.env.WAYFIND_API_URL = apiUrl;
+      // Boot pull may have been skipped for lack of an API base (provision
+      // predates COMPUTER_API_URL). First task with a base backfills it —
+      // missing-only, so concurrent first tasks are harmless.
+      const bootCtx = syncCtx();
+      if (workspaceSync && bootCtx && !bootPulled) {
+        bootPulled = true;
+        try {
+          await pullWorkspace(bootCtx);
+        } catch (err) {
+          console.error('[task] boot pull failed:', err instanceof Error ? err.message : err);
+        }
+      }
       if (!text || typeof text !== 'string') return void json(res, 400, { error: 'Body must be { text, provider?, model? }' });
       if (conversationId !== undefined && typeof conversationId !== 'string') {
         return void json(res, 400, { error: 'conversationId must be a string' });

@@ -18,6 +18,11 @@ export const wayfindApiFunction = defineFunction({
     COMPUTER_IMAGE_ARN: process.env.COMPUTER_IMAGE_ARN ?? "",
     COMPUTER_WORKSPACE_BUCKET: process.env.COMPUTER_WORKSPACE_BUCKET ?? "",
     COMPUTER_REGION: process.env.COMPUTER_REGION ?? "ap-southeast-1",
+    // Public base of THIS function URL (stable per backend; changes only if
+    // the function is recreated). Sent to VMs so usage reports and presigned
+    // sync have an API base without the backend knowing its own URL.
+    // No trailing slash.
+    COMPUTER_API_URL: process.env.COMPUTER_API_URL ?? "",
     MODAL_API_KEY: secret("MODAL_API_KEY"),
     PROVIDER_API_KEY: secret("PROVIDER_API_KEY"),
   },

@@ -240,6 +240,7 @@ Recorded 2026-11-01 (image rebuild: events endpoint + guard fix):
 - Browser→VM direct is structurally impossible: token proxy 403s unauthenticated OPTIONS (no ACAO), honors no query-token — all cloud traffic relays via `wayfind-api /computer/proxy/*`
 - Service caps: `maximumDurationInSeconds` ≤ 28800 (8h); `suspendedDurationSeconds: 300` terminated VMs ~5m after suspend — now 604800 (7d)
 - Rebuilt again (server appends unrendered images): runs track `generatedImages` via `GuardOpts.onFileSaved`; completion appends relative `/files/view?path=…` markdown for anything the model failed to echo; frontend `normalizeSrc` resolves relative + loopback URLs to the active transport
+- Suspend survival (presigned sync, no VM creds): backend mints presigned PUT/GET URLs (`/computer/sync/upload-urls|download-urls`, usage-token auth, 25MB/file cap); VM `sync.ts` rewritten to HTTPS transfers; runtime suspend hook never 500s; `COMPUTER_API_URL` env feeds the VM its API base
 
 ## 9. Guardrails (apply to every phase)
 

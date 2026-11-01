@@ -20,7 +20,6 @@ const SYSTEM_FILES = new Set(['conversations.jsonl', 'permissions.json', 'provid
 export default function TabLibrary() {
   const [path, setPath] = useState('');
   const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [hiddenCount, setHiddenCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -37,7 +36,6 @@ export default function TabLibrary() {
           ? out.entries.filter((e) => e.dir || !SYSTEM_FILES.has(e.name))
           : out.entries;
       setEntries(entries);
-      setHiddenCount(out.entries.length - entries.length);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load files');
     } finally {
@@ -122,11 +120,6 @@ export default function TabLibrary() {
             ))}
         </ul>
       </FileBrowser>
-      {hiddenCount > 0 && (
-        <p className="border-t border-navy/5 px-3 py-1.5 text-[11px] text-heroslate" title="Agent memory, guard rules and provider catalog live here but are managed elsewhere.">
-          {hiddenCount} system file{hiddenCount === 1 ? '' : 's'} hidden
-        </p>
-      )}
     </div>
   );
 }

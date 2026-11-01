@@ -14,11 +14,14 @@ import {
   GetMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
 import { createVerify, createPublicKey, randomUUID } from "crypto";
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
 Amplify.configure(resourceConfig, libraryOptions);
 const dataClient = generateClient<Schema>();
 const microvms = new LambdaMicrovmsClient({ region: env.AWS_REGION ?? process.env.AWS_REGION });
+const s3sync = new S3Client({ region: env.AWS_REGION ?? process.env.AWS_REGION });
 
 /* ---------------- Cognito JWT verification (no external deps) ---------------- */
 
@@ -118,7 +121,7 @@ async function ensureProfile(claims: Claims) {
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "2026-11-01-relay+guarded-dedupe+stale-heal";
+const BACKEND_REV = "2026-11-02-relay+guarded-dedupe+usage-token+presigned-sync";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -231,6 +234,100 @@ export const handler = async (
       return json(500, { error: `ledger write failed: ${JSON.stringify(errors)}` });
     }
     return json(200, { ok: true, ledgerId: entry.id, delta, balanceAfter });
+  }
+
+  // VM file sync via presigned S3 URLs (server-to-server). The VM holds no
+  // AWS credentials, so all bytes move over HTTPS with short-lived signed
+  // URLs instead. Auth: per-computer usage token (X-computer-usage-token)
+  // matched against the row for the claimed computerId. Paths are
+  // constrained to that computer's workspace prefix; .wayfind/ (keystore)
+  // never syncs.
+  const vmSyncAuth = async (
+    body: { computerId?: string },
+  ): Promise<{ computer: { id: string } } | { error: string; status: number }> => {
+    const usageToken =
+      event.headers["x-computer-usage-token"] ??
+      event.headers["X-computer-usage-token"] ??
+      event.headers["X-Computer-Usage-Token"];
+    const computerId = typeof body.computerId === "string" ? body.computerId : "";
+    if (!usageToken || !computerId) return { error: "unauthorized: no usage token or computerId", status: 401 };
+    const { data: computer } = await dataClient.models.Computer.get({ id: computerId });
+    if (!computer || !computer.usageToken || computer.usageToken !== usageToken) {
+      return { error: "unauthorized: bad usage token", status: 401 };
+    }
+    return { computer: { id: computer.id } };
+  };
+  const cleanSyncPath = (p: unknown): string | null => {
+    if (typeof p !== "string" || !p || p.length > 512) return null;
+    const parts = p.split("/").filter((s) => s !== "" && s !== ".");
+    if (parts.length === 0 || parts.some((s) => s === "..")) return null;
+    if (parts[0] === ".wayfind") return null;
+    return parts.join("/");
+  };
+  const syncBucket = env.COMPUTER_WORKSPACE_BUCKET ?? "";
+
+  // POST /computer/sync/upload-urls — { computerId, files: [{ path, size }] }
+  // → { urls: { path: presignedPutUrl } }. Per-file 25MB cap, 2000 files max.
+  if (path.endsWith("/computer/sync/upload-urls") && method === "POST") {
+    let body: { computerId?: string; files?: Array<{ path?: string; size?: number }> } = {};
+    try {
+      body = JSON.parse(event.body ?? "{}");
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    const auth = await vmSyncAuth(body);
+    if ("error" in auth) return json(auth.status, { error: auth.error });
+    if (!syncBucket) return json(500, { error: "workspace bucket not configured" });
+    const files = Array.isArray(body.files) ? body.files.slice(0, 2000) : [];
+    const urls: Record<string, string> = {};
+    for (const f of files) {
+      const clean = cleanSyncPath(f?.path);
+      if (!clean || typeof f?.size !== "number" || f.size <= 0 || f.size > 25 * 1024 * 1024) continue;
+      urls[clean] = await getSignedUrl(
+        s3sync,
+        new PutObjectCommand({ Bucket: syncBucket, Key: `computers/${auth.computer.id}/workspace/${clean}` }),
+        { expiresIn: 900 },
+      );
+    }
+    return json(200, { urls });
+  }
+
+  // POST /computer/sync/download-urls — { computerId } → { files: [{ path,
+  // size, url }] } (presigned GETs, 15min). Skips .wayfind/ and folder markers.
+  if (path.endsWith("/computer/sync/download-urls") && method === "POST") {
+    let body: { computerId?: string } = {};
+    try {
+      body = JSON.parse(event.body ?? "{}");
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    const auth = await vmSyncAuth(body);
+    if ("error" in auth) return json(auth.status, { error: auth.error });
+    if (!syncBucket) return json(500, { error: "workspace bucket not configured" });
+    const prefix = `computers/${auth.computer.id}/workspace/`;
+    const files: Array<{ path: string; size: number; url: string }> = [];
+    let token: string | undefined;
+    for (;;) {
+      const res = await s3sync.send(
+        new ListObjectsV2Command({ Bucket: syncBucket, Prefix: prefix, ContinuationToken: token }),
+      );
+      for (const obj of res.Contents ?? []) {
+        if (!obj.Key || obj.Key.endsWith("/")) continue;
+        const rel = obj.Key.slice(prefix.length);
+        if (!cleanSyncPath(rel)) continue;
+        if (files.length >= 2000) break;
+        files.push({
+          path: rel,
+          size: obj.Size ?? 0,
+          url: await getSignedUrl(s3sync, new GetObjectCommand({ Bucket: syncBucket, Key: obj.Key }), {
+            expiresIn: 900,
+          }),
+        });
+      }
+      if (!res.IsTruncated || files.length >= 2000) break;
+      token = res.NextContinuationToken;
+    }
+    return json(200, { files });
   }
 
   // Everything below requires a verified Cognito token
@@ -659,17 +756,20 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
     // Identity + secrets (Amplify secrets, never stored in the DB).
     // Plus the per-computer usage token: minted here, stored on the row,
     // injected into the VM — the VM reports metered calls with it since it
-    // holds no Cognito identity of its own.
+    // holds no Cognito identity of its own. apiUrl lets the VM reach this
+    // API (usage + presigned sync) without the backend knowing its own URL.
     const modalKey = env.MODAL_API_KEY;
     const metaKey = env.PROVIDER_API_KEY;
     if (!modalKey || !metaKey) throw new Error("provider API keys are not configured (Amplify secrets)");
     const usageToken = randomUUID();
     await dataClient.models.Computer.update({ id: computerId, usageToken });
+    const computerApi = (env.COMPUTER_API_URL ?? "").replace(/\/+$/, "");
     const runRes = await vmFetch(endpoint, token, "/hooks/run", {
       ownerId,
       computerId,
       secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey },
       usageToken,
+      ...(computerApi ? { apiUrl: computerApi } : {}),
       ...(bucket ? { workspace: { bucket, prefix } } : {}),
     });
     if (!runRes.ok) throw new Error(`/hooks/run → ${runRes.status}: ${(await runRes.text()).slice(0, 200)}`);
@@ -678,6 +778,7 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
     const taskRes = await vmFetch(endpoint, token, "/task", {
       text: "Reply with exactly: cloud-ok",
       ownerId,
+      ...(computerApi ? { apiUrl: computerApi } : {}),
     });
     if (!taskRes.ok) throw new Error(`/task smoke → ${taskRes.status}`);
     const { runId } = (await taskRes.json()) as { runId?: string };
