@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -13,6 +14,23 @@ import VmImage, { normalizeSrc } from './VmImage';
 function ZoomableImage({ src, alt, className }: { src: string; alt: string; className?: string }) {
   const [open, setOpen] = useState(false);
   const full = normalizeSrc(src);
+  // Portal into body: message rows animate with transforms (framer-motion),
+  // which trap position:fixed descendants — without the portal the overlay
+  // would clip to the chat bubble instead of covering the screen.
+  const overlay =
+    open && typeof document !== 'undefined'
+      ? createPortal(
+          <div
+            role="dialog"
+            aria-label={alt}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-50 grid cursor-zoom-out place-items-center bg-navy/80 p-4"
+          >
+            <VmImage src={full} alt={alt} className="max-h-[85vh] w-auto max-w-full rounded-xl object-contain" />
+          </div>,
+          document.body,
+        )
+      : null;
   return (
     <>
       <button
@@ -23,16 +41,7 @@ function ZoomableImage({ src, alt, className }: { src: string; alt: string; clas
       >
         <VmImage src={full} alt={alt} className={className} />
       </button>
-      {open && (
-        <div
-          role="dialog"
-          aria-label={alt}
-          onClick={() => setOpen(false)}
-          className="fixed inset-0 z-50 grid cursor-zoom-out place-items-center bg-navy/80 p-4"
-        >
-          <VmImage src={full} alt={alt} className="max-h-[85vh] w-auto max-w-full rounded-xl object-contain" />
-        </div>
-      )}
+      {overlay}
     </>
   );
 }
