@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, FileText } from 'lucide-react';
-import { downloadFileUrl, listFiles, type FileEntry } from '@/lib/agent';
+import { downloadFileUrl, downloadViaApi, isCloudTransport, listFiles, type FileEntry } from '@/lib/agent';
 import FileBrowser from './FileBrowser';
 
 function fmtSize(bytes: number): string {
@@ -91,6 +91,15 @@ export default function TabLibrary() {
                   download
                   aria-label={`Download ${e.name}`}
                   title="Download file"
+                  onClick={(ev) => {
+                    // Cloud relay needs the Cognito bearer, which <a> cannot
+                    // send — fetch as blob instead. Local mode uses the href.
+                    if (!isCloudTransport()) return;
+                    ev.preventDefault();
+                    void downloadViaApi(path === '' ? e.name : `${path}/${e.name}`).catch((err) => {
+                      setError(err instanceof Error ? err.message : 'Download failed');
+                    });
+                  }}
                   className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-heroslate hover:bg-ice hover:text-navy"
                 >
                   <Download className="h-4 w-4" />

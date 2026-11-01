@@ -1,23 +1,22 @@
 // Voice capture + transcription client. The mic stream is downsampled to
 // 24 kHz mono and encoded as WAV in the browser, so the agent server can
 // forward it straight to Meta speech-to-text with no audio tooling.
+// Cloud mode goes through the API relay like everything else (see lib/agent.ts).
+import { apiBaseUrl } from './wayfind-api';
+
 const LOCAL_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
 
 function voiceBase(): string {
   if (typeof window === 'undefined') return LOCAL_URL;
   if (window.localStorage.getItem('wayfind-transport') !== 'cloud') return LOCAL_URL;
-  const endpoint = window.localStorage.getItem('wayfind-vm-endpoint');
-  if (!endpoint) {
-    throw new Error('Cloud mode is on but no computer endpoint is stored — start your computer first.');
-  }
-  return endpoint;
+  return `${apiBaseUrl()}/computer/proxy`;
 }
 
 export async function transcribeVoice(wav: Blob, ownerId?: string): Promise<VoiceResult> {
-  const { vmAuthHeaders } = await import('./agent');
+  const { transportAuthHeaders } = await import('./agent');
   const res = await fetch(`${voiceBase()}/voice/transcribe${ownerId ? `?ownerId=${encodeURIComponent(ownerId)}` : ''}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'audio/wav', ...(await vmAuthHeaders()) },
+    headers: { 'Content-Type': 'audio/wav', ...(await transportAuthHeaders()) },
     body: wav,
   });
   const data = (await res.json()) as { transcript?: string; audioDurationMs?: number; error?: string };

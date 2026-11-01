@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { vmAuthHeaders } from '@/lib/agent';
+import { transportAuthHeaders } from '@/lib/agent';
 
 /** Image that works on both transports. Absolute URLs stay plain <img> in
  * local mode; in cloud mode the VM proxy needs the auth header, which
@@ -23,7 +23,7 @@ export default function VmImage({
     if (!/^https?:\/\//.test(src)) return;
     void (async () => {
       try {
-        const headers = await vmAuthHeaders();
+        const headers = await transportAuthHeaders();
         if (!alive || Object.keys(headers).length === 0) return;
         const res = await fetch(src, { headers });
         if (!res.ok || !alive) return;

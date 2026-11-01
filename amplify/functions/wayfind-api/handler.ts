@@ -88,7 +88,7 @@ const CORS = {
   // No Access-Control-Allow-Origin here: the Function URL layer sets it
   // (allowedOrigins in backend.ts). Sending it twice breaks browsers.
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Content-Type": "application/json",
 };
 
@@ -370,6 +370,66 @@ export const handler = async (
         console.error("[wayfind-api] token mint failed:", err);
         return json(502, { error: "microvm token mint failed" });
       }
+    }
+
+    // ANY /computer/proxy/* - relay browser traffic to the caller's MicroVM.
+    // Browsers cannot reach the VM endpoint directly: the token proxy
+    // rejects unauthenticated preflights (browsers never attach the token
+    // to OPTIONS) and honors no query-token, so all cloud chat/files/stream
+    // go through here. Cognito at this layer, short-lived VM token minted
+    // server-side per call. Upstream status passes through untouched.
+    // Limits: SSE is buffered (no response streaming through this wrapper,
+    // so cloud chat renders whole), ~6MB Lambda response cap on downloads.
+    if (path.includes("/computer/proxy/")) {
+      const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
+      const computer = pickComputer(computers);
+      if (!computer?.microvmId || !computer.endpoint) {
+        return json(404, { error: "no provisioned MicroVM for this account" });
+      }
+      if (!(await vmAlive(computer.microvmId))) {
+        await resetStaleRow(computer.id);
+        return json(410, { error: "that MicroVM no longer exists - press Start computer for a fresh one" });
+      }
+      let token: string;
+      try {
+        token = await mintVmToken(computer.microvmId, 30);
+      } catch {
+        return json(502, { error: "microvm token mint failed" });
+      }
+      const sub = path.slice(path.indexOf("/computer/proxy/") + "/computer/proxy/".length);
+      const qs = event.rawQueryString ? `?${event.rawQueryString}` : "";
+      const headers = event.headers ?? {};
+      const ctype = headers["content-type"] ?? headers["Content-Type"];
+      const accept = headers["accept"] ?? headers["Accept"];
+      let upstream: Response;
+      try {
+        upstream = await fetch(`https://${computer.endpoint}/${sub}${qs}`, {
+          method,
+          headers: {
+            "X-aws-proxy-auth": token,
+            ...(ctype ? { "Content-Type": ctype } : {}),
+            ...(accept ? { Accept: accept } : {}),
+          },
+          body:
+            method === "GET" || method === "HEAD"
+              ? undefined
+              : event.isBase64Encoded
+                ? Buffer.from(event.body ?? "", "base64")
+                : (event.body ?? undefined),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return json(502, { error: `computer unreachable: ${msg.slice(0, 200)}` });
+      }
+      const upType = upstream.headers.get("content-type") ?? "application/octet-stream";
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
+      return {
+        statusCode: upstream.status,
+        headers: { ...CORS, "Content-Type": upType },
+        body: textish ? buf.toString("utf8") : buf.toString("base64"),
+        ...(textish ? {} : { isBase64Encoded: true }),
+      };
     }
 
     if (path.endsWith("/chat/message")) {

@@ -1,49 +1,49 @@
-// Browser client for the local computer agent server (Phase 1: localhost).
-// Base URL comes from NEXT_PUBLIC_AGENT_URL (default http://localhost:8080).
-// When we migrate to MicroVM, this same shape talks to the VM URL with a token.
+// Browser client for the computer agent server.
+// Local: talks to localhost:8080 direct (NEXT_PUBLIC_AGENT_URL).
+// Cloud: browsers cannot reach the MicroVM endpoint directly (the token
+// proxy rejects unauthenticated preflights and honors no query-token), so
+// everything goes through the API relay at <function-url>/computer/proxy
+// with the Cognito bearer. The short-lived VM token stays server-side.
 'use client';
+
+import { apiBaseUrl, authHeaders } from './wayfind-api';
 
 const AGENT_URL = process.env.NEXT_PUBLIC_AGENT_URL ?? 'http://localhost:8080';
 
-/** Cloud transport: when the footer toggle is on cloud mode, chat + files
- * go to the VM endpoint with a minted proxy token. Localhost otherwise. */
+/** True when the footer toggle routes chat to the cloud computer. */
+export function isCloudTransport(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem('wayfind-transport') === 'cloud';
+}
+
+/** Cloud transport: chat + files go through the API relay (Cognito auth).
+ * The raw VM endpoint needs the proxy token, which browsers can't use. */
 export function cloudEndpoint(): string | null {
   if (typeof window === 'undefined') return null;
-  if (window.localStorage.getItem('wayfind-transport') !== 'cloud') return null;
+  if (!isCloudTransport()) return null;
   return window.localStorage.getItem('wayfind-vm-endpoint');
 }
 
 function agentBase(): string {
-  return cloudEndpoint() ?? AGENT_URL;
+  if (isCloudTransport()) return `${apiBaseUrl()}/computer/proxy`;
+  return AGENT_URL;
 }
 
 /** Request paths go through here: cloud mode without a stored endpoint is a
  * loud error, never a silent localhost fallback. (Image/file URL builders
  * keep agentBase() — a broken thumbnail beats a crashed render.) */
 function requireAgentBase(): string {
-  const cloud = cloudEndpoint();
-  if (
-    typeof window !== 'undefined' &&
-    window.localStorage.getItem('wayfind-transport') === 'cloud' &&
-    !cloud
-  ) {
+  if (isCloudTransport() && !cloudEndpoint()) {
     throw new Error('Cloud mode is on but no computer endpoint is stored — start your computer first.');
   }
-  return cloud ?? AGENT_URL;
+  return agentBase();
 }
 
-let vmToken: { token: string; exp: number } | null = null;
-
-/** Proxy-auth headers for the VM endpoint ({} in local mode). Refreshes
- * the 30-min token when under 5 minutes remain. */
-export async function vmAuthHeaders(): Promise<Record<string, string>> {
-  if (!cloudEndpoint()) return {};
-  if (vmToken && vmToken.exp > Date.now() + 5 * 60_000) return { 'X-aws-proxy-auth': vmToken.token };
-  const { computerToken } = await import('./wayfind-api');
-  const out = (await computerToken(30)) as { authToken?: string };
-  if (!out.authToken) throw new Error('VM token mint returned no auth token');
-  vmToken = { token: out.authToken, exp: Date.now() + 25 * 60_000 };
-  return { 'X-aws-proxy-auth': vmToken.token };
+/** Auth headers for the active transport: Cognito bearer through the API
+ * relay in cloud mode (the VM token stays server-side), none locally. */
+export async function transportAuthHeaders(): Promise<Record<string, string>> {
+  if (!isCloudTransport()) return {};
+  return authHeaders();
 }
 
 export interface HistoryMessage {
@@ -79,7 +79,7 @@ export async function postTask(
 ): Promise<string> {
   const res = await fetch(`${requireAgentBase()}/task`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await vmAuthHeaders()) },
+    headers: { 'Content-Type': 'application/json', ...(await transportAuthHeaders()) },
     body: JSON.stringify({
       text,
       conversationId,
@@ -112,14 +112,14 @@ export interface StreamHandlers {
 async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${requireAgentBase()}${path}`, {
     ...init,
-    headers: { ...(init?.headers ?? {}), ...(await vmAuthHeaders()) },
+    headers: { ...(init?.headers ?? {}), ...(await transportAuthHeaders()) },
   });
 }
 
 /** Resolve when the run emits done; reject on error/timeout. Ignores `: ping` heartbeats. */
 export async function streamRun(runId: string, handlers: StreamHandlers, timeoutMs = 600_000): Promise<string> {
   const res = await fetch(`${requireAgentBase()}/stream/${runId}`, {
-    headers: { Accept: 'text/event-stream', ...(await vmAuthHeaders()) },
+    headers: { Accept: 'text/event-stream', ...(await transportAuthHeaders()) },
   });
   if (!res.ok || !res.body) throw new Error(`agent /stream → ${res.status}`);
   const reader = res.body.getReader();
@@ -393,3 +393,24 @@ export function downloadFileUrl(path: string): string {
 export function viewFileUrl(path: string): string {
   return `${agentBase()}/files/view?path=${encodeURIComponent(path)}`;
 }
+
+/** Download a workspace file. Plain anchor navigation works locally, but in
+ * cloud mode the relay needs the Cognito bearer, which <a> cannot send —
+ * so fetch as blob and trigger the download programmatically. */
+export async function downloadViaApi(path: string): Promise<void> {
+  const res = await agentFetch(`/files/download?path=${encodeURIComponent(path)}`);
+  if (!res.ok) throw new Error(`agent /files/download → ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = path.split('/').pop() || 'download';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+}
+

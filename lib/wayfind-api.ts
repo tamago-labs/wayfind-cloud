@@ -22,6 +22,16 @@ export function backendConfigured(): boolean {
   return Boolean(o?.auth && o?.custom?.wayfindApi?.functionUrl);
 }
 
+/** Base URL of the API Function URL (throws BackendPendingError when missing). */
+export function apiBaseUrl(): string {
+  return functionUrl().replace(/\/$/, '');
+}
+
+/** Cognito bearer for API calls (throws BackendPendingError when signed out). */
+export async function authHeaders(): Promise<Record<string, string>> {
+  return { Authorization: `Bearer ${await idToken()}` };
+}
+
 async function idToken(): Promise<string> {
   try {
     const { fetchAuthSession } = await import('aws-amplify/auth');
