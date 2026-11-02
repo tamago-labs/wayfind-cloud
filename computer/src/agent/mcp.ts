@@ -47,7 +47,11 @@ type JsonSchema = {
   default?: unknown;
 };
 
-/** Top-level shape: object schemas map flat, others use one `input` field. */
+/** Top-level shape: object schemas map flat, others use one `input` field.
+ * Only the top level is converted precisely — nested objects/arrays stay
+ * z.unknown(). The SDK's zod→JSON-Schema converter rejects nested
+ * `.optional()` (Zoho-style deep schemas), and servers validate their own
+ * input anyway. */
 function shapeOf(schema: JsonSchema | undefined): z.ZodObject<Record<string, z.ZodTypeAny>> {
   if (schema?.type === 'object' || (!schema?.type && schema?.properties)) {
     const shape: Record<string, z.ZodTypeAny> = {};
@@ -57,11 +61,18 @@ function shapeOf(schema: JsonSchema | undefined): z.ZodObject<Record<string, z.Z
     }
     return z.object(shape);
   }
-  return z.object({ input: toZod(schema).optional() });
+  return z.object({ input: z.unknown().optional() });
 }
+/** Shallow scalar conversion — objects/arrays collapse to unknown (see above). */
 function toZod(schema: JsonSchema | undefined): z.ZodTypeAny {
   if (!schema || typeof schema !== 'object') return z.unknown();
-  if (schema.enum) return z.enum(schema.enum as [string, ...string[]]).describe(schema.description ?? '');
+  if (schema.enum) {
+    try {
+      return z.enum(schema.enum as [string, ...string[]]).describe(schema.description ?? '');
+    } catch {
+      return z.unknown().describe(schema.description ?? '');
+    }
+  }
   switch (schema.type) {
     case 'string':
       return z.string().describe(schema.description ?? '');
@@ -71,16 +82,6 @@ function toZod(schema: JsonSchema | undefined): z.ZodTypeAny {
       return z.number().int().describe(schema.description ?? '');
     case 'boolean':
       return z.boolean().describe(schema.description ?? '');
-    case 'array':
-      return z.array(toZod(schema.items)).describe(schema.description ?? '');
-    case 'object': {
-      const shape: Record<string, z.ZodTypeAny> = {};
-      for (const [k, v] of Object.entries(schema.properties ?? {})) {
-        const field = toZod(v);
-        shape[k] = schema.required?.includes(k) ? field : field.optional();
-      }
-      return z.object(shape).describe(schema.description ?? '');
-    }
     default:
       return z.unknown().describe(schema.description ?? '');
   }
