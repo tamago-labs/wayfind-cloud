@@ -18,6 +18,7 @@ import { createBotRequestTool, type BotRequestHook } from './tools/create_bot.js
 import { createMessageBotTool, rosterDirectory, type MessageRunner, type RosterEntry } from './tools/message_bot.js';
 import { createTaskTool, type RunChild } from './tools/task.js';
 import { createGroundedSearchTool } from './tools/grounded.js';
+import { createClockTool } from './tools/clock.js';
 import { createImageTools } from './tools/image.js';
 import { createFileReaderTool } from './tools/read_file.js';
 
@@ -106,6 +107,9 @@ export async function createTriageAgent(
   // default — each call logs an IMAGE_USAGE line in the transcript for
   // later billing. Research subagents stay text-only.
   tools.push(...createImageTools(opts));
+  // Time: the model is otherwise time-blind — scheduling and "is this
+  // from this month?" checks need a clock. Read-only, never gated.
+  tools.push(createClockTool(opts));
   // File reading (images + PDFs via Meta-direct 1.3, text locally).
   // Read-only like grounded_search — no card. Allowed in research too.
   tools.push(createFileReaderTool(opts));

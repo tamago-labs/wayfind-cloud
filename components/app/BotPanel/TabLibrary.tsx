@@ -11,11 +11,12 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** Workspace-root system files: agent memory, guard rules, provider catalog.
+/** Workspace-root system files: agent memory, guard rules, provider catalog,
+ * MCP registry (holds secret env values — Settings owns it).
  * Hidden from the Library (Settings owns permissions/providers; nothing
  * user-facing should open or download these). Tool-level protection is
  * separate — see computer file tools. */
-const SYSTEM_FILES = new Set(['conversations.jsonl', 'permissions.json', 'providers.json']);
+const SYSTEM_FILES = new Set(['conversations.jsonl', 'permissions.json', 'providers.json', 'mcp.json']);
 
 export default function TabLibrary() {
   const [path, setPath] = useState('');

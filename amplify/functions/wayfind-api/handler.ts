@@ -16,6 +16,7 @@ import {
 import { createVerify, createPublicKey, randomUUID } from "crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { CronExpressionParser } from "cron-parser";
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
 Amplify.configure(resourceConfig, libraryOptions);
@@ -234,6 +235,126 @@ export const handler = async (
       return json(500, { error: `ledger write failed: ${JSON.stringify(errors)}` });
     }
     return json(200, { ok: true, ledgerId: entry.id, delta, balanceAfter });
+  }
+
+  // Next cron fire strictly after `from`, in `timezone`. Throws on bad
+  // cron/timezone — callers turn it into a 400 the model can act on.
+  const nextCronRun = (cron: string, timezone: string, from: Date = new Date()): string => {
+    try {
+      // Throws on unknown IANA zones.
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    } catch {
+      throw new Error(`unknown timezone "${timezone}" — use IANA, e.g. Asia/Bangkok`);
+    }
+    try {
+      return CronExpressionParser.parse(cron, { tz: timezone, currentDate: from }).next().toDate().toISOString();
+    } catch {
+      throw new Error(`invalid cron "${cron}" — use 5-field minute precision, e.g. "0 9 * * 1"`);
+    }
+  };
+
+  // POST /routines — create a scheduled routine (chat-created via the
+  // schedule_task agent tool). Dual auth like /runs/:id/usage: a user bearer
+  // attributes to the verified caller; otherwise the per-computer usage
+  // token + claimed ownerId attributes to that computer's owner. The bot is
+  // ownership-checked. Body: { ownerId?, botId, name?, prompt,
+  // kind: 'once'|'cron', runAt?, cron?, timezone? }.
+  if (/\/routines$/.test(path) && method === "POST") {
+    let schedOwner: string | null = null;
+    const schedAuth = event.headers.authorization ?? event.headers.Authorization;
+    if (schedAuth?.startsWith("Bearer ")) {
+      try {
+        schedOwner = (await verifyToken(schedAuth)).sub;
+      } catch {
+        // Fall through to usage-token auth.
+      }
+    }
+    let schedBody: {
+      ownerId?: string;
+      botId?: string;
+      name?: string;
+      prompt?: string;
+      kind?: string;
+      runAt?: string;
+      cron?: string;
+      timezone?: string;
+    } = {};
+    try {
+      schedBody = JSON.parse(event.body ?? "{}");
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    if (!schedOwner) {
+      const usageToken =
+        event.headers["x-computer-usage-token"] ??
+        event.headers["X-computer-usage-token"] ??
+        event.headers["X-Computer-Usage-Token"];
+      const claimedOwner = typeof schedBody.ownerId === "string" ? schedBody.ownerId : "";
+      if (!usageToken || !claimedOwner) {
+        return json(401, { error: "unauthorized: no bearer or usage token" });
+      }
+      const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId: claimedOwner });
+      const match = (computers ?? []).find((c) => c.usageToken && c.usageToken === usageToken);
+      if (!match) return json(401, { error: "unauthorized: bad usage token" });
+      schedOwner = claimedOwner;
+    }
+    const botId = typeof schedBody.botId === "string" ? schedBody.botId : "";
+    const prompt = typeof schedBody.prompt === "string" ? schedBody.prompt.slice(0, 2000).trim() : "";
+    const kind = schedBody.kind;
+    const timezone = typeof schedBody.timezone === "string" && schedBody.timezone ? schedBody.timezone : "UTC";
+    if (!botId) return json(400, { error: "botId is required" });
+    if (!prompt) return json(400, { error: "prompt is required" });
+    if (kind !== "once" && kind !== "cron") return json(400, { error: "kind must be 'once' or 'cron'" });
+    const { data: bot } = await dataClient.models.Bot.get({ id: botId });
+    if (!bot) return json(404, { error: "unknown bot" });
+    if (bot.ownerId !== schedOwner) return json(403, { error: "bot belongs to a different owner" });
+    let nextRunAt: string;
+    let runAt: string | undefined;
+    let cron: string | undefined;
+    if (kind === "once") {
+      if (typeof schedBody.runAt !== "string" || !schedBody.runAt) {
+        return json(400, { error: "runAt ISO time is required for kind=once" });
+      }
+      const at = new Date(schedBody.runAt);
+      if (Number.isNaN(at.getTime())) return json(400, { error: "runAt is not a valid date" });
+      if (at.getTime() < Date.now() + 60_000) {
+        return json(400, { error: "runAt must be at least a minute in the future" });
+      }
+      runAt = at.toISOString();
+      nextRunAt = runAt;
+    } else {
+      if (typeof schedBody.cron !== "string" || !schedBody.cron.trim()) {
+        return json(400, { error: "cron is required for kind=cron" });
+      }
+      cron = schedBody.cron.trim();
+      try {
+        nextRunAt = nextCronRun(cron, timezone);
+      } catch (err) {
+        return json(400, { error: err instanceof Error ? err.message : "bad cron/timezone" });
+      }
+    }
+    const { data: routine, errors } = await dataClient.models.Routine.create({
+      ownerId: schedOwner,
+      botId,
+      ...(typeof schedBody.name === "string" && schedBody.name.trim()
+        ? { name: schedBody.name.trim().slice(0, 80) }
+        : {}),
+      prompt,
+      kind,
+      ...(cron ? { cron } : {}),
+      ...(runAt ? { runAt } : {}),
+      timezone,
+      status: "active",
+      nextRunAt,
+      runCount: 0,
+    });
+    if (errors || !routine) {
+      return json(500, { error: `routine create failed: ${JSON.stringify(errors)}` });
+    }
+    return json(200, {
+      ok: true,
+      routine: { id: routine.id, kind, nextRunAt, timezone, status: "active" },
+    });
   }
 
   // VM file sync via presigned S3 URLs (server-to-server). The VM holds no

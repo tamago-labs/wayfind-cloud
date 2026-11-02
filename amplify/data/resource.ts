@@ -89,6 +89,30 @@ const schema = a.schema({
       allow.owner().to(["read"]),
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("ledgerByOwnerId")]),
+
+  Routine: a
+    .model({
+      ownerId: a.string().required(),
+      botId: a.string(), // nullable in schema for future account scope; required in v1
+      name: a.string(),
+      prompt: a.string().required(), // the task text the run executes
+      kind: a.enum(["once", "cron"]),
+      cron: a.string(), // 5-field cron (minute precision) for kind=cron
+      runAt: a.datetime(), // one-shot fire time for kind=once
+      timezone: a.string(), // IANA, e.g. Asia/Bangkok (cron eval + display)
+      status: a.enum(["active", "paused", "done"]),
+      nextRunAt: a.datetime(), // indexed due-check; advanced on every fire
+      lastRunAt: a.datetime(),
+      lastStatus: a.string(),
+      runCount: a.integer(),
+    })
+    .authorization((allow) => [
+      allow.owner(),
+    ])
+    .secondaryIndexes((index) => [
+      index("ownerId").queryField("routinesByOwnerId"),
+      index("status").sortKeys(["nextRunAt"]).queryField("routinesDue"),
+    ]),
 }).authorization((allow) => [
   allow.resource(wayfindApiFunction),
 ]);

@@ -18,6 +18,7 @@
     "@tailwindcss/typography": "^0.5.20",
     "archiver": "^8.0.0",
     "aws-amplify": "^6.6.6",
+    "cron-parser": "^5.10.3",
     "dotenv": "^17.4.2",
     "ethers": "^6.17.0",
     "framer-motion": "^13.2.0",
