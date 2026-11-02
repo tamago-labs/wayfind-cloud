@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
-import { LogOut, Pencil, Settings } from 'lucide-react';
+import { LogOut, Pencil, Receipt, Settings } from 'lucide-react';
 import { useAuthenticator } from '@aws-amplify/ui-react';
 import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
 import SettingsModal from './SettingsModal';
+import UsageModal from './UsageModal';
 import { newBotColors, newBotShapes } from '../seed';
 import { computerAction, provisionComputer } from '@/lib/wayfind-api';
 import { VM_ENDPOINT_KEY, TRANSPORT_EVENT, useTransport } from '@/lib/transport';
@@ -24,7 +25,6 @@ export default function RosterFooter() {
   const [profileId, setProfileId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [plan, setPlan] = useState('free');
-  const [spend, setSpend] = useState<number | null>(null);
   // Shared computer lifecycle (lib acts, AppShell gates): status, boot and
   // ops live in useComputer so the composer/roster can grey out while the
   // VM isn't ready.
@@ -34,6 +34,7 @@ export default function RosterFooter() {
   const [transport, setTransport] = useTransport();
   const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     fetchUserAttributes()
@@ -118,27 +119,6 @@ export default function RosterFooter() {
       alive = false;
     };
   }, [user?.userId, email]);
-
-  // Observe-only usage total: sum of ledger deltas (negative = spend).
-  // Best-effort — the footer works fine without it.
-  useEffect(() => {
-    const ownerId = user?.userId;
-    if (!ownerId) return;
-    let alive = true;
-    void (async () => {
-      try {
-        const { data } = await dataClient.models.CreditLedger.ledgerByOwnerId({ ownerId });
-        if (!alive || !data) return;
-        const total = data.reduce((sum, r) => sum + (r.delta ?? 0), 0);
-        setSpend(Math.abs(total));
-      } catch {
-        // usage display stays hidden
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [user?.userId]);
 
   // Computer lifecycle: auto-start once per sign-in (new users default to
   // cloud + boot, see useComputer), poll while provisioning, refresh when
@@ -243,11 +223,6 @@ export default function RosterFooter() {
                         Upgrade
                       </Link>
                     </span>
-                    {spend !== null && (
-                      <span className="mt-0.5 block text-xs text-heroslate" title="Metered API spend this account has used">
-                        Usage ${spend.toFixed(spend < 1 ? 3 : 2)}
-                      </span>
-                    )}
                   </span>
                 </div>
                 <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />
@@ -261,6 +236,17 @@ export default function RosterFooter() {
                 >
                   <Settings className="h-4 w-4" strokeWidth={2.2} />
                   Settings
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setUsageOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm font-semibold text-navy hover:bg-ice"
+                >
+                  <Receipt className="h-4 w-4" strokeWidth={2.2} />
+                  Usage
                 </button>
                 <div className="mx-4 my-1 border-t border-navy/10" aria-hidden="true" />
                 <button
@@ -312,6 +298,7 @@ export default function RosterFooter() {
         onProvision={() => void runComputerOp(provisionComputer)}
         onComputerAction={(action) => void runComputerOp(() => computerAction(action))}
       />
+      <UsageModal open={usageOpen} onClose={() => setUsageOpen(false)} ownerId={user?.userId ?? null} />
     </div>
   );
 }
