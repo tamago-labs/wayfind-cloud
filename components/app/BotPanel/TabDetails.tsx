@@ -119,15 +119,9 @@ function Schedules({ botId, ownerId }: { botId: string; ownerId: string }) {
         </button>
       </div>
       {error && <p className="px-1 text-xs font-medium text-red-600">{error}</p>}
-      {routines && routines.length === 0 && (
+      {routines && routines.filter((r) => !r._otherBot).length === 0 && (
         <p className="px-1 text-xs text-heroslate">
-          No schedules yet on this account{ownerId ? ` (…${ownerId.slice(-4)})` : ''}. Ask {` `}
-          this bot in chat — e.g. “remind me every weekday at 9am”.
-        </p>
-      )}
-      {routines && routines.length > 0 && routines.every((r) => r._otherBot) && (
-        <p className="rounded-xl bg-bamber/20 px-3 py-2 text-xs font-semibold text-navy">
-          {routines.length} schedule{routines.length === 1 ? '' : 's'} on this account {routines.length === 1 ? 'belongs' : 'belong'} to another bot{routines[0].botId ? ` (…${routines[0].botId.slice(-4)})` : ''} — open that bot&apos;s panel to manage {routines.length === 1 ? 'it' : 'them'}. This panel is bot{botId ? ` (…${botId.slice(-4)})` : ''}.
+          Nothing scheduled. Tell this bot what to do and when — e.g. “send me top BBC headlines every morning at 8”.
         </p>
       )}
       {routines?.filter((r) => !r._otherBot).map((r) => (
