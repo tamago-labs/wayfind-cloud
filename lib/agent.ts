@@ -500,6 +500,61 @@ export async function removeSkill(name: string): Promise<boolean> {
   return res.ok;
 }
 
+export interface McpServer {
+  name: string;
+  type: 'stdio' | 'remote';
+  isActive: boolean;
+  /** Env/header key names only — values never leave the computer. */
+  configKeys: string[];
+  disabledTools: string[];
+}
+
+export interface McpServerInput {
+  command?: string[];
+  environment?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  isActive?: boolean;
+  disabledTools?: string[];
+}
+
+/** Global MCP registry for the Settings list + per-bot picker. */
+export async function getMcpServers(): Promise<McpServer[]> {
+  const res = await agentFetch(`/mcp`);
+  if (!res.ok) throw new Error(`agent /mcp → ${res.status}`);
+  return ((await res.json()) as { servers: McpServer[] }).servers;
+}
+
+/** Add a server. Throws with the validation message on conflict. */
+export async function saveMcpServer(name: string, cfg: McpServerInput): Promise<McpServer[]> {
+  const res = await agentFetch(`/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, ...cfg }),
+  });
+  const body = (await res.json()) as { servers?: McpServer[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `agent /mcp → ${res.status}`);
+  return body.servers ?? [];
+}
+
+/** Partial update: toggle active, edit env/headers, disable tools. */
+export async function patchMcpServer(name: string, cfg: McpServerInput): Promise<McpServer[]> {
+  const res = await agentFetch(`/mcp/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  });
+  const body = (await res.json()) as { servers?: McpServer[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `agent /mcp → ${res.status}`);
+  return body.servers ?? [];
+}
+
+/** Remove a server. Returns false when unknown. */
+export async function removeMcpServer(name: string): Promise<boolean> {
+  const res = await agentFetch(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  return res.ok;
+}
+
 export interface FileEntry {
   name: string;
   dir: boolean;

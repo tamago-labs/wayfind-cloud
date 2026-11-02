@@ -16,6 +16,7 @@ import { getRun, getHistory, listPendingApprovals, listPendingBotRequests,
   listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun, onRunSettled } from './runs/runner.js';
 import { reportUsage } from './runs/usage.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
+import { listMcpServers, patchMcpServer, removeMcpServer, saveMcpServer } from './agent/mcp.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
 
 /** Browser origin for local dev (Amplify dev server). Loosen only for local. */
@@ -681,6 +682,45 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (pathname === '/skills/scan' && method === 'GET') {
     return void json(res, 200, { found: scanLocalSkills() });
+  }
+
+  // MCP servers: global registry in workspace/mcp.json (synced like skills).
+  // Per-bot scoping lives on Bot.mcpEnabled; the agent enforces it at build.
+  // Reloaded on every run — no restart needed.
+  if (pathname === '/mcp' && method === 'GET') {
+    return void json(res, 200, { servers: listMcpServers() });
+  }
+
+  if (pathname === '/mcp' && method === 'POST') {
+    try {
+      const { name, ...cfg } = JSON.parse(await readBody(req)) as { name?: string } & Record<string, unknown>;
+      if (!name || typeof name !== 'string') {
+        return void json(res, 400, { error: 'Body must be { name, command?|url?, ... }' });
+      }
+      const result = saveMcpServer(name, cfg);
+      if (!result.ok) return void json(res, result.error === 'exists' ? 409 : 400, { error: result.error });
+      return void json(res, 200, { ok: true, servers: listMcpServers() });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  const mcpMatch = pathname.match(/^\/mcp\/([A-Za-z0-9_-]+)$/);
+  if (mcpMatch && (method === 'PATCH' || method === 'PUT')) {
+    try {
+      const cfg = JSON.parse(await readBody(req)) as Record<string, unknown>;
+      const result = patchMcpServer(mcpMatch[1], cfg);
+      if (!result.ok) return void json(res, result.error === 'unknown server' ? 404 : 400, { error: result.error });
+      return void json(res, 200, { ok: true, servers: listMcpServers() });
+    } catch {
+      return void json(res, 400, { error: 'Invalid JSON body' });
+    }
+  }
+
+  if (mcpMatch && method === 'DELETE') {
+    const ok = removeMcpServer(mcpMatch[1]);
+    if (!ok) return void json(res, 404, { error: 'unknown server' });
+    return void json(res, 200, { ok: true, servers: listMcpServers() });
   }
 
   // Settings: permissions rule list (the rules ARE the grants — flipping a

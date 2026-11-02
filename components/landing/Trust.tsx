@@ -5,7 +5,7 @@ const cats: { n: string; items: string[] }[] = [
   { n: 'Sales', items: ['Zoho CRM', 'HubSpot CRM', 'Shopify'] },
   { n: 'Operations', items: ['Zoho Mail', 'Outlook', 'Mailchimp'] },
   { n: 'Development', items: ['GitHub', 'GitLab', 'Notion'] },
-  { n: 'Web3', items: ['USDC', 'xStocks', 'Mezo', 'Solana'] },
+  { n: 'Web3', items: ['USDC', 'xStocks', 'Solana'] },
 ];
 
 const trust = [

@@ -1,7 +1,7 @@
 // MCP client (stdio only, P1): reads workspace/mcp.json, spawns each
 // configured server, converts its tools to agent tools. Remote/streamable
 // transports land in P2.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -11,11 +11,14 @@ import { z } from 'zod';
 import { WORKSPACE_DIR } from '../core/config.js';
 
 import { approvalPolicy, guarded, type GuardOpts } from '../core/guard.js';
-interface McpServerConfig {
+export interface McpServerConfig {
   command?: string[];
   environment?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  /** Absent = active. Mirrors the skills allowlist semantics: unconfigured = on. */
+  isActive?: boolean;
+  disabledTools?: string[];
 }
 
 interface McpJson {
@@ -75,19 +78,108 @@ function toZod(schema: JsonSchema | undefined): z.ZodTypeAny {
   }
 }
 
-export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<typeof tool>>> {
+export interface McpServerInfo {
+  name: string;
+  type: 'stdio' | 'remote';
+  isActive: boolean;
+  /** Env/header key names only — values never leave the computer. */
+  configKeys: string[];
+  disabledTools: string[];
+}
+
+const MCP_NAME_RE = /^[A-Za-z0-9_-]+$/;
+
+/** Read the raw server map. Missing file = no servers; corrupt file = no servers (logged). */
+export function readMcpConfig(): Record<string, McpServerConfig> {
   const path = join(WORKSPACE_DIR, 'mcp.json');
-  if (!existsSync(path)) return [];
-  let parsed: McpJson;
+  if (!existsSync(path)) return {};
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8')) as McpJson;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as McpJson;
+    return parsed.mcpServers ?? {};
   } catch {
     console.error('mcp.json is not valid JSON — skipping MCP servers');
-    return [];
+    return {};
   }
-  const servers = parsed.mcpServers ?? {};
+}
+
+function writeMcpConfig(servers: Record<string, McpServerConfig>): void {
+  writeFileSync(join(WORKSPACE_DIR, 'mcp.json'), JSON.stringify({ mcpServers: servers }, null, 2));
+}
+
+/** Settings-list view: no secrets, command[0] + url only as type hints. */
+export function listMcpServers(): McpServerInfo[] {
+  return Object.entries(readMcpConfig()).map(([name, cfg]) => ({
+    name,
+    type: cfg?.url ? 'remote' : 'stdio',
+    isActive: cfg?.isActive !== false,
+    configKeys: Object.keys(cfg?.url ? (cfg.headers ?? {}) : (cfg?.environment ?? {})),
+    disabledTools: cfg?.disabledTools ?? [],
+  }));
+}
+
+function checkServerInput(name: string, cfg: Partial<McpServerConfig>): string | null {
+  if (!MCP_NAME_RE.test(name)) return 'name must match [A-Za-z0-9_-]+';
+  const hasCommand = Array.isArray(cfg.command) && cfg.command.length > 0 && cfg.command.every((s) => typeof s === 'string' && s);
+  const hasUrl = typeof cfg.url === 'string' && cfg.url.length > 0;
+  if (hasCommand && hasUrl) return 'set command[] or url, not both';
+  if (!hasCommand && !hasUrl) return 'server needs command[] or url';
+  return null;
+}
+
+function cleanConfig(cfg: Partial<McpServerConfig>): McpServerConfig {
+  const out: McpServerConfig = {};
+  if (Array.isArray(cfg.command)) out.command = cfg.command;
+  if (cfg.environment && typeof cfg.environment === 'object') out.environment = cfg.environment;
+  if (typeof cfg.url === 'string') out.url = cfg.url;
+  if (cfg.headers && typeof cfg.headers === 'object') out.headers = cfg.headers;
+  if (cfg.isActive === false) out.isActive = false;
+  if (Array.isArray(cfg.disabledTools)) out.disabledTools = cfg.disabledTools.filter((t) => typeof t === 'string');
+  return out;
+}
+
+/** Create. Returns 'exists' when the name is taken, or an error message. */
+export function saveMcpServer(name: string, cfg: Partial<McpServerConfig>): { ok: true } | { ok: false; error: string } {
+  const servers = readMcpConfig();
+  if (servers[name]) return { ok: false, error: 'exists' };
+  const err = checkServerInput(name, cfg);
+  if (err) return { ok: false, error: err };
+  servers[name] = cleanConfig(cfg);
+  writeMcpConfig(servers);
+  return { ok: true };
+}
+
+/** Partial update (toggle active, edit env/headers, disable tools). */
+export function patchMcpServer(name: string, cfg: Partial<McpServerConfig>): { ok: true } | { ok: false; error: string } {
+  const servers = readMcpConfig();
+  const prev = servers[name];
+  if (!prev) return { ok: false, error: 'unknown server' };
+  const merged = { ...prev, ...cleanConfig(cfg) };
+  // Switching transport drops the other side's fields.
+  if (cfg.url !== undefined) { delete merged.command; delete merged.environment; }
+  if (cfg.command !== undefined) { delete merged.url; delete merged.headers; }
+  // Explicit true clears a stored false (absent = active).
+  if (cfg.isActive === true) delete merged.isActive;
+  const err = checkServerInput(name, merged);
+  if (err) return { ok: false, error: err };
+  servers[name] = merged;
+  writeMcpConfig(servers);
+  return { ok: true };
+}
+
+export function removeMcpServer(name: string): boolean {
+  const servers = readMcpConfig();
+  if (!servers[name]) return false;
+  delete servers[name];
+  writeMcpConfig(servers);
+  return true;
+}
+
+export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<typeof tool>>> {
+  const servers = readMcpConfig();
   const tools: Array<ReturnType<typeof tool>> = [];
   for (const [serverName, cfg] of Object.entries(servers)) {
+    if (cfg.isActive === false) continue;
+    const disabled = new Set(cfg.disabledTools ?? []);
     let transport;
     if (cfg?.url) {
       transport = new StreamableHTTPClientTransport(new URL(cfg.url), {
@@ -108,6 +200,7 @@ export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<ty
       await client.connect(transport);
       const listed = await client.listTools();
       for (const t of listed.tools) {
+        if (disabled.has(t.name)) continue;
         const toolName = `${sanitize(serverName)}_${sanitize(t.name)}`;
         tools.push(
           tool({
