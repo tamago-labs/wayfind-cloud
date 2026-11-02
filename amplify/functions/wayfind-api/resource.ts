@@ -25,5 +25,10 @@ export const wayfindApiFunction = defineFunction({
     COMPUTER_API_URL: process.env.COMPUTER_API_URL ?? "",
     MODAL_API_KEY: secret("MODAL_API_KEY"),
     PROVIDER_API_KEY: secret("PROVIDER_API_KEY"),
+    // Shared with the routine-tick sweeper: proves /routines/fire calls
+    // come from our own ticker, not the open internet (the Function URL
+    // itself is authType NONE). Set once:
+    //   npx ampx sandbox secret set TICK_SECRET
+    TICK_SECRET: secret("TICK_SECRET"),
   },
 });

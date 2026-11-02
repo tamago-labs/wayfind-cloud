@@ -1,5 +1,6 @@
 import { type ClientSchema, a, defineData } from "@aws-amplify/backend";
 import { wayfindApiFunction } from "../functions/wayfind-api/resource";
+import { routineTickFunction } from "../jobs/routine-tick/resource";
 
 /**
  * Wayfind Cloud data — Phase 3 (PRD A11).
@@ -115,6 +116,7 @@ const schema = a.schema({
     ]),
 }).authorization((allow) => [
   allow.resource(wayfindApiFunction),
+  allow.resource(routineTickFunction),
 ]);
 
 export type Schema = ClientSchema<typeof schema>;

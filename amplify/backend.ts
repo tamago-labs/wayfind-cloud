@@ -7,12 +7,14 @@ import { auth } from "./auth/resource";
 import { data } from "./data/resource";
 import { storage } from "./storage/resource";
 import { wayfindApiFunction } from "./functions/wayfind-api/resource";
+import { routineTickFunction } from "./jobs/routine-tick/resource";
 
 const backend = defineBackend({
   auth,
   data,
   storage,
   wayfindApiFunction,
+  routineTickFunction,
 });
 
 const apiLambda = backend.wayfindApiFunction.resources.lambda as LambdaFunction;

@@ -357,6 +357,149 @@ export const handler = async (
     });
   }
 
+  // POST /routines/fire {routineId} — ticker-only entry (X-Tick-Secret must
+  // match the shared TICK_SECRET). Advances nextRunAt FIRST (no double-fire),
+  // resumes a suspended computer (never provisions — a dead VM marks the run
+  // skipped-no-computer), then POSTs the stored prompt to the VM as the bot.
+  // Output lands in the bot's thread (conversationId = botId).
+  if (/\/routines\/fire$/.test(path) && method === "POST") {
+    const tickSecret =
+      event.headers["x-tick-secret"] ??
+      event.headers["X-tick-secret"] ??
+      event.headers["X-Tick-Secret"];
+    if (!env.TICK_SECRET || tickSecret !== env.TICK_SECRET) {
+      return json(401, { error: "unauthorized: bad tick secret" });
+    }
+    let fireBody: { routineId?: string } = {};
+    try {
+      fireBody = JSON.parse(event.body ?? "{}");
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    if (typeof fireBody.routineId !== "string" || !fireBody.routineId) {
+      return json(400, { error: "routineId is required" });
+    }
+    const record = async (id: string, status: string, runCount?: number) => {
+      try {
+        const cur = await dataClient.models.Routine.get({ id });
+        await dataClient.models.Routine.update({
+          id,
+          lastRunAt: new Date().toISOString(),
+          lastStatus: status,
+          runCount: (runCount ?? cur.data?.runCount ?? 0) + 1,
+        });
+      } catch {
+        // Best-effort bookkeeping — the fire result is already decided.
+      }
+    };
+    const { data: routine } = await dataClient.models.Routine.get({ id: fireBody.routineId });
+    if (!routine) return json(404, { error: "unknown routine" });
+    if (routine.status !== "active") return json(200, { ok: true, skipped: `status=${routine.status}` });
+    // Advance before firing so a crash/retry never double-runs.
+    if (routine.kind === "once") {
+      await dataClient.models.Routine.update({ id: routine.id, status: "done" });
+    } else {
+      if (!routine.cron) {
+        await record(routine.id, "bad-cron: missing expression", routine.runCount ?? 0);
+        return json(200, { ok: true, skipped: "bad-cron" });
+      }
+      try {
+        const next = nextCronRun(routine.cron, routine.timezone ?? "UTC");
+        await dataClient.models.Routine.update({ id: routine.id, nextRunAt: next });
+      } catch (err) {
+        await record(routine.id, `bad-cron: ${err instanceof Error ? err.message : err}`, routine.runCount ?? 0);
+        return json(200, { ok: true, skipped: "bad-cron" });
+      }
+    }
+    const { data: bot } = routine.botId
+      ? await dataClient.models.Bot.get({ id: routine.botId })
+      : { data: null };
+    if (routine.botId && !bot) {
+      await record(routine.id, "skipped-unknown-bot", routine.runCount ?? 0);
+      return json(200, { ok: true, skipped: "unknown-bot" });
+    }
+    if (bot && bot.ownerId !== routine.ownerId) {
+      await record(routine.id, "skipped-wrong-owner", routine.runCount ?? 0);
+      return json(200, { ok: true, skipped: "wrong-owner" });
+    }
+    const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId: routine.ownerId });
+    const computer = pickComputer(computers);
+    if (!computer?.microvmId) {
+      await record(routine.id, "skipped-no-computer", routine.runCount ?? 0);
+      return json(200, { ok: true, skipped: "no-computer" });
+    }
+    const microvmId = computer.microvmId;
+    if (!(await vmAlive(microvmId))) {
+      await resetStaleRow(computer.id, microvmId);
+      await record(routine.id, "skipped-no-vm", routine.runCount ?? 0);
+      return json(200, { ok: true, skipped: "no-vm" });
+    }
+    let endpoint = computer.endpoint ?? "";
+    if (computer.provisionStatus === "suspended") {
+      try {
+        endpoint = await resumeComputer(computer.id, microvmId);
+      } catch (err) {
+        await record(routine.id, `resume-failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`, routine.runCount ?? 0);
+        return json(502, { error: "resume failed" });
+      }
+    } else if (computer.provisionStatus !== "running") {
+      await record(routine.id, `skipped-${computer.provisionStatus}`, routine.runCount ?? 0);
+      return json(200, { ok: true, skipped: computer.provisionStatus ?? "not-ready" });
+    }
+    // Clock line first: the model is otherwise time-blind.
+    const tz = routine.timezone ?? "UTC";
+    let clockLine: string;
+    try {
+      const local = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", hour12: false, weekday: "short",
+      }).format(new Date());
+      clockLine = `Current time: ${local} (${tz}).`;
+    } catch {
+      clockLine = `Current time: ${new Date().toISOString()} (UTC).`;
+    }
+    const botName = bot?.name ?? "Assistant";
+    const system = bot
+      ? bot.role
+        ? `You are "${botName}". Role: ${bot.role}.`
+        : `You are "${botName}". Your role is not defined yet.`
+      : `You are "${botName}".`;
+    let token: string;
+    try {
+      token = await mintVmToken(microvmId, 30);
+    } catch {
+      await record(routine.id, "token-mint-failed", routine.runCount ?? 0);
+      return json(502, { error: "microvm token mint failed" });
+    }
+    let upstream: Response;
+    try {
+      upstream = await vmFetch(endpoint, token, "/task", {
+        text: routine.prompt,
+        conversationId: routine.botId ?? `routine-${routine.id}`,
+        system: `${system}\n${clockLine}`,
+        allowedSkills: bot?.skillsEnabled ?? undefined,
+        allowedMcp: bot?.mcpEnabled ?? undefined,
+        ownerId: routine.ownerId,
+        ...(env.COMPUTER_API_URL ? { apiUrl: env.COMPUTER_API_URL } : {}),
+      });
+    } catch (err) {
+      await record(routine.id, `task-post-failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`, routine.runCount ?? 0);
+      return json(502, { error: "computer unreachable" });
+    }
+    if (!upstream.ok) {
+      await record(routine.id, `task-rejected: ${upstream.status}`, routine.runCount ?? 0);
+      return json(502, { error: `computer rejected task: ${upstream.status}` });
+    }
+    let runId: string | undefined;
+    try {
+      runId = ((await upstream.json()) as { runId?: string }).runId;
+    } catch {
+      runId = undefined;
+    }
+    await record(routine.id, "ok", routine.runCount ?? 0);
+    return json(200, { ok: true, runId });
+  }
+
   // VM file sync via presigned S3 URLs (server-to-server). The VM holds no
   // AWS credentials, so all bytes move over HTTPS with short-lived signed
   // URLs instead. Auth: per-computer usage token (X-computer-usage-token)
@@ -575,10 +718,9 @@ export const handler = async (
           return json(200, { data: updated });
         }
         if (body.action === "resume") {
-          await microvms.send(new ResumeMicrovmCommand({ microvmIdentifier: microvmId }));
-          const endpoint = await waitForRunning(microvmId);
-          const { data: updated } = await dataClient.models.Computer.update({ id: computer.id, provisionStatus: "running", endpoint });
-          return json(200, { data: updated });
+          const endpoint = await resumeComputer(computer.id, microvmId);
+          const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
+          return json(200, { data: updated ?? { ...computer, provisionStatus: "running", endpoint } });
         }
         if (body.action === "terminate") {
           try {
@@ -865,6 +1007,15 @@ async function mintVmToken(microvmId: string, expirationInMinutes = 30): Promise
   const token = (out.authToken as Record<string, string> | undefined)?.["X-aws-proxy-auth"];
   if (!token) throw new Error("token mint returned no auth token");
   return token;
+}
+
+/** Resume path shared by POST /computer/action and /routines/fire:
+ * ResumeMicrovm + wait + heal the row. Returns the live endpoint. */
+async function resumeComputer(computerId: string, microvmId: string): Promise<string> {
+  await microvms.send(new ResumeMicrovmCommand({ microvmIdentifier: microvmId }));
+  const endpoint = await waitForRunning(microvmId);
+  await dataClient.models.Computer.update({ id: computerId, provisionStatus: "running", endpoint });
+  return endpoint;
 }
 
 /** Full provision chain (boot + identity + smoke test). Throws on any step. */
