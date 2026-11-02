@@ -16,7 +16,7 @@ import {
 import { createVerify, createPublicKey, randomUUID } from "crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { DynamoDBClient, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, ListTablesCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { CronExpressionParser } from "cron-parser";
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
@@ -30,14 +30,37 @@ const dynamo = new DynamoDBClient({ region: env.AWS_REGION ?? process.env.AWS_RE
  * Owner backfill for Lambda-created rows: AppSync auto-fills `owner` only
  * for userPool calls, and the generated create inputs reject an explicit
  * `owner` — so without this, owner-scoped reads (Schedules tab, ledger
- * history) silently return []. Table names come from backend.ts env.
+ * history) silently return []. Table names are discovered at runtime
+ * (ListTables, cached): referencing data-stack tables from backend.ts would
+ * create a CloudFormation circular dependency (data→function via
+ * allow.resource, function→data via the table refs).
  * On failure the caller should delete the orphan row and 500.
  */
-async function stampOwner(tableEnv: string | undefined, id: string, owner: string): Promise<void> {
-  if (!tableEnv) throw new Error("owner-stamp table is not configured");
+const ownerStampTables = new Map<string, string>();
+async function stampOwner(modelPrefix: string, id: string, owner: string): Promise<void> {
+  let table = ownerStampTables.get(modelPrefix);
+  if (!table) {
+    let token: string | undefined;
+    const found: string[] = [];
+    do {
+      const out = await dynamo.send(new ListTablesCommand({ ExclusiveStartTableName: token, Limit: 100 }));
+      for (const name of out.TableNames ?? []) {
+        if (name.startsWith(`${modelPrefix}-`) && name.endsWith("-NONE")) found.push(name);
+      }
+      token = out.LastEvaluatedTableName;
+    } while (token);
+    if (found.length === 0) throw new Error(`no ${modelPrefix} table found`);
+    // One backend normally owns exactly one; prefer the most recently
+    // created on the off chance several sandboxes share the account.
+    table = found.sort().reverse()[0];
+    if (found.length > 1) {
+      console.warn(`[owner-stamp] ambiguous ${modelPrefix} tables, using ${table}`);
+    }
+    ownerStampTables.set(modelPrefix, table);
+  }
   await dynamo.send(
     new UpdateItemCommand({
-      TableName: tableEnv,
+      TableName: table,
       Key: { id: { S: id } },
       UpdateExpression: "SET #o = :o",
       ExpressionAttributeNames: { "#o": "owner" },
@@ -257,7 +280,7 @@ export const handler = async (
       return json(500, { error: `ledger write failed: ${JSON.stringify(errors)}` });
     }
     try {
-      await stampOwner(process.env.CREDIT_TABLE, entry.id, usageOwner);
+      await stampOwner("CreditLedger", entry.id, usageOwner);
     } catch {
       // Ledger is observe-only: a missing owner stamp only hides this row
       // from history reads, so don't fail the usage call over it.
@@ -380,7 +403,7 @@ export const handler = async (
       return json(500, { error: `routine create failed: ${JSON.stringify(errors)}` });
     }
     try {
-      await stampOwner(process.env.ROUTINE_TABLE, routine.id, schedOwner);
+      await stampOwner("Routine", routine.id, schedOwner);
     } catch (err) {
       // No invisible orphans: roll the row back when the owner stamp fails.
       try {
