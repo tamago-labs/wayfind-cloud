@@ -31,7 +31,7 @@ export default function BotPanelTabs({ botId, ownerId }: { botId: string | null;
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-0.5" role="tabpanel">
         {tab === 'Details' && <TabDetails botId={botId} ownerId={ownerId} />}
         {tab === 'Library' && <TabLibrary />}
-        {tab === 'Computer' && <TabComputer />}
+        {tab === 'Computer' && <TabComputer botId={botId} />}
       </div>
     </div>
   );

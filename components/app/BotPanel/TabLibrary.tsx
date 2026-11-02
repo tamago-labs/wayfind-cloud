@@ -16,7 +16,7 @@ function fmtSize(bytes: number): string {
  * Hidden from the Library (Settings owns permissions/providers; nothing
  * user-facing should open or download these). Tool-level protection is
  * separate — see computer file tools. */
-const SYSTEM_FILES = new Set(['conversations.jsonl', 'permissions.json', 'providers.json', 'mcp.json']);
+const SYSTEM_FILES = new Set(['conversations.jsonl', 'permissions.json', 'permissions.json.bak', 'providers.json', 'mcp.json']);
 
 export default function TabLibrary() {
   const [path, setPath] = useState('');
@@ -75,7 +75,7 @@ export default function TabLibrary() {
     );
   }
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && path === '') {
     return (
       <div className="rounded-xl bg-white px-4 py-6 text-center shadow-sm">
         <p className="text-sm font-bold text-navy">No saved items yet</p>
@@ -87,6 +87,11 @@ export default function TabLibrary() {
   return (
     <div className="overflow-hidden rounded-xl bg-white shadow-sm">
       <FileBrowser path={path} entries={entries} onNavigate={(p) => void load(p)}>
+        {entries.length === 0 ? (
+          <p className="border-t border-navy/10 px-4 py-6 text-center text-xs text-heroslate">
+            {`“${path.split('/').filter(Boolean).pop() ?? 'This folder'}” is empty.`}
+          </p>
+        ) : entries.some((e) => !e.dir) ? (
         <ul className="divide-y divide-navy/5 border-t border-navy/10">
           {entries
             .filter((e) => !e.dir)
@@ -120,6 +125,7 @@ export default function TabLibrary() {
               </li>
             ))}
         </ul>
+        ) : null}
       </FileBrowser>
     </div>
   );

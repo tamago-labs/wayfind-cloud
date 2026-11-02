@@ -8,6 +8,42 @@ function cadence(r: RoutineItem): string {
   return `Repeating · ${r.cron ?? ''}`;
 }
 
+/** Short relative label ("in 25m", "2h ago"); null when far away or invalid. */
+function rel(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const diff = new Date(iso).getTime() - Date.now();
+  if (Number.isNaN(diff)) return null;
+  const abs = Math.abs(diff);
+  const m = Math.round(abs / 60000);
+  if (m < 1) return diff >= 0 ? 'now' : 'just now';
+  if (m < 60) return diff >= 0 ? `in ${m}m` : `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return diff >= 0 ? `in ${h}h` : `${h}h ago`;
+  return null;
+}
+
+function nextLabel(r: RoutineItem): string {
+  if (r.status === 'done') return '';
+  return rel(r.nextRunAt) ?? fmtWhen(r.nextRunAt, r.timezone);
+}
+
+function lastLabel(r: RoutineItem): string {
+  if (!r.lastRunAt) return '';
+  const ago = rel(r.lastRunAt) ?? fmtWhen(r.lastRunAt, r.timezone);
+  const n = typeof r.runCount === 'number' && r.runCount > 0 ? `ran ${r.runCount}× · ` : '';
+  return ` · ${n}${ago}`;
+}
+
+/** Full detail lives in the hover tooltip — the row stays one short line. */
+function fullWhen(r: RoutineItem): string {
+  const tz = r.timezone ?? 'UTC';
+  let s = `next ${r.nextRunAt ? fmtWhen(r.nextRunAt, tz) : '—'} (${tz})`;
+  if (r.lastRunAt) s += ` · last ran ${fmtWhen(r.lastRunAt, tz)}`;
+  if (r.lastStatus && r.lastStatus !== 'ok') s += ` · last: ${r.lastStatus}`;
+  if (typeof r.runCount === 'number' && r.runCount > 0) s += ` · ran ${r.runCount}×`;
+  return s;
+}
+
 function fmtWhen(iso: string | undefined, tz?: string): string {
   if (!iso) return '—';
   try {
@@ -101,14 +137,9 @@ function Schedules({ botId, ownerId }: { botId: string; ownerId: string }) {
               <p className="truncate text-sm font-bold text-navy" title={r.prompt}>
                 {r.name ?? r.prompt}
               </p>
-              <p
-                className="mt-0.5 text-xs text-heroslate"
-                title={`raw: next ${r.nextRunAt ?? '—'} · tz ${r.timezone ?? 'UTC'}`}
-              >
-                {cadence(r)} · next {fmtWhen(r.nextRunAt, r.timezone)}{r.timezone ? ` (${r.timezone})` : ' (UTC)'}
-                {r.lastRunAt ? ` · last ran ${fmtWhen(r.lastRunAt, r.timezone)}` : ''}
+              <p className="mt-0.5 text-xs text-heroslate" title={fullWhen(r)}>
+                {cadence(r)}{nextLabel(r) ? ` · ${nextLabel(r)}` : ''}{lastLabel(r)}
                 {r.lastStatus && r.lastStatus !== 'ok' ? ` · last: ${r.lastStatus}` : ''}
-                {typeof r.runCount === 'number' && r.runCount > 0 ? ` · ran ${r.runCount}×` : ''}
               </p>
             </div>
             <span
@@ -150,14 +181,6 @@ function Schedules({ botId, ownerId }: { botId: string; ownerId: string }) {
 export default function TabDetails({ botId, ownerId }: { botId: string | null; ownerId?: string }) {
   return (
     <div className="space-y-2 text-sm">
-      <div className="flex items-center justify-between rounded-xl bg-white px-4 py-2.5 shadow-sm">
-        <span className="font-semibold text-heroslate">Status</span>
-        <span className="font-bold text-navy">Active</span>
-      </div>
-      <div className="flex items-center justify-between rounded-xl bg-white px-4 py-2.5 shadow-sm">
-        <span className="font-semibold text-heroslate">Bot ID</span>
-        <span className="max-w-[10rem] truncate font-mono text-xs text-navy">{botId ?? 'Not synced yet'}</span>
-      </div>
       {botId && ownerId ? (
         <div className="pt-1">
           <Schedules botId={botId} ownerId={ownerId} />

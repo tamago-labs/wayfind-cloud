@@ -687,15 +687,7 @@ export default function AppShell() {
             <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
               {bootHint}
             </div>
-          ) : (
-            <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-emerald-100/70 px-4 py-1.5 text-center text-xs font-bold text-emerald-900">
-              Cloud — replies come from your cloud computer
-              {typeof window !== 'undefined' && window.localStorage.getItem('wayfind-vm-endpoint')
-                ? ` (${new URL(window.localStorage.getItem('wayfind-vm-endpoint') as string).hostname.slice(0, 24)}…)`
-                : ' (no endpoint yet — start it below)'}
-              .
-            </div>
-          )
+          ) : null
         ) : (
           <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
             Local dev — replies come from your computer server. Make sure it’s running on :8080.
