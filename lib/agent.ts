@@ -507,6 +507,10 @@ export interface McpServer {
   /** Env/header key names only — values never leave the computer. */
   configKeys: string[];
   disabledTools: string[];
+  /** Live state: unknown = never connected since boot. */
+  status: 'connected' | 'error' | 'unknown';
+  tools: number;
+  lastError?: string;
 }
 
 export interface McpServerInput {
