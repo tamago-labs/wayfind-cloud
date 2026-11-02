@@ -4,7 +4,7 @@ import ConfigureAmplify from "@/components/ConfigureAmplify";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Wayfind Cloud — AI Teammates for Small Businesses From $5/month",
+  title: "Wayfind Cloud — AI Teammates for Small Businesses",
   description:
     "Hire AI teammates for finance, operations, marketing, and more. They remember your workflows, use your business tools, and work in the cloud. Start from $5/month. Free during early access.",
 };

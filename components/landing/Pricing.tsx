@@ -8,9 +8,10 @@ const plans = [
     name: 'Free',
     price: '$0',
     features: [
-      'Up to 3 Bots with persistent memory',
-      'Meta open-weight models',
-      'Limited usage to try your first Bots',
+      '1 Bot with temporary storage',
+      'Muse Spark Open',
+      'Limited usage',
+      'Enough to try your first Bot',
     ],
     featured: false,
   },
@@ -18,10 +19,10 @@ const plans = [
     name: 'Starter',
     price: '$5',
     features: [
-      'Up to 5 Bots with persistent memory',
-      'Meta open-weight models',
+      'Up to 3 Bots with shared storage',
+      'Muse Spark Open',
       'Generous usage limits',
-      '1 scheduled routine',
+      'Enough to close your month-end books',
     ],
     featured: true,
   },
@@ -29,24 +30,12 @@ const plans = [
     name: 'Premium',
     price: '$30',
     features: [
-      'Up to 10 Bots and group chats',
+      'Unlimited Bots and group chats',
       'Muse Wonder for complex and graphical work',
       'Highest usage limits',
-      '10 scheduled routines',
+      'Your back office on autopilot',
     ],
     featured: false,
-  },
-  {
-    name: 'Enterprise',
-    price: 'Custom',
-    features: [
-      'SSO and team Bots',
-      'Dedicated region + computer capacity',
-      'Audit export and SLA',
-      'Talk to us — nothing self-serve to set up',
-    ],
-    featured: false,
-    custom: true,
   },
 ];
 
@@ -81,7 +70,7 @@ export default function Pricing() {
         <div
           ref={trackRef}
           onScroll={onScroll}
-          className="mt-12 flex snap-x snap-mandatory gap-5 overflow-x-auto pb-2 [scrollbar-width:none] min-[480px]:grid min-[480px]:grid-cols-2 min-[480px]:overflow-visible min-[480px]:pb-0 lg:grid-cols-4 [&::-webkit-scrollbar]:hidden mx-auto max-w-6xl"
+          className="mt-12 flex snap-x snap-mandatory gap-5 overflow-x-auto pb-2 [scrollbar-width:none] min-[480px]:grid min-[480px]:grid-cols-2 min-[480px]:overflow-visible min-[480px]:pb-0 lg:grid-cols-3 [&::-webkit-scrollbar]:hidden mx-auto max-w-5xl"
         >
           {plans.map((p) => (
             <div
@@ -102,38 +91,25 @@ export default function Pricing() {
               </div>
               <p className="mt-3 text-5xl font-extrabold">
                 {p.price}
-                {'custom' in p && p.custom ? null : (
-                  <span className={`text-lg font-semibold ${p.featured ? 'text-white/60' : 'text-heroslate'}`}>
-                    /mo
-                  </span>
-                )}
+                <span className={`text-lg font-semibold ${p.featured ? 'text-white/60' : 'text-heroslate'}`}>
+                  /mo
+                </span>
               </p>
               <ul className={`mt-6 flex-1 space-y-2.5 ${p.featured ? 'text-white/80' : 'text-heroslate'}`}>
                 {p.features.map((f) => (
                   <li key={f}>{f}</li>
                 ))}
               </ul>
-              {'custom' in p && p.custom ? (
-                <a
-                  href="https://x.com/WayfindCloud"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-8 rounded-full border-2 border-navy px-6 py-3 text-center font-semibold text-navy transition-colors hover:bg-navy hover:text-white"
-                >
-                  Talk to us
-                </a>
-              ) : (
-                <Link
-                  href="/app"
-                  className={`mt-8 rounded-full px-6 py-3 text-center font-semibold transition-colors ${
-                    p.featured
-                      ? 'bg-cta text-white hover:bg-ctahover'
-                      : 'border-2 border-navy text-navy hover:bg-navy hover:text-white'
-                  }`}
-                >
-                  {p.name === 'Free' ? 'Start free' : 'Join early access'}
-                </Link>
-              )}
+              <Link
+                href="/app"
+                className={`mt-8 rounded-full px-6 py-3 text-center font-semibold transition-colors ${
+                  p.featured
+                    ? 'bg-cta text-white hover:bg-ctahover'
+                    : 'border-2 border-navy text-navy hover:bg-navy hover:text-white'
+                }`}
+              >
+                {p.name === 'Free' ? 'Start free' : 'Join early access'}
+              </Link>
             </div>
           ))}
         </div>
