@@ -6,9 +6,11 @@ export const routineTickFunction = defineFunction({
   timeoutSeconds: 120,
   memoryMB: 512,
   environment: {
-    // COMPUTER_API_URL is wired in backend.ts from the deployed Function URL
-    // (never from the synth-time shell, which silently baked in ""). The
-    // ticker fires due routines by POSTing /routines/fire with the secret.
+    // Declared here so the $amplify/env type includes it; the value is
+    // overridden in backend.ts from the deployed Function URL token — never
+    // from the synth-time shell, which silently baked in "". The ticker
+    // fires due routines by POSTing /routines/fire with the secret.
+    COMPUTER_API_URL: "",
     TICK_SECRET: secret("TICK_SECRET"),
   },
 });
