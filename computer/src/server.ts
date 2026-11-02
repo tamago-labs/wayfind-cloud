@@ -16,7 +16,7 @@ import { getRun, getHistory, listPendingApprovals, listPendingBotRequests,
   listPendingQuestions, listRuns, resolveApproval, answerBotRequest, answerQuestion, startRun, onRunSettled } from './runs/runner.js';
 import { reportUsage } from './runs/usage.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
-import { listMcpServers, patchMcpServer, removeMcpServer, saveMcpServer } from './agent/mcp.js';
+import { listMcpServers, patchMcpServer, removeMcpServer, restartMcpServer, saveMcpServer } from './agent/mcp.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
 
 /** Browser origin for local dev (Amplify dev server). Loosen only for local. */
@@ -332,15 +332,16 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return void json(res, 503, { error: 'computer not initialized — POST /hooks/run first' });
     }
     try {
-      const { text, conversationId, system, provider, model, allowedSkills, canManageBots, roster, botName, attachments, ownerId, apiUrl } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills, allowedMcp, canManageBots, roster, botName, attachments, ownerId, apiUrl } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
         provider?: string;
         model?: string;
         allowedSkills?: string[];
+        allowedMcp?: string[];
         canManageBots?: boolean;
-        roster?: Array<{ id?: string; name?: string; role?: string; skills?: string[] | null }>;
+        roster?: Array<{ id?: string; name?: string; role?: string; skills?: string[] | null; mcp?: string[] | null }>;
         botName?: string;
         attachments?: string[];
         ownerId?: string;
@@ -370,6 +371,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       if (allowedSkills !== undefined && (!Array.isArray(allowedSkills) || allowedSkills.some((s) => typeof s !== 'string'))) {
         return void json(res, 400, { error: 'allowedSkills must be string[]' });
       }
+      if (allowedMcp !== undefined && (!Array.isArray(allowedMcp) || allowedMcp.some((s) => typeof s !== 'string'))) {
+        return void json(res, 400, { error: 'allowedMcp must be string[]' });
+      }
       if (attachments !== undefined && (!Array.isArray(attachments) || attachments.some((a) => typeof a !== 'string'))) {
         return void json(res, 400, { error: 'attachments must be string[]' });
       }
@@ -382,6 +386,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
               name: (b.name as string).slice(0, 40),
               ...(typeof b.role === 'string' ? { role: b.role.slice(0, 80) } : {}),
               ...(Array.isArray(b.skills) ? { skills: (b.skills as string[]).filter((s) => typeof s === 'string') } : {}),
+              ...(Array.isArray(b.mcp) ? { mcp: (b.mcp as string[]).filter((s) => typeof s === 'string') } : {}),
             }))
         : undefined;
       const r = startRun(text, {
@@ -390,6 +395,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         conversationId,
         system,
         allowedSkills,
+        allowedMcp,
         canManageBots: canManageBots === true,
         roster: cleanRoster,
         ...(typeof botName === 'string' ? { botName: botName.slice(0, 40) } : {}),
@@ -610,8 +616,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (approvalMatch && method === 'POST') {
     try {
       const { decision } = JSON.parse(await readBody(req)) as { decision?: string };
-      if (decision !== 'approve' && decision !== 'reject') {
-        return void json(res, 400, { error: 'Body must be { decision: "approve" | "reject" }' });
+      if (decision !== 'approve' && decision !== 'reject' && decision !== 'approve-all') {
+        return void json(res, 400, { error: 'Body must be { decision: "approve" | "reject" | "approve-all" }' });
       }
       // SDK-native resume: the parked RunState continues from the interruption.
       try {
@@ -721,6 +727,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const ok = removeMcpServer(mcpMatch[1]);
     if (!ok) return void json(res, 404, { error: 'unknown server' });
     return void json(res, 200, { ok: true, servers: listMcpServers() });
+  }
+
+  // Force-reconnect: evicts the pooled client and connects fresh. The
+  // recovery path for "Connection closed" / 0-tools without re-registering.
+  const mcpRestartMatch = pathname.match(/^\/mcp\/([A-Za-z0-9_-]+)\/restart$/);
+  if (mcpRestartMatch && method === 'POST') {
+    const result = await restartMcpServer(mcpRestartMatch[1]);
+    if (!result.ok) {
+      const code = result.error === 'unknown server' ? 404 : result.error === 'server is off — turn it on first' ? 409 : 502;
+      return void json(res, code, { error: result.error, servers: listMcpServers() });
+    }
+    return void json(res, 200, { ok: true, status: result.status, tools: result.tools, servers: listMcpServers() });
   }
 
   // Settings: permissions rule list (the rules ARE the grants — flipping a

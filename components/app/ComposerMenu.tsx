@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { Sparkles, Paperclip } from 'lucide-react';
+import { Sparkles, Paperclip, Plug } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import FolderPickerModal from './FolderPickerModal';
 
@@ -10,10 +10,11 @@ interface ComposerMenuProps {
   onClose: () => void;
   botName: string;
   onSelectSkills: () => void;
+  onSelectMcp: () => void;
 }
 
-/** Action menu anchored to the composer's + button: skills + file upload. */
-export default function ComposerMenu({ open, onClose, botName, onSelectSkills }: ComposerMenuProps) {
+/** Action menu anchored to the composer's + button: skills + MCP + file upload. */
+export default function ComposerMenu({ open, onClose, botName, onSelectSkills, onSelectMcp }: ComposerMenuProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState<File[] | null>(null);
 
@@ -53,6 +54,22 @@ export default function ComposerMenu({ open, onClose, botName, onSelectSkills }:
                 <span className="min-w-0">
                   <span className="block text-sm font-bold text-navy">Skills</span>
                   <span className="block truncate text-xs text-heroslate">Enable or disable for {botName}</span>
+                </span>
+              </button>
+              <button
+                onClick={() => {
+                  onSelectMcp();
+                  onClose();
+                }}
+                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-ice"
+                role="menuitem"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-cta/10 text-cta">
+                  <Plug className="h-4 w-4" strokeWidth={2.2} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold text-navy">MCP servers</span>
+                  <span className="block truncate text-xs text-heroslate">Choose tools for {botName}</span>
                 </span>
               </button>
               <button

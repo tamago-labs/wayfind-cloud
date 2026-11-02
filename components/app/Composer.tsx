@@ -14,6 +14,7 @@ interface ComposerProps {
   onSend: (attachments: string[]) => void;
   onVoiceSend: (text: string) => void;
   onOpenSkills: () => void;
+  onOpenMcp: () => void;
   /** Cognito sub for usage attribution. */
   ownerId?: string;
   /** Other bots for @mentions (chief thread only). Empty = no autocomplete. */
@@ -34,7 +35,7 @@ function mentionQuery(draft: string): string | null {
   return m ? m[1] : null;
 }
 
-export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, ownerId, mentionNames = [], disabled = false, disabledHint, onRetry, onGoLocal }: ComposerProps) {
+export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend, onOpenSkills, onOpenMcp, ownerId, mentionNames = [], disabled = false, disabledHint, onRetry, onGoLocal }: ComposerProps) {
   const [plusOpen, setPlusOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   // Staged attachments: uploaded to the workspace immediately (they live
@@ -184,6 +185,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
           onClose={() => setPlusOpen(false)}
           botName={botName}
           onSelectSkills={onOpenSkills}
+          onSelectMcp={onOpenMcp}
         />
         <button
           type="button"

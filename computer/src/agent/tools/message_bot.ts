@@ -17,6 +17,8 @@ export interface RosterEntry {
   role?: string;
   /** Per-bot skill allowlist. Undefined = all enabled. */
   skills?: string[] | null;
+  /** Per-bot MCP allowlist. Undefined = all enabled. */
+  mcp?: string[] | null;
 }
 
 /** Send a message to another bot; resolves with that bot's reply text. */

@@ -53,7 +53,7 @@ export interface HistoryMessage {
 }
 
 /** Resolve a parked approval. The run resumes and streams on. */
-export async function decideApproval(approvalId: string, decision: 'approve' | 'reject'): Promise<boolean> {
+export async function decideApproval(approvalId: string, decision: 'approve' | 'reject' | 'approve-all'): Promise<boolean> {
   const res = await agentFetch(`/approvals/${approvalId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -68,6 +68,8 @@ export interface RosterBot {
   role?: string;
   /** Per-bot skill allowlist (Bot.skillsEnabled). Undefined = all enabled. */
   skills?: string[] | null;
+  /** Per-bot MCP allowlist (Bot.mcpEnabled). Undefined = all enabled. */
+  mcp?: string[] | null;
 }
 
 export async function postTask(
@@ -75,6 +77,7 @@ export async function postTask(
   conversationId?: string,
   system?: string,
   allowedSkills?: string[],
+  allowedMcp?: string[],
   opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string },
 ): Promise<string> {
   // The VM reports metered usage to the backend itself; hand it the API
@@ -94,6 +97,7 @@ export async function postTask(
       conversationId,
       system,
       allowedSkills,
+      allowedMcp,
       canManageBots: opts?.canManageBots === true,
       ...(opts?.roster ? { roster: opts.roster } : {}),
       ...(opts?.botName ? { botName: opts.botName } : {}),
@@ -515,6 +519,10 @@ export interface McpServer {
 
 export interface McpServerInput {
   command?: string[];
+  /** Claude-format split, e.g. command:"npx" + args:["-y","pkg"]. */
+  args?: string[];
+  /** Alias for environment (Claude-format configs). */
+  env?: Record<string, string>;
   environment?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
@@ -557,6 +565,14 @@ export async function patchMcpServer(name: string, cfg: McpServerInput): Promise
 export async function removeMcpServer(name: string): Promise<boolean> {
   const res = await agentFetch(`/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
   return res.ok;
+}
+
+/** Force-reconnect a server. Throws with the server's error message on failure. */
+export async function restartMcpServer(name: string): Promise<McpServer[]> {
+  const res = await agentFetch(`/mcp/${encodeURIComponent(name)}/restart`, { method: 'POST' });
+  const body = (await res.json()) as { servers?: McpServer[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `agent /mcp → ${res.status}`);
+  return body.servers ?? [];
 }
 
 export interface FileEntry {

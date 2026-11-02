@@ -48,7 +48,9 @@ export function createQuestionTool(_opts: GuardOpts, ask: AskHook): ReturnType<t
     description:
       'Ask the user questions mid-run when you need a decision, preference, or missing detail. ' +
       'Use for genuine forks (which approach? which scope?) — not for facts you can look up. ' +
-      'Keep to 1-3 questions, 2-4 options each, always with a decline/skip option.',
+      'Keep to 1-3 questions, 2-4 options each, always with a decline/skip option. ' +
+      'Secrets (passkeys, API keys) are collected through the custom-answer box — never ask the user to paste them in chat. ' +
+      'After the user answers, act on the answer immediately — never re-ask the same question in text.',
     parameters: z.object({
       questions: z.array(QuestionSchema).describe('Questions to ask (max 3)'),
     }),

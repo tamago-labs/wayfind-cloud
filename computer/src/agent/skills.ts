@@ -16,6 +16,7 @@ import { WORKSPACE_DIR } from '../core/config.js';
 
 import { approvalPolicy, guarded, type GuardOpts } from '../core/guard.js';
 import { check, loadRules } from '../core/permissions.js';
+import { detectMcpReferences } from './mcp.js';
 export interface Skill {
   name: string;
   description: string;
@@ -449,7 +450,30 @@ export function createSkillImportTool(_opts: GuardOpts): ReturnType<typeof tool>
     const errors = validateSkillPreview(preview, { allowOverwrite: overwrite });
     if (errors.length > 0) return `Cannot install "${preview.name}": ${errors.join(' ')}`;
     const dir = saveSkillPreview(preview);
-    return `Installed "${preview.name}" from ${preview.source} (${preview.files.length} file(s)).`;
+    let msg = `Installed "${preview.name}" from ${preview.source} (${preview.files.length} file(s)).`;
+    // Skill-aware MCP: if the skill references MCP servers, the skill alone
+    // is not enough — surface candidates so the model asks to install them.
+    // (A genuine fork, not a confirm: the question tool is appropriate here.)
+    try {
+      const refs = detectMcpReferences(dir);
+      if (refs.length > 0) {
+        const lines = refs.map((r) => {
+          const how = r.url ? r.url : (r.command ?? []).join(' ');
+          const env = r.envKeys.length > 0 ? ` (needs env: ${r.envKeys.join(', ')})` : '';
+          return `- ${r.name}: ${how}${env} [from ${r.source}]`;
+        });
+        msg +=
+          `\nThis skill references ${refs.length} MCP server(s) it needs to actually work:\n${lines.join('\n')}\n` +
+          `Ask the user with the question tool whether to install each one — one question can cover install + ` +
+          `collecting any missing env values via custom answers. Install approved ones with install_mcp_server ` +
+          `(show the exact command/URL + env KEY NAMES first; the approval card is the confirm). ` +
+          `Local-path rule: run server checkouts already on the computer directly, else npx -y — never npm install -g. ` +
+          `Paths on the user's own machine (C:\\…, /Users/…) do not exist on the computer.`;
+      }
+    } catch {
+      // Detection is best-effort — the install itself already succeeded.
+    }
+    return msg;
   };
 
   return tool({
@@ -566,4 +590,6 @@ export const SKILL_IMPORT_GUIDANCE =
   'The approval card is the confirm step — do not add a question-tool confirm on top. ' +
   'But when a source holds several skills and the user has not chosen yet, use the question tool ' +
   'so they can pick (a genuine fork, not a confirm). ' +
-  'Never execute bundled scripts; skills are markdown only.';
+  'Never execute bundled scripts; skills are markdown only. ' +
+  'Never research packages via shell (no npm view/pack, tarball downloads, or cache cleaning) — ' +
+  'read the skill docs or ask the user instead.';

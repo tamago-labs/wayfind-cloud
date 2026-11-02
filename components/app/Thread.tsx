@@ -23,13 +23,13 @@ function isImagePath(p: string): boolean {
 
 interface ThreadProps {
   bot: SeedBot;
-  onApprove: (msgIndex: number, ok: boolean) => void;
+  onApprove: (msgIndex: number, decision: 'approve' | 'reject' | 'approve-all') => void;
   onAnswer?: (msgIndex: number, answers: string[][]) => void;
   onBotRequest?: (msgIndex: number, ok: boolean) => void;
 }
 
 /** Free-text answer row inside a question card. Sends the typed text as the answer. */
-function CustomAnswer({ onSend }: { onSend: (text: string) => void }) {
+function CustomAnswer({ onSend, secret }: { onSend: (text: string) => void; secret?: boolean }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   if (!open) {
@@ -54,6 +54,9 @@ function CustomAnswer({ onSend }: { onSend: (text: string) => void }) {
       <input
         // eslint-disable-next-line jsx-a11y/no-autofocus -- user explicitly opened this row
         autoFocus
+        type={secret ? 'password' : 'text'}
+        autoComplete="off"
+        spellCheck={false}
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Type your answer…"
@@ -70,11 +73,11 @@ function CustomAnswer({ onSend }: { onSend: (text: string) => void }) {
   );
 }
 
-function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; onOk: () => void; onNo: () => void }) {  return (
+function ApprovalCard({ msg, onOk, onNo, onAll }: { msg: Extract<Msg, { t: 'ask' }>; onOk: () => void; onNo: () => void; onAll: () => void }) {  return (
     <div className="msg-in rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <p className="font-bold text-navy">{msg.title}</p>
       <p className="mt-1 text-heroslate">{msg.x}</p>
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {msg.done === undefined ? (
           <>
             <button
@@ -83,6 +86,15 @@ function ApprovalCard({ msg, onOk, onNo }: { msg: Extract<Msg, { t: 'ask' }>; on
             >
               {msg.ok}
             </button>
+            {msg.permission === 'shell' && (
+              <button
+                onClick={onAll}
+                className="rounded-full border border-navy/30 px-4 py-1.5 text-sm font-semibold text-navy hover:bg-slate-50"
+                title="Auto-approve every shell command for the rest of this run. Never saved."
+              >
+                Allow all shell this run
+              </button>
+            )}
             <button
               onClick={onNo}
               className="rounded-full border border-slate-300 px-4 py-1.5 text-sm font-semibold text-navy hover:bg-slate-50"
@@ -196,6 +208,9 @@ export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: Threa
                         ))}
                         <CustomAnswer
                           key={`custom-${qi}`}
+                          secret={/passkey|password|secret|api[-_ ]?key|token|mnemonic|private/i.test(
+                            `${q.header ?? ''} ${q.question}`,
+                          )}
                           onSend={(text) => {
                             const answers = m.questions.map((qq, j) => (j === qi ? [text] : []));
                             onAnswer?.(i, answers);
@@ -258,7 +273,7 @@ export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: Threa
               </div>
             );
           }
-          return <ApprovalCard key={i} msg={m} onOk={() => onApprove(i, true)} onNo={() => onApprove(i, false)} />;
+          return <ApprovalCard key={i} msg={m} onOk={() => onApprove(i, 'approve')} onNo={() => onApprove(i, 'reject')} onAll={() => onApprove(i, 'approve-all')} />;
         })}
       </div>
     </div>

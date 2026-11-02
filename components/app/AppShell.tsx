@@ -10,6 +10,7 @@ import Roster from './Roster';
 import NewBotModal from './Roster/NewBotModal';
 import BotPanel, { type BotEdits } from './BotPanel';
 import SkillsPickerModal from './SkillsPickerModal';
+import McpPickerModal from './McpPickerModal';
 import Thread from './Thread';
 import Composer from './Composer';
 import { answerBotRequest, answerQuestion, decideApproval, getHistory, isCloudTransport, pollPending, postTask, streamRun, streamRunProgressive, summarizeRole } from '@/lib/agent';
@@ -28,7 +29,7 @@ const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
 // StrictMode double-effects so the hello run fires exactly once per bot).
 const helloAttempted = new Set<string>();
 
-type ViewBot = SeedBot & { id: string | null; isChiefOfStaff: boolean; skillsEnabled: string[] | null };
+  type ViewBot = SeedBot & { id: string | null; isChiefOfStaff: boolean; skillsEnabled: string[] | null; mcpEnabled: string[] | null };
 
 export default function AppShell() {
   const { user } = useAuthenticator();
@@ -41,6 +42,7 @@ export default function AppShell() {
   const [botModalOpen, setBotModalOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
   // Chat transport mirror of the RosterFooter toggle (local :8080 vs cloud
   // VM). Re-renders the banner on flip via the shared transport event.
   const [transport, setTransport] = useState<'local' | 'cloud'>('local');
@@ -88,6 +90,7 @@ export default function AppShell() {
             role: b.role ?? '',
             isChiefOfStaff: b.isChiefOfStaff ?? false,
             skillsEnabled: (b.skillsEnabled as string[] | null | undefined) ?? null,
+            mcpEnabled: (b.mcpEnabled as string[] | null | undefined) ?? null,
             color: validColors.includes(b.color as MascotColor) ? (b.color as MascotColor) : 'amber',
             shape: validShapes.includes(b.shape as MascotShape) ? (b.shape as MascotShape) : 'blob',
             busy: false,
@@ -176,6 +179,7 @@ export default function AppShell() {
     const targetRole = bot.role;
     const targetIsChief = bot.isChiefOfStaff;
     const targetSkills = bot.skillsEnabled;
+    const targetMcp = bot.mcpEnabled;
     setDraft('');
     // Hello runs are bot-initiated: no user bubble, just the typing row.
     // Failures stay silent so the thread simply starts empty.
@@ -198,13 +202,13 @@ export default function AppShell() {
             ? `You are "${targetName}". Role: ${targetRole}.`
             : `You are "${targetName}". Your role is not defined yet.`
           : undefined;
-        const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined, {
+        const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined, targetMcp ?? undefined, {
           canManageBots: targetIsChief,
           // Chief-only: the model sees the roster so it can propose bots and @mention them.
           roster: targetIsChief
             ? bots
                 .filter((b) => b.id)
-                .map((b) => ({ id: b.id as string, name: b.name, role: b.role, skills: b.skillsEnabled }))
+                .map((b) => ({ id: b.id as string, name: b.name, role: b.role, skills: b.skillsEnabled, mcp: b.mcpEnabled }))
             : undefined,
           botName: targetName,
           ...(attachments.length > 0 ? { attachments } : {}),
@@ -256,6 +260,7 @@ export default function AppShell() {
                   ok: 'Approve',
                   after: 'Approved — continuing.',
                   approvalId: a.approvalId,
+                  permission: a.permission,
                 },
               ],
             };
@@ -349,11 +354,15 @@ export default function AppShell() {
     );
   };
 
-  const approve = (msgIndex: number, ok: boolean) => {
+  const approve = (msgIndex: number, decision: 'approve' | 'reject' | 'approve-all') => {
+    const ok = decision !== 'reject';
     patchBot(cur, (b) => {
       const target = b.msgs[msgIndex];
       if (!target || target.t !== 'ask' || target.done !== undefined) return b;
-      const follow: Msg = { t: 'b', x: ok ? target.after : FOLLOW_UP_NO };
+      const follow: Msg = {
+        t: 'b',
+        x: decision === 'approve-all' ? 'Shell allowed for the rest of this run.' : ok ? target.after : FOLLOW_UP_NO,
+      };
       const msgs = b.msgs.map((m, j) =>
         j === msgIndex && m.t === 'ask' ? { ...m, done: ok ? ('ok' as const) : ('no' as const) } : m,
       );
@@ -363,7 +372,7 @@ export default function AppShell() {
     const target = bot?.msgs[msgIndex];
     if (target && target.t === 'ask' && target.approvalId) {
       const approvalId = target.approvalId;
-      void decideApproval(approvalId, ok ? 'approve' : 'reject').catch((err) =>
+      void decideApproval(approvalId, decision).catch((err) =>
         console.error('[AppShell] approval decision failed:', err),
       );
     }
@@ -391,6 +400,19 @@ export default function AppShell() {
     if (target.id) {
       void dataClient.models.Bot.update({ id: target.id, skillsEnabled: enabled }).catch((err) =>
         console.error('[AppShell] skills sync failed (applies next sandbox push):', err),
+      );
+    }
+  };
+
+  // Returns an error message on failure, null on success.
+  const saveBotMcp = (enabled: string[] | null) => {
+    const target = bots[cur];
+    if (!target) return;
+    patchBot(cur, (b) => ({ ...b, mcpEnabled: enabled }));
+    // Backend may lag the schema push — apply locally first, sync best-effort.
+    if (target.id) {
+      void dataClient.models.Bot.update({ id: target.id, mcpEnabled: enabled }).catch((err) =>
+        console.error('[AppShell] mcp sync failed (applies next sandbox push):', err),
       );
     }
   };
@@ -494,7 +516,7 @@ export default function AppShell() {
       }
       console.log('[AppShell] bot created:', data.id);
       setBots((prev) => [
-        { id: data.id, name, role: isChief ? 'Chief of staff' : (role ?? ''), isChiefOfStaff: isChief, skillsEnabled: null, color, shape, busy: false, msgs: [] },
+        { id: data.id, name, role: isChief ? 'Chief of staff' : (role ?? ''), isChiefOfStaff: isChief, skillsEnabled: null, mcpEnabled: null, color, shape, busy: false, msgs: [] },
         ...prev,
       ]);
       return { botId: data.id, error: null };
@@ -679,6 +701,7 @@ export default function AppShell() {
           onSend={send}
           onVoiceSend={sendText}
           onOpenSkills={() => setSkillsOpen(true)}
+          onOpenMcp={() => setMcpOpen(true)}
           ownerId={user?.userId}
           mentionNames={bot.isChiefOfStaff ? bots.filter((b) => b.id && b.id !== bot.id).map((b) => b.name) : []}
           disabled={gated}
@@ -709,6 +732,13 @@ export default function AppShell() {
         botName={bot.name}
         enabled={bot.skillsEnabled}
         onSave={saveBotSkills}
+      />
+      <McpPickerModal
+        open={mcpOpen}
+        onClose={() => setMcpOpen(false)}
+        botName={bot.name}
+        enabled={bot.mcpEnabled}
+        onSave={saveBotMcp}
       />
     </div>
   );

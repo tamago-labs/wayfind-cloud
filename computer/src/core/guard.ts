@@ -39,6 +39,8 @@ export interface GuardOpts {
   onFileSaved?: (relPath: string) => void;
   /** Per-bot skill allowlist. Undefined = all installed skills enabled; [] = none. */
   allowedSkills?: string[];
+  /** Per-bot MCP allowlist. Undefined = all active servers enabled; [] = none. */
+  allowedMcp?: string[];
 }
 
 interface RunCtx {
@@ -64,7 +66,11 @@ export function grantForRun(runId: string, permission: string, target: string): 
 }
 
 function hasGrant(runId: string, permission: string, target: string): boolean {
-  return runGrants.get(runId)?.has(grantKey(permission, target)) ?? false;
+  const grants = runGrants.get(runId);
+  if (!grants) return false;
+  // Exact grant, or a run-scoped blanket grant (permission + '*' —
+  // set by "allow all for this run"; never persisted to rules).
+  return grants.has(grantKey(permission, target)) || grants.has(grantKey(permission, '*'));
 }
 
 /** Default: enforcing — asks park until approved. Set

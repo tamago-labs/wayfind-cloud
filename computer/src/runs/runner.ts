@@ -20,6 +20,7 @@ import type { BotRequest, BotRequestResult } from '../agent/tools/create_bot.js'
 import type { MessageRunner, RosterEntry } from '../agent/tools/message_bot.js';
 import type { ChildRequest, ChildResult } from '../agent/tools/task.js';
 import { clearRunLog, grantForRun, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
+import { readMcpConfig } from '../agent/mcp.js';
 import { check, loadRules, saveRules } from '../core/permissions.js';
 import { resolveModel } from '../providers/providers.js';
 import { reportUsage, sumResponseTokens } from './usage.js';
@@ -32,7 +33,7 @@ export interface RunEvent {
   permission?: string;
   target?: string;
   auto?: boolean;
-  decision?: 'approve' | 'reject';
+  decision?: 'approve' | 'reject' | 'approve-all';
   qid?: string;
   questions?: QuestionPrompt[];
   bid?: string;
@@ -60,6 +61,8 @@ export interface Run {
   interruptions: PendingApproval[];
   /** Per-bot skill allowlist, mirrored from the start request so resume rebuilds the same agent. */
   allowedSkills?: string[];
+  /** Per-bot MCP allowlist (Bot.mcpEnabled), mirrored like allowedSkills. */
+  allowedMcp?: string[];
   /** Chief-of-staff capability: create_bot tool + bot_request hook. Mirrored so resume rebuilds the same agent. */
   canManageBots?: boolean;
   /** Team roster for @mentions (chief thread). Mirrored so resume rebuilds the same agent. */
@@ -396,6 +399,22 @@ export function listPendingApprovals(): PendingApproval[] {
   return out;
 }
 
+/** Summarize tool arguments for the approval card. Known secret values
+ * (MCP env/header values) are masked — they must never reach cards/logs. */
+function scrubSecrets(s: string): string {
+  let out = s;
+  try {
+    for (const cfg of Object.values(readMcpConfig())) {
+      for (const v of [...Object.values(cfg.environment ?? {}), ...Object.values((cfg as { env?: Record<string, string> }).env ?? {}), ...Object.values(cfg.headers ?? {})]) {
+        if (typeof v === 'string' && v.length >= 4) out = out.split(v).join('***');
+      }
+    }
+  } catch {
+    // Best-effort — a scrub failure must never break the card.
+  }
+  return out;
+}
+
 /** Summarize tool arguments for the approval card. */
 function describeTarget(toolName: string, argsText: string): string {
   try {
@@ -414,13 +433,15 @@ function describeTarget(toolName: string, argsText: string): string {
       args.input ??
       argsText;
     const s = typeof first === 'string' ? first : JSON.stringify(first);
-    return s.length > 160 ? s.slice(0, 160) + '…' : s;
+    const short = s.length > 160 ? s.slice(0, 160) + '…' : s;
+    return scrubSecrets(short);
   } catch {
-    return argsText.length > 160 ? argsText.slice(0, 160) + '…' : argsText;
+    const short = argsText.length > 160 ? argsText.slice(0, 160) + '…' : argsText;
+    return scrubSecrets(short);
   }
 }
 
-export async function resolveApproval(id: string, decision: 'approve' | 'reject'): Promise<boolean> {
+export async function resolveApproval(id: string, decision: 'approve' | 'reject' | 'approve-all'): Promise<boolean> {
   const runState = [...runs.values()].find((r) => r.parked && r.interruptions.some((a) => a.id === id));
   if (!runState || !runState.stateJson) return false;
   const agent = await createTriageAgent(
@@ -451,18 +472,20 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
     return (raw.callId ?? '') === id;
   });
   if (!item) return false;
-  if (decision === 'approve') state.approve(item);
+  if (decision === 'approve' || decision === 'approve-all') state.approve(item);
   else state.reject(item);
   runState.events.push({ type: 'approval-resolved', approvalId: id, decision });
   const decided = runState.interruptions.find((a) => a.id === id);
   runState.interruptions = runState.interruptions.filter((a) => a.id !== id);
   // Per-run grant: approving once auto-passes the same permission+target
   // for the rest of this run — the user doesn't re-click every call.
-  // Persistent grant: an approval also writes an allow rule for the exact
-  // target, so future runs don't ask for it again. The rules file is the
-  // memory — clearing it resets everything (undo restores the backup).
-  if (decision === 'approve' && decided) {
-    grantForRun(runState.id, decided.permission, decided.target);
+  // "approve-all" grants permission+* for this run only (the "allow all
+  // shell this run" button) — deliberately NOT persisted to rules.
+  // Persistent grant: a plain approval also writes an allow rule for the
+  // exact target, so future runs don't ask for it again. The rules file is
+  // the memory — clearing it resets everything (undo restores the backup).
+  if ((decision === 'approve' || decision === 'approve-all') && decided) {
+    grantForRun(runState.id, decided.permission, decision === 'approve-all' ? '*' : decided.target);
     try {
       const rules = loadRules();
       if (check(rules, decided.permission, decided.target) !== 'allow') {
@@ -492,9 +515,10 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
  * would duplicate every ask (the grant lookup runs on the same target the
  * interruption already used) and phantom-card child-run calls that already
  * executed. */
-function auditTo(runId: string, allowedSkills?: string[]): GuardOpts {
+function auditTo(runId: string, allowedSkills?: string[], allowedMcp?: string[]): GuardOpts {
   return {
     allowedSkills,
+    allowedMcp,
     onApproval: (a) => {
       console.log(`[${a.auto ? 'auto-allow' : 'ask-audit'}] run ${runId}: ${a.permission} "${a.target}"`);
     },
@@ -538,6 +562,8 @@ export interface StartRunOpts {
   conversationId?: string;
   /** Per-bot skill allowlist (Bot.skillsEnabled). Undefined = all enabled; [] = none. */
   allowedSkills?: string[];
+  /** Per-bot MCP allowlist (Bot.mcpEnabled). Undefined = all enabled; [] = none. */
+  allowedMcp?: string[];
   /** Chief-of-staff run: exposes the create_bot tool (confirm card in frontend). */
   canManageBots?: boolean;
   /** Team roster (all bots incl. self) for @mentions. Only the chief thread sends it. */
@@ -619,6 +645,7 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
         depth: fresh ? depth + 1 : depth,
         conversationId: runState.conversationId,
         allowedSkills: runState.allowedSkills,
+        allowedMcp: runState.allowedMcp,
         ownerId: runState.ownerId,
         subagentType: req.subagentType,
         resumeTaskId: fresh ? undefined : req.taskId,
@@ -672,6 +699,7 @@ function makeMessageRunner(runState: Run): MessageRunner {
         conversationId: target.id,
         system,
         allowedSkills: target.skills ?? undefined,
+        allowedMcp: target.mcp ?? undefined,
         depth: runState.depth + 1,
         delegated: true,
         ownerId: runState.ownerId,
@@ -825,7 +853,7 @@ function extractWebSources(raw: unknown): Array<{ title: string; url: string }> 
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   try {
-    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, runState.canManageBots ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) } : undefined);
+    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills, runState.allowedMcp), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, runState.canManageBots ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) } : undefined);
     // History isolation: children get ONLY their prompt. Top-level input is
     // the live turn (plus JSONL seed on first contact); the session carries
     // everything else. The brief rides bracketed every turn, never persisted.
@@ -880,6 +908,7 @@ function newRunState(opts: StartRunOpts): Run {
     },
     conversationId: opts.conversationId,
     allowedSkills: opts.allowedSkills,
+    allowedMcp: opts.allowedMcp,
     canManageBots: opts.canManageBots,
     roster: opts.roster,
     botName: opts.botName,

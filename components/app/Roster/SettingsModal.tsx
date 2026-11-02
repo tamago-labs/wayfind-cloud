@@ -18,6 +18,7 @@ import {
   saveMcpServer,
   patchMcpServer,
   removeMcpServer,
+  restartMcpServer,
   type PermissionRule,
   type ProvidersState,
   type InstalledSkill,
@@ -378,6 +379,7 @@ function McpTab() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState<string | null>(null);
   // Add form.
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -427,6 +429,7 @@ function McpTab() {
     }
     if (busy) return;
     setConfirming(null);
+    setRestarting(null);
     setBusy(true);
     setError(null);
     try {
@@ -435,6 +438,28 @@ function McpTab() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Remove failed.');
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRestart = async (srvName: string) => {
+    if (busy) return;
+    setRestarting(srvName);
+    setConfirming(null);
+    setBusy(true);
+    setError(null);
+    try {
+      setServers(await restartMcpServer(srvName));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Restart failed.');
+      // Refresh anyway — the server row carries the latest error.
+      try {
+        await refresh();
+      } catch {
+        // Refresh failure already surfaced above; ignore.
+      }
+    } finally {
+      setRestarting(null);
       setBusy(false);
     }
   };
@@ -559,6 +584,14 @@ function McpTab() {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    onClick={() => void onRestart(s.name)}
+                    disabled={busy || !s.isActive}
+                    title={s.isActive ? 'Reconnect this server' : 'Turn on first'}
+                    className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-navy hover:bg-white disabled:opacity-50"
+                  >
+                    {restarting === s.name ? '…' : 'Restart'}
+                  </button>
                   <button
                     onClick={() => void onToggle(s)}
                     disabled={busy}
