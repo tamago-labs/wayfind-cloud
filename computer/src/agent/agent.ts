@@ -19,6 +19,7 @@ import { createMessageBotTool, rosterDirectory, type MessageRunner, type RosterE
 import { createTaskTool, type RunChild } from './tools/task.js';
 import { createGroundedSearchTool } from './tools/grounded.js';
 import { createClockTool } from './tools/clock.js';
+import { createScheduleTool } from './tools/schedule.js';
 import { createImageTools } from './tools/image.js';
 import { createFileReaderTool } from './tools/read_file.js';
 
@@ -46,7 +47,7 @@ export interface AgentSelection {
 }
 
 /** Tools unavailable to read-only research subagents. */
-const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot', 'generate_image', 'edit_image', 'install_mcp_server', 'restart_mcp_server']);
+const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot', 'generate_image', 'edit_image', 'install_mcp_server', 'restart_mcp_server', 'schedule_task']);
 
 /** Cross-bot messaging for the chief thread: runner + visible roster. */
 export interface TeamChannel {
@@ -110,6 +111,8 @@ export async function createTriageAgent(
   // Time: the model is otherwise time-blind — scheduling and "is this
   // from this month?" checks need a clock. Read-only, never gated.
   tools.push(createClockTool(opts));
+  // Chat-created schedules (needsApproval always — autonomous future runs).
+  tools.push(createScheduleTool(opts));
   // File reading (images + PDFs via Meta-direct 1.3, text locally).
   // Read-only like grounded_search — no card. Allowed in research too.
   tools.push(createFileReaderTool(opts));

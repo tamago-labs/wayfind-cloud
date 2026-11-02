@@ -8,7 +8,7 @@ import TabComputer from './TabComputer';
 const tabs = ['Details', 'Library', 'Computer'] as const;
 type Tab = (typeof tabs)[number];
 
-export default function BotPanelTabs({ botId }: { botId: string | null }) {
+export default function BotPanelTabs({ botId, ownerId }: { botId: string | null; ownerId?: string }) {
   const [tab, setTab] = useState<Tab>('Details');
 
   return (
@@ -29,7 +29,7 @@ export default function BotPanelTabs({ botId }: { botId: string | null }) {
         ))}
       </div>
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto pr-0.5" role="tabpanel">
-        {tab === 'Details' && <TabDetails botId={botId} />}
+        {tab === 'Details' && <TabDetails botId={botId} ownerId={ownerId} />}
         {tab === 'Library' && <TabLibrary />}
         {tab === 'Computer' && <TabComputer />}
       </div>

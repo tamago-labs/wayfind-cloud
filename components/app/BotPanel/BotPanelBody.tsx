@@ -7,11 +7,12 @@ import type { BotEdits } from './index';
 interface BotPanelBodyProps {
   value: BotEdits;
   botId: string | null;
+  ownerId?: string;
   synced: boolean;
   onEdit: () => void;
 }
 
-export default function BotPanelBody({ value: v, botId, synced, onEdit }: BotPanelBodyProps) {
+export default function BotPanelBody({ value: v, botId, ownerId, synced, onEdit }: BotPanelBodyProps) {
   return (
     <>
       <button
@@ -31,7 +32,7 @@ export default function BotPanelBody({ value: v, botId, synced, onEdit }: BotPan
       <p className="mt-5 truncate text-center text-lg font-bold text-navy">
         {v.name} <span className="text-sm font-medium text-heroslate">· {v.role || 'No role yet'}</span>
       </p>
-      <BotPanelTabs botId={botId} />
+      <BotPanelTabs botId={botId} ownerId={ownerId} />
     </>
   );
 }

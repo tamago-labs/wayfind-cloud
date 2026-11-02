@@ -78,7 +78,7 @@ export async function postTask(
   system?: string,
   allowedSkills?: string[],
   allowedMcp?: string[],
-  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string },
+  opts?: { canManageBots?: boolean; roster?: RosterBot[]; botName?: string; attachments?: string[]; ownerId?: string; idToken?: string },
 ): Promise<string> {
   // The VM reports metered usage to the backend itself; hand it the API
   // base (the backend can't know its own Function URL). Best-effort: local
@@ -103,6 +103,10 @@ export async function postTask(
       ...(opts?.botName ? { botName: opts.botName } : {}),
       ...(opts?.attachments?.length ? { attachments: opts.attachments } : {}),
       ...(opts?.ownerId ? { ownerId: opts.ownerId } : {}),
+      // User JWT for backend-authenticated agent tools (e.g. schedule_task)
+      // when the computer itself holds no usage token (local dev). The VM
+      // only forwards it to the backend — never logs or persists it.
+      ...(opts?.idToken ? { idToken: opts.idToken } : {}),
       ...(apiUrl ? { apiUrl } : {}),
     }),
   });

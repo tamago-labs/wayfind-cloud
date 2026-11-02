@@ -71,6 +71,9 @@ export interface Run {
   botName?: string;
   /** Cognito sub threaded from POST /task. Per-user metering key. */
   ownerId?: string;
+  /** Frontend-known backend base + user JWT (local-dev backend auth). */
+  apiUrl?: string;
+  idToken?: string;
   /** Workspace images this run saved (generate/edit_image) — completion
    * appends markdown for any the model failed to echo. */
   generatedImages: string[];
@@ -445,7 +448,7 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
   const runState = [...runs.values()].find((r) => r.parked && r.interruptions.some((a) => a.id === id));
   if (!runState || !runState.stateJson) return false;
   const agent = await createTriageAgent(
-    auditTo(runState.id, runState.allowedSkills),
+    auditTo(runState.id, runState.allowedSkills, runState.allowedMcp, runState.ownerId, runState.conversationId, runState.apiUrl, runState.idToken),
     runState.sel,
     makeRunChild(runState),
     makeQuestionHook(runState),
@@ -515,10 +518,14 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
  * would duplicate every ask (the grant lookup runs on the same target the
  * interruption already used) and phantom-card child-run calls that already
  * executed. */
-function auditTo(runId: string, allowedSkills?: string[], allowedMcp?: string[]): GuardOpts {
+function auditTo(runId: string, allowedSkills?: string[], allowedMcp?: string[], ownerId?: string, conversationId?: string, apiUrl?: string, idToken?: string): GuardOpts {
   return {
     allowedSkills,
     allowedMcp,
+    ownerId,
+    conversationId,
+    apiUrl,
+    userToken: idToken,
     onApproval: (a) => {
       console.log(`[${a.auto ? 'auto-allow' : 'ask-audit'}] run ${runId}: ${a.permission} "${a.target}"`);
     },
@@ -572,6 +579,10 @@ export interface StartRunOpts {
   botName?: string;
   /** Cognito sub from the frontend. Threads into every usage event. */
   ownerId?: string;
+  /** Frontend-known backend base (local dev can reach the deployed API). */
+  apiUrl?: string;
+  /** User JWT (local dev): forwarded to backend-authed agent tools. Never logged. */
+  idToken?: string;
   /** Bot brief (name/role). Prepended as bracketed context on every turn; never persisted. */
   system?: string;
   /** Workspace-relative attachment paths (chat paperclip). Images are
@@ -647,6 +658,8 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
         allowedSkills: runState.allowedSkills,
         allowedMcp: runState.allowedMcp,
         ownerId: runState.ownerId,
+        apiUrl: runState.apiUrl,
+        idToken: runState.idToken,
         subagentType: req.subagentType,
         resumeTaskId: fresh ? undefined : req.taskId,
       });
@@ -703,6 +716,8 @@ function makeMessageRunner(runState: Run): MessageRunner {
         depth: runState.depth + 1,
         delegated: true,
         ownerId: runState.ownerId,
+        apiUrl: runState.apiUrl,
+        idToken: runState.idToken,
       });
       runState.events.push({ type: 'agent', agent: `@${target.name} replied` });
       appendTranscript(runState.id, 'tool', `@${target.name} replied`, runState.parentId, runState.conversationId);
@@ -853,7 +868,7 @@ function extractWebSources(raw: unknown): Array<{ title: string; url: string }> 
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   try {
-    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills, runState.allowedMcp), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, runState.canManageBots ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) } : undefined);
+    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills, runState.allowedMcp, runState.ownerId, runState.conversationId, runState.apiUrl, runState.idToken), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, runState.canManageBots ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) } : undefined);
     // History isolation: children get ONLY their prompt. Top-level input is
     // the live turn (plus JSONL seed on first contact); the session carries
     // everything else. The brief rides bracketed every turn, never persisted.
@@ -913,6 +928,8 @@ function newRunState(opts: StartRunOpts): Run {
     roster: opts.roster,
     botName: opts.botName,
     ownerId: opts.ownerId,
+    apiUrl: opts.apiUrl,
+    idToken: opts.idToken,
     depth: opts.depth ?? 0,
     events: [],
     done: false,

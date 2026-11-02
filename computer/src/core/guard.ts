@@ -41,6 +41,14 @@ export interface GuardOpts {
   allowedSkills?: string[];
   /** Per-bot MCP allowlist. Undefined = all active servers enabled; [] = none. */
   allowedMcp?: string[];
+  /** Cognito sub of the run owner (metering + schedule attribution). */
+  ownerId?: string;
+  /** Conversation scope = frontend Bot id (schedule attribution). */
+  conversationId?: string;
+  /** Frontend-known backend base (local dev can reach the deployed API). */
+  apiUrl?: string;
+  /** User JWT (local dev): forwarded to backend-authed agent tools. Never logged. */
+  userToken?: string;
 }
 
 interface RunCtx {

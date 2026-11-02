@@ -226,6 +226,9 @@ export const handler = async (
     }
     const { data: entry, errors } = await dataClient.models.CreditLedger.create({
       ownerId: usageOwner,
+      // allow.owner().to(["read"]) matches `owner`; IAM-created rows don't
+      // get it auto-filled, so set it explicitly.
+      owner: usageOwner,
       delta,
       reason,
       balanceAfter,
@@ -335,6 +338,9 @@ export const handler = async (
     }
     const { data: routine, errors } = await dataClient.models.Routine.create({
       ownerId: schedOwner,
+      // allow.owner() matches the `owner` attribute; IAM-created rows don't
+      // get it auto-filled, so set it explicitly (same as Bot creates).
+      owner: schedOwner,
       botId,
       ...(typeof schedBody.name === "string" && schedBody.name.trim()
         ? { name: schedBody.name.trim().slice(0, 80) }

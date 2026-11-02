@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Menu, PanelRight } from 'lucide-react';
 import { useAuthenticator } from '@aws-amplify/ui-react';
+import { fetchAuthSession } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '@/amplify/data/resource';
 import Mascot, { type MascotColor, type MascotShape } from '@/components/Mascot';
@@ -202,6 +203,12 @@ export default function AppShell() {
             ? `You are "${targetName}". Role: ${targetRole}.`
             : `You are "${targetName}". Your role is not defined yet.`
           : undefined;
+        // User JWT for backend-authenticated agent tools (e.g.
+        // schedule_task) when the computer holds no usage token (local
+        // dev). Forwarded only — never logged or persisted.
+        const idToken = await fetchAuthSession()
+          .then((s) => s.tokens?.idToken?.toString())
+          .catch(() => undefined);
         const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined, targetMcp ?? undefined, {
           canManageBots: targetIsChief,
           // Chief-only: the model sees the roster so it can propose bots and @mention them.
@@ -213,6 +220,7 @@ export default function AppShell() {
           botName: targetName,
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(user?.userId ? { ownerId: user.userId } : {}),
+          ...(idToken ? { idToken } : {}),
         });
         // One handler set feeds both the SSE stream and the pending-poll
         // below, so a parked run surfaces its card even when the stream is
@@ -716,6 +724,7 @@ export default function AppShell() {
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
         botId={bot.id}
+        ownerId={user?.userId}
         name={bot.name}
         role={bot.role}
         isChiefOfStaff={bot.isChiefOfStaff}

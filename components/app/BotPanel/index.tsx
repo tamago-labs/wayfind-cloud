@@ -19,6 +19,7 @@ interface BotPanelProps {
   open: boolean;
   onClose: () => void;
   botId: string | null;
+  ownerId?: string;
   name: string;
   role: string;
   isChiefOfStaff: boolean;
@@ -29,7 +30,7 @@ interface BotPanelProps {
   onDelete: () => Promise<string | null>;
 }
 
-export default function BotPanel({ open, onClose, botId, name, role, isChiefOfStaff, color, shape, synced, onSave, onDelete }: BotPanelProps) {
+export default function BotPanel({ open, onClose, botId, ownerId, name, role, isChiefOfStaff, color, shape, synced, onSave, onDelete }: BotPanelProps) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const v = { name, role, isChiefOfStaff, color, shape };
@@ -43,7 +44,7 @@ export default function BotPanel({ open, onClose, botId, name, role, isChiefOfSt
     >
       <div className="flex h-full w-80 flex-col p-5">
         <BotPanelHeader onClose={onClose} onDeleteClick={() => setDeleteOpen(true)} />
-        <BotPanelBody value={v} botId={botId} synced={synced} onEdit={() => setEditOpen(true)} />
+        <BotPanelBody value={v} botId={botId} ownerId={ownerId} synced={synced} onEdit={() => setEditOpen(true)} />
       </div>
       <DeleteBotModal
         open={deleteOpen}

@@ -173,11 +173,11 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
                 Retry
               </button>
             )}
-            {onGoLocal && (
+            {/*{onGoLocal && (
               <button type="button" onClick={onGoLocal} className="underline hover:text-slate-200">
                 Use local
               </button>
-            )}
+            )}*/}
           </span>
         )}
         <ComposerMenu

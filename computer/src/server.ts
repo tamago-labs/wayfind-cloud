@@ -332,7 +332,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return void json(res, 503, { error: 'computer not initialized — POST /hooks/run first' });
     }
     try {
-      const { text, conversationId, system, provider, model, allowedSkills, allowedMcp, canManageBots, roster, botName, attachments, ownerId, apiUrl } = JSON.parse(await readBody(req)) as {
+      const { text, conversationId, system, provider, model, allowedSkills, allowedMcp, canManageBots, roster, botName, attachments, ownerId, apiUrl, idToken } = JSON.parse(await readBody(req)) as {
         text?: string;
         conversationId?: string;
         system?: string;
@@ -348,6 +348,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         // Frontend-known API base (amplify_outputs): lets usage events
         // reach the backend without backend self-knowledge of its URL.
         apiUrl?: string;
+        // User JWT (local dev): forwarded by agent tools that need backend
+        // auth when the computer holds no usage token. Never logged.
+        idToken?: string;
       };
       // Usage reporting needs the API base — refresh from every task (the
       // frontend always knows it; provision-time injection can't).
@@ -401,6 +404,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         ...(typeof botName === 'string' ? { botName: botName.slice(0, 40) } : {}),
         ...(attachments ? { attachments: attachments.slice(0, 5) } : {}),
         ...(typeof ownerId === 'string' && ownerId ? { ownerId: ownerId.slice(0, 128) } : {}),
+        ...(typeof apiUrl === 'string' && apiUrl ? { apiUrl } : {}),
+        ...(typeof idToken === 'string' && idToken ? { idToken } : {}),
       });
       return void json(res, 202, { runId: r.id });
     } catch {
