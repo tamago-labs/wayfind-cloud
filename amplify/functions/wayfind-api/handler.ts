@@ -16,6 +16,7 @@ import {
 import { createVerify, createPublicKey, randomUUID } from "crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { DynamoDBClient, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { CronExpressionParser } from "cron-parser";
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env as any);
@@ -23,6 +24,27 @@ Amplify.configure(resourceConfig, libraryOptions);
 const dataClient = generateClient<Schema>();
 const microvms = new LambdaMicrovmsClient({ region: env.AWS_REGION ?? process.env.AWS_REGION });
 const s3sync = new S3Client({ region: env.AWS_REGION ?? process.env.AWS_REGION });
+const dynamo = new DynamoDBClient({ region: env.AWS_REGION ?? process.env.AWS_REGION });
+
+/**
+ * Owner backfill for Lambda-created rows: AppSync auto-fills `owner` only
+ * for userPool calls, and the generated create inputs reject an explicit
+ * `owner` — so without this, owner-scoped reads (Schedules tab, ledger
+ * history) silently return []. Table names come from backend.ts env.
+ * On failure the caller should delete the orphan row and 500.
+ */
+async function stampOwner(tableEnv: string | undefined, id: string, owner: string): Promise<void> {
+  if (!tableEnv) throw new Error("owner-stamp table is not configured");
+  await dynamo.send(
+    new UpdateItemCommand({
+      TableName: tableEnv,
+      Key: { id: { S: id } },
+      UpdateExpression: "SET #o = :o",
+      ExpressionAttributeNames: { "#o": "owner" },
+      ExpressionAttributeValues: { ":o": { S: owner } },
+    }),
+  );
+}
 
 /* ---------------- Cognito JWT verification (no external deps) ---------------- */
 
@@ -226,9 +248,6 @@ export const handler = async (
     }
     const { data: entry, errors } = await dataClient.models.CreditLedger.create({
       ownerId: usageOwner,
-      // allow.owner().to(["read"]) matches `owner`; IAM-created rows don't
-      // get it auto-filled, so set it explicitly.
-      owner: usageOwner,
       delta,
       reason,
       balanceAfter,
@@ -236,6 +255,12 @@ export const handler = async (
     });
     if (errors || !entry) {
       return json(500, { error: `ledger write failed: ${JSON.stringify(errors)}` });
+    }
+    try {
+      await stampOwner(process.env.CREDIT_TABLE, entry.id, usageOwner);
+    } catch {
+      // Ledger is observe-only: a missing owner stamp only hides this row
+      // from history reads, so don't fail the usage call over it.
     }
     return json(200, { ok: true, ledgerId: entry.id, delta, balanceAfter });
   }
@@ -338,9 +363,6 @@ export const handler = async (
     }
     const { data: routine, errors } = await dataClient.models.Routine.create({
       ownerId: schedOwner,
-      // allow.owner() matches the `owner` attribute; IAM-created rows don't
-      // get it auto-filled, so set it explicitly (same as Bot creates).
-      owner: schedOwner,
       botId,
       ...(typeof schedBody.name === "string" && schedBody.name.trim()
         ? { name: schedBody.name.trim().slice(0, 80) }
@@ -356,6 +378,17 @@ export const handler = async (
     });
     if (errors || !routine) {
       return json(500, { error: `routine create failed: ${JSON.stringify(errors)}` });
+    }
+    try {
+      await stampOwner(process.env.ROUTINE_TABLE, routine.id, schedOwner);
+    } catch (err) {
+      // No invisible orphans: roll the row back when the owner stamp fails.
+      try {
+        await dataClient.models.Routine.delete({ id: routine.id });
+      } catch {
+        // Best-effort rollback.
+      }
+      return json(500, { error: `routine owner stamp failed: ${err instanceof Error ? err.message : err}` });
     }
     return json(200, {
       ok: true,

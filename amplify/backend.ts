@@ -70,6 +70,23 @@ apiLambda.addToRolePolicy(
   }),
 );
 
+// Owner backfill for Lambda-created rows: AppSync auto-fills `owner` only
+// for userPool calls, and create inputs reject an explicit `owner` — so the
+// handler sets it with a direct UpdateItem after create (Routine +
+// CreditLedger, the two models the Lambda writes as the user). Without this,
+// owner-scoped reads (Schedules tab, ledger history) silently return [].
+const routineTable = backend.data.resources.tables["Routine"];
+const ledgerTable = backend.data.resources.tables["CreditLedger"];
+apiLambda.addEnvironment("ROUTINE_TABLE", routineTable.tableName);
+apiLambda.addEnvironment("CREDIT_TABLE", ledgerTable.tableName);
+apiLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["dynamodb:UpdateItem"],
+    resources: [routineTable.tableArn, ledgerTable.tableArn],
+  }),
+);
+
 // All function env (auth pool IDs, CORS, computer config) is declared in
 // amplify/functions/wayfind-api/resource.ts — nothing is set here, so the
 // console always shows exactly what the deploy captured. Secrets stay on
