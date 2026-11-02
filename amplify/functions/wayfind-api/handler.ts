@@ -288,6 +288,38 @@ export const handler = async (
     return json(200, { ok: true, ledgerId: entry.id, delta, balanceAfter });
   }
 
+  // Offset of `timezone` at a UTC instant, in ms (wall − UTC). Used to
+  // interpret offset-less datetimes as wall time in that zone.
+  const tzOffsetMs = (timezone: string, utcMs: number): number => {
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone, hour12: false, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    const parts = Object.fromEntries(dtf.formatToParts(new Date(utcMs)).map((p) => [p.type, p.value]));
+    const asUTC = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
+    return asUTC - utcMs;
+  };
+
+  // Naive "YYYY-MM-DDTHH:mm[:ss]" (no offset/Z) → UTC instant, reading the
+  // wall clock in `timezone`. Models often emit the local wall time without
+  // an offset; parsing it as UTC would shift the fire by the zone offset.
+  // Throws on bad input — callers turn it into a 400 the model can act on.
+  const zonedWallToUtc = (naive: string, timezone: string): Date => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(naive.trim());
+    if (!m) throw new Error(`runAt "${naive}" needs a full date-time with an explicit offset, e.g. 2026-11-02T15:28:00+07:00`);
+    try {
+      // Throws on unknown IANA zones.
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    } catch {
+      throw new Error(`unknown timezone "${timezone}" — use IANA, e.g. Asia/Bangkok`);
+    }
+    const guess = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0));
+    if (Number.isNaN(guess)) throw new Error(`runAt "${naive}" is not a valid date-time`);
+    // Two passes so a DST fold between guess and target still converges.
+    const instant = guess - tzOffsetMs(timezone, guess);
+    return new Date(guess - tzOffsetMs(timezone, instant));
+  };
+
   // Next cron fire strictly after `from`, in `timezone`. Throws on bad
   // cron/timezone — callers turn it into a 400 the model can act on.
   const nextCronRun = (cron: string, timezone: string, from: Date = new Date()): string => {
@@ -353,6 +385,13 @@ export const handler = async (
     const prompt = typeof schedBody.prompt === "string" ? schedBody.prompt.slice(0, 2000).trim() : "";
     const kind = schedBody.kind;
     const timezone = typeof schedBody.timezone === "string" && schedBody.timezone ? schedBody.timezone : "UTC";
+    try {
+      // Throws on unknown IANA zones — validate up front so kind=once rows
+      // can't store a timezone the ticker/display can't use.
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    } catch {
+      return json(400, { error: `unknown timezone "${timezone}" — use IANA, e.g. Asia/Bangkok` });
+    }
     if (!botId) return json(400, { error: "botId is required" });
     if (!prompt) return json(400, { error: "prompt is required" });
     if (kind !== "once" && kind !== "cron") return json(400, { error: "kind must be 'once' or 'cron'" });
@@ -366,8 +405,20 @@ export const handler = async (
       if (typeof schedBody.runAt !== "string" || !schedBody.runAt) {
         return json(400, { error: "runAt ISO time is required for kind=once" });
       }
-      const at = new Date(schedBody.runAt);
-      if (Number.isNaN(at.getTime())) return json(400, { error: "runAt is not a valid date" });
+      // Offset-less datetimes are wall time in the routine's timezone
+      // (models often emit the local clock without an offset); only explicit
+      // offsets/Z are read as absolute instants.
+      let at: Date;
+      if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(schedBody.runAt.trim())) {
+        at = new Date(schedBody.runAt);
+        if (Number.isNaN(at.getTime())) return json(400, { error: "runAt is not a valid date" });
+      } else {
+        try {
+          at = zonedWallToUtc(schedBody.runAt, timezone);
+        } catch (err) {
+          return json(400, { error: err instanceof Error ? err.message : "bad runAt/timezone" });
+        }
+      }
       if (at.getTime() < Date.now() + 60_000) {
         return json(400, { error: "runAt must be at least a minute in the future" });
       }
@@ -419,28 +470,14 @@ export const handler = async (
     });
   }
 
-  // POST /routines/fire {routineId} — ticker-only entry (X-Tick-Secret must
-  // match the shared TICK_SECRET). Advances nextRunAt FIRST (no double-fire),
-  // resumes a suspended computer (never provisions — a dead VM marks the run
-  // skipped-no-computer), then POSTs the stored prompt to the VM as the bot.
-  // Output lands in the bot's thread (conversationId = botId).
-  if (/\/routines\/fire$/.test(path) && method === "POST") {
-    const tickSecret =
-      event.headers["x-tick-secret"] ??
-      event.headers["X-tick-secret"] ??
-      event.headers["X-Tick-Secret"];
-    if (!env.TICK_SECRET || tickSecret !== env.TICK_SECRET) {
-      return json(401, { error: "unauthorized: bad tick secret" });
-    }
-    let fireBody: { routineId?: string } = {};
-    try {
-      fireBody = JSON.parse(event.body ?? "{}");
-    } catch {
-      return json(400, { error: "Invalid JSON body" });
-    }
-    if (typeof fireBody.routineId !== "string" || !fireBody.routineId) {
-      return json(400, { error: "routineId is required" });
-    }
+  /** Shared fire implementation behind /routines/fire (30-minute ticker).
+   * Advances nextRunAt
+   * FIRST (no double-fire), resumes a suspended computer (never provisions —
+   * a dead VM marks the run skipped-no-computer), then POSTs the stored
+   * prompt to the VM as the bot. Output lands in the bot's thread
+   * (conversationId = botId). Returns the HTTP status + body the route
+   * should reply with. */
+  const fireRoutine = async (routineId: string): Promise<{ status: number; body: Record<string, unknown> }> => {
     const record = async (id: string, status: string, runCount?: number) => {
       try {
         const cur = await dataClient.models.Routine.get({ id });
@@ -454,23 +491,23 @@ export const handler = async (
         // Best-effort bookkeeping — the fire result is already decided.
       }
     };
-    const { data: routine } = await dataClient.models.Routine.get({ id: fireBody.routineId });
-    if (!routine) return json(404, { error: "unknown routine" });
-    if (routine.status !== "active") return json(200, { ok: true, skipped: `status=${routine.status}` });
+    const { data: routine } = await dataClient.models.Routine.get({ id: routineId });
+    if (!routine) return { status: 404, body: { error: "unknown routine" } };
+    if (routine.status !== "active") return { status: 200, body: { ok: true, skipped: `status=${routine.status}` } };
     // Advance before firing so a crash/retry never double-runs.
     if (routine.kind === "once") {
       await dataClient.models.Routine.update({ id: routine.id, status: "done" });
     } else {
       if (!routine.cron) {
         await record(routine.id, "bad-cron: missing expression", routine.runCount ?? 0);
-        return json(200, { ok: true, skipped: "bad-cron" });
+        return { status: 200, body: { ok: true, skipped: "bad-cron" } };
       }
       try {
         const next = nextCronRun(routine.cron, routine.timezone ?? "UTC");
         await dataClient.models.Routine.update({ id: routine.id, nextRunAt: next });
       } catch (err) {
         await record(routine.id, `bad-cron: ${err instanceof Error ? err.message : err}`, routine.runCount ?? 0);
-        return json(200, { ok: true, skipped: "bad-cron" });
+        return { status: 200, body: { ok: true, skipped: "bad-cron" } };
       }
     }
     const { data: bot } = routine.botId
@@ -478,35 +515,35 @@ export const handler = async (
       : { data: null };
     if (routine.botId && !bot) {
       await record(routine.id, "skipped-unknown-bot", routine.runCount ?? 0);
-      return json(200, { ok: true, skipped: "unknown-bot" });
+      return { status: 200, body: { ok: true, skipped: "unknown-bot" } };
     }
     if (bot && bot.ownerId !== routine.ownerId) {
       await record(routine.id, "skipped-wrong-owner", routine.runCount ?? 0);
-      return json(200, { ok: true, skipped: "wrong-owner" });
+      return { status: 200, body: { ok: true, skipped: "wrong-owner" } };
     }
     const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId: routine.ownerId });
     const computer = pickComputer(computers);
     if (!computer?.microvmId) {
       await record(routine.id, "skipped-no-computer", routine.runCount ?? 0);
-      return json(200, { ok: true, skipped: "no-computer" });
+      return { status: 200, body: { ok: true, skipped: "no-computer" } };
     }
     const microvmId = computer.microvmId;
     if (!(await vmAlive(microvmId))) {
       await resetStaleRow(computer.id, microvmId);
       await record(routine.id, "skipped-no-vm", routine.runCount ?? 0);
-      return json(200, { ok: true, skipped: "no-vm" });
+      return { status: 200, body: { ok: true, skipped: "no-vm" } };
     }
     let endpoint = computer.endpoint ?? "";
     if (computer.provisionStatus === "suspended") {
       try {
         endpoint = await resumeComputer(computer.id, microvmId);
       } catch (err) {
-        await record(routine.id, `resume-failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`, routine.runCount ?? 0);
-        return json(502, { error: "resume failed" });
+          await record(routine.id, `resume-failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`, routine.runCount ?? 0);
+          return { status: 502, body: { error: "resume failed" } };
       }
     } else if (computer.provisionStatus !== "running") {
       await record(routine.id, `skipped-${computer.provisionStatus}`, routine.runCount ?? 0);
-      return json(200, { ok: true, skipped: computer.provisionStatus ?? "not-ready" });
+      return { status: 200, body: { ok: true, skipped: computer.provisionStatus ?? "not-ready" } };
     }
     // Clock line first: the model is otherwise time-blind.
     const tz = routine.timezone ?? "UTC";
@@ -531,7 +568,7 @@ export const handler = async (
       token = await mintVmToken(microvmId, 30);
     } catch {
       await record(routine.id, "token-mint-failed", routine.runCount ?? 0);
-      return json(502, { error: "microvm token mint failed" });
+      return { status: 502, body: { error: "microvm token mint failed" } };
     }
     let upstream: Response;
     try {
@@ -546,11 +583,11 @@ export const handler = async (
       });
     } catch (err) {
       await record(routine.id, `task-post-failed: ${err instanceof Error ? err.message.slice(0, 120) : err}`, routine.runCount ?? 0);
-      return json(502, { error: "computer unreachable" });
+      return { status: 502, body: { error: "computer unreachable" } };
     }
     if (!upstream.ok) {
       await record(routine.id, `task-rejected: ${upstream.status}`, routine.runCount ?? 0);
-      return json(502, { error: `computer rejected task: ${upstream.status}` });
+      return { status: 502, body: { error: `computer rejected task: ${upstream.status}` } };
     }
     let runId: string | undefined;
     try {
@@ -559,7 +596,36 @@ export const handler = async (
       runId = undefined;
     }
     await record(routine.id, "ok", routine.runCount ?? 0);
-    return json(200, { ok: true, runId });
+    return { status: 200, body: { ok: true, runId } };
+  };
+
+  // POST /routines/fire {routineId} — ticker-only entry (X-Tick-Secret must
+  // match the shared TICK_SECRET).
+  if (/\/routines\/fire$/.test(path) && method === "POST") {
+    const tickSecret =
+      event.headers["x-tick-secret"] ??
+      event.headers["x-tick-secret"] ??
+      event.headers["X-Tick-Secret"];
+    if (!env.TICK_SECRET) {
+      // Server misconfig — the ticker can never succeed until the secret is
+      // set (sandbox secret / branch env). Log loud, fail closed.
+      console.error("[routines/fire] TICK_SECRET is not configured");
+      return json(401, { error: "unauthorized: bad tick secret" });
+    }
+    if (tickSecret !== env.TICK_SECRET) {
+      return json(401, { error: "unauthorized: bad tick secret" });
+    }
+    let fireBody: { routineId?: string } = {};
+    try {
+      fireBody = JSON.parse(event.body ?? "{}");
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    if (typeof fireBody.routineId !== "string" || !fireBody.routineId) {
+      return json(400, { error: "routineId is required" });
+    }
+    const out = await fireRoutine(fireBody.routineId);
+    return json(out.status, out.body);
   }
 
   // VM file sync via presigned S3 URLs (server-to-server). The VM holds no

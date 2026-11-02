@@ -101,8 +101,12 @@ function Schedules({ botId, ownerId }: { botId: string; ownerId: string }) {
               <p className="truncate text-sm font-bold text-navy" title={r.prompt}>
                 {r.name ?? r.prompt}
               </p>
-              <p className="mt-0.5 text-xs text-heroslate">
-                {cadence(r)} · next {fmtWhen(r.nextRunAt, r.timezone)}
+              <p
+                className="mt-0.5 text-xs text-heroslate"
+                title={`raw: next ${r.nextRunAt ?? '—'} · tz ${r.timezone ?? 'UTC'}`}
+              >
+                {cadence(r)} · next {fmtWhen(r.nextRunAt, r.timezone)}{r.timezone ? ` (${r.timezone})` : ' (UTC)'}
+                {r.lastRunAt ? ` · last ran ${fmtWhen(r.lastRunAt, r.timezone)}` : ''}
                 {r.lastStatus && r.lastStatus !== 'ok' ? ` · last: ${r.lastStatus}` : ''}
                 {typeof r.runCount === 'number' && r.runCount > 0 ? ` · ran ${r.runCount}×` : ''}
               </p>

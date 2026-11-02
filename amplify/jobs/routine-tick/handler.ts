@@ -9,7 +9,7 @@ const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env 
 Amplify.configure(resourceConfig, libraryOptions);
 const dataClient = generateClient<Schema>();
 
-/** 10-minute sweeper: find due routines and hand each to wayfind-api's
+/** 30-minute sweeper: find due routines and hand each to wayfind-api's
  * /routines/fire (which does auth, resume, nextRunAt advance, and the
  * actual /task post). Fire-and-continue — one bad routine never blocks
  * the rest. TICK_SECRET is shared with wayfind-api via Amplify secrets. */
@@ -17,16 +17,27 @@ export const handler: EventBridgeHandler<"Scheduled Event", null, void> = async 
   const now = new Date().toISOString();
   let due: Array<{ id: string }> = [];
   try {
+    // Key-condition on the (status, nextRunAt) GSI — cheaper than a filter
+    // and immune to filter/limit pagination quirks as the table grows.
     const res = await dataClient.models.Routine.routinesDue(
-      { status: "active" },
-      { filter: { nextRunAt: { le: now } }, limit: 25 },
+      { status: "active", nextRunAt: { le: now } },
+      { limit: 25 },
     );
     due = (res.data ?? []).map((r) => ({ id: r.id }));
   } catch (err) {
     console.error("[routine-tick] due query failed:", err instanceof Error ? err.message : err);
     return;
   }
-  if (due.length === 0) return;
+  if (due.length === 0) {
+    // Heartbeat: an idle tick is otherwise indistinguishable from a dead
+    // schedule in CloudWatch (START/END with no output).
+    console.log(`[routine-tick] tick now=${now} due=0`);
+    return;
+  }
+  if (!env.TICK_SECRET) {
+    console.error("[routine-tick] TICK_SECRET is not configured — fire calls will 401 until the secret is set");
+    return;
+  }
   const base = (env.COMPUTER_API_URL ?? "").replace(/\/$/, "");
   if (!base) {
     console.error("[routine-tick] COMPUTER_API_URL is not configured");

@@ -120,3 +120,10 @@ backend.addOutput({
     },
   },
 });
+
+// The 30-minute ticker POSTs /routines/fire on this URL. Wired here from the
+// deployed Function URL token — never from the synth-time shell env, which
+// used to silently bake in "" and leave the ticker dialing nowhere.
+// (tick → api is one-directional; no data↔function cycle risk.)
+const tickLambda = backend.routineTickFunction.resources.lambda as LambdaFunction;
+tickLambda.addEnvironment("COMPUTER_API_URL", apiFunctionUrl.url);

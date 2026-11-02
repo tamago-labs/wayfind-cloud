@@ -2,14 +2,13 @@ import { defineFunction, secret } from "@aws-amplify/backend";
 
 export const routineTickFunction = defineFunction({
   name: "routine-tick",
-  schedule: "every 10m",
+  schedule: "every 30m",
   timeoutSeconds: 120,
   memoryMB: 512,
   environment: {
-    // Public base of the wayfind-api Function URL (same value as
-    // COMPUTER_API_URL on wayfind-api). The ticker fires due routines by
-    // POSTing /routines/fire with the shared tick secret below.
-    COMPUTER_API_URL: process.env.COMPUTER_API_URL ?? "",
+    // COMPUTER_API_URL is wired in backend.ts from the deployed Function URL
+    // (never from the synth-time shell, which silently baked in ""). The
+    // ticker fires due routines by POSTing /routines/fire with the secret.
     TICK_SECRET: secret("TICK_SECRET"),
   },
 });
