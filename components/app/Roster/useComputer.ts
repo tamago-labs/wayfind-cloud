@@ -44,6 +44,8 @@ type Row = {
   provisionStatus?: string | null;
   endpoint?: string | null;
   microvmId?: string | null;
+  region?: string | null;
+  imageVersion?: string | null;
 };
 
 function toInfo(row: Row | null | undefined): ComputerInfo | null {
@@ -53,6 +55,8 @@ function toInfo(row: Row | null | undefined): ComputerInfo | null {
     provisionStatus: row.provisionStatus ?? null,
     endpoint: row.endpoint ?? null,
     microvmId: row.microvmId ?? null,
+    region: row.region ?? null,
+    imageVersion: row.imageVersion ?? null,
   };
 }
 

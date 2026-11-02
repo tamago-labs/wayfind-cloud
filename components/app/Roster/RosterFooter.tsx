@@ -9,7 +9,7 @@ import { fetchUserAttributes, signOut } from 'aws-amplify/auth';
 import { generateClient } from 'aws-amplify/data';
 import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
-import SettingsModal from './SettingsModal';
+import SettingsModal from './Settings';
 import UsageModal from './UsageModal';
 import { newBotColors, newBotShapes } from '../seed';
 import { computerAction, provisionComputer } from '@/lib/wayfind-api';
