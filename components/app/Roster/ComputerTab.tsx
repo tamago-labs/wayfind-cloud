@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, Moon } from 'lucide-react';
 import { getServerStatus } from '@/lib/agent';
 import type { Transport } from '@/lib/transport';
+import TabHeader from './Settings/TabHeader';
 
 export interface ComputerInfo {
   id: string;
@@ -95,6 +96,10 @@ export default function ComputerTab({
 
   return (
     <div className="p-5">
+      <TabHeader
+        title="Computer"
+        sub="Your Bots' always-on machine. Sleeps when idle, wakes on chat."
+      />
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-heroslate">Status</span>
         <span className="inline-flex items-center gap-1.5 text-sm font-bold text-navy">
@@ -104,9 +109,13 @@ export default function ComputerTab({
       </div>
 
       {computer?.microvmId ? (
-        <>
-          <SectionLabel>Your Bot Machine</SectionLabel> 
+        <> 
           <div className="divide-y divide-navy/5 mt-2"> 
+            <Spec
+              label="OS"
+              value="Firecracker MicroVM"
+              title="AWS Lambda Managed Instance — Firecracker MicroVM, one dedicated endpoint per computer"
+            />
             <Spec label="Region" value={computer.region ?? 'ap-southeast-1'} />
             <Spec label="Image" value={`v${computer.imageVersion ?? '1.0'}`} />
             {computer.endpoint ? (

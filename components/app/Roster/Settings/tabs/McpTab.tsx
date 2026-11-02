@@ -10,6 +10,7 @@ import {
   type McpServer,
   type McpServerInput,
 } from '@/lib/agent';
+import TabHeader from '../TabHeader';
 
 export default function McpTab() {
   const [servers, setServers] = useState<McpServer[] | null>(null);
@@ -174,20 +175,19 @@ export default function McpTab() {
 
   return (
     <div className="space-y-4 p-5">
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-sm text-heroslate">
-          MCP servers give every bot extra tools. They run globally — each bot can narrow down
-          which ones it uses from its own settings. Ask any bot to install one from chat, or add
-          one below.
-        </p>
-        <button
-          onClick={() => void refresh()}
-          disabled={busy}
-          className="shrink-0 rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-navy hover:bg-ice disabled:opacity-50"
-        >
-          Refresh
-        </button>
-      </div>
+      <TabHeader
+        title="MCP servers"
+        sub="Setup MCP servers that run on your bot computer or connect remotely. Add below, ask in chat, or grab a bundle from Connectors."
+        action={
+          <button
+            onClick={() => void refresh()}
+            disabled={busy}
+            className="rounded-full border border-navy/15 px-3 py-1 text-xs font-bold text-navy hover:bg-ice disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        }
+      />
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
       {servers.length === 0 && !adding ? (
         <p className="text-sm text-heroslate">No MCP servers yet.</p>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getSkills, removeSkill, type InstalledSkill } from '@/lib/agent';
+import TabHeader from '../TabHeader';
 
 export default function SkillsTab() {
   const [skills, setSkills] = useState<InstalledSkill[] | null>(null);
@@ -52,10 +53,10 @@ export default function SkillsTab() {
 
   return (
     <div className="space-y-4 p-5">
-      <p className="text-sm text-heroslate">
-        All installed skills live here. Add new ones from any bot&apos;s chat:{' '}
-        <code className="font-mono text-xs">npx skills add owner/repo</code> or a Github link.
-      </p>
+      <TabHeader
+        title="Skills"
+        sub="Give Bots new know-how. Add a skill from chat with a repo or Github link."
+      />
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
       {skills.length === 0 ? (
         <p className="text-sm text-heroslate">No skills installed yet.</p>

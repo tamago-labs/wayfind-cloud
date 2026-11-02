@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getPermissions, setPermissions, undoPermissions, type PermissionRule } from '@/lib/agent';
+import TabHeader from '../TabHeader';
 
 const ACTIONS = ['allow', 'ask', 'deny'] as const;
 
@@ -115,9 +116,10 @@ export default function PermissionsTab() {
 
   return (
     <div className="p-5">
-      <p className="text-sm text-heroslate">
-        Bots ask before sensitive actions. Allow or deny each one — changes apply to new chats.
-      </p>
+      <TabHeader
+        title="Permissions"
+        sub="Control what Bots can do without asking. Changes apply to new chats."
+      />
       {groups.map(({ permission, items }) => (
         <div key={permission} className="mt-5">
           <div className="flex items-center justify-between">
