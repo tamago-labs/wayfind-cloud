@@ -693,7 +693,7 @@ export default function AppShell() {
             Local dev — replies come from your computer server. Make sure it’s running on :8080.
           </div>
         )}
-        <Thread bot={bot} onApprove={approve} onAnswer={answer} onBotRequest={confirmBotRequest} />
+        <Thread bot={bot} isChief={bot.isChiefOfStaff} onApprove={approve} onAnswer={answer} onBotRequest={confirmBotRequest} onSuggest={(text) => sendText(text, [])} />
         <Composer
           botName={bot.name}
           draft={draft}

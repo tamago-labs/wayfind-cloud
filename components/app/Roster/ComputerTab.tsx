@@ -113,7 +113,7 @@ export default function ComputerTab({
           <div className="divide-y divide-navy/5 mt-2"> 
             <Spec
               label="OS"
-              value="Firecracker MicroVM"
+              value="Firecracker"
               title="AWS Lambda Managed Instance — Firecracker MicroVM, one dedicated endpoint per computer"
             />
             <Spec label="Region" value={computer.region ?? 'ap-southeast-1'} />

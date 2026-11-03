@@ -23,10 +23,44 @@ function isImagePath(p: string): boolean {
 
 interface ThreadProps {
   bot: SeedBot;
+  isChief?: boolean;
   onApprove: (msgIndex: number, decision: 'approve' | 'reject' | 'approve-all') => void;
   onAnswer?: (msgIndex: number, answers: string[][]) => void;
   onBotRequest?: (msgIndex: number, ok: boolean) => void;
+  onSuggest?: (text: string) => void;
 }
+
+/** Example prompts under the greeting — shown only while the bot's greeting
+ * is the single AI message, so they vanish once a real conversation starts. */
+const CHIEF_SUGGESTION = {
+  label: 'Meet Jodie',
+  desc: 'Create an intern bot',
+  prompt: 'Create a new bot named Jodie who is an intern.',
+};
+
+const MEMBER_SUGGESTION = {
+  label: 'Add a skill',
+  desc: 'Install react-best-practices',
+  prompt: 'Install the skill npx skills add vercel-labs/agent-skills/skills/react-best-practices',
+};
+
+const SUGGESTIONS = [
+  {
+    label: 'Draw a cat',
+    desc: 'Generate a cartoon cat image',
+    prompt: 'Generate a cartoon image of a cat',
+  },
+  {
+    label: 'Write a poem',
+    desc: 'A short river poem, saved to a file',
+    prompt: 'Write a short 8-line poem about a river and save it as my-poem.txt',
+  },
+  {
+    label: 'Check Bitcoin price',
+    desc: 'Look it up on Coinbase',
+    prompt: 'Check the Bitcoin price from https://api.coinbase.com/v2/prices/BTC-USD/spot',
+  },
+];
 
 /** Free-text answer row inside a question card. Sends the typed text as the answer. */
 function CustomAnswer({ onSend, secret }: { onSend: (text: string) => void; secret?: boolean }) {
@@ -112,8 +146,13 @@ function ApprovalCard({ msg, onOk, onNo, onAll }: { msg: Extract<Msg, { t: 'ask'
   );
 }
 
-export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: ThreadProps) {
+export default function Thread({ bot, isChief, onApprove, onAnswer, onBotRequest, onSuggest }: ThreadProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Suggestions live only on the untouched greeting: one AI message and
+  // nothing else — a tap appends the user message and hides them instantly.
+  const showSuggestions =
+    bot.msgs.filter((m) => m.t === 'b').length === 1 &&
+    !bot.msgs.some((m) => m.t === 'u' || m.t === 'typing');
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -275,6 +314,20 @@ export default function Thread({ bot, onApprove, onAnswer, onBotRequest }: Threa
           }
           return <ApprovalCard key={i} msg={m} onOk={() => onApprove(i, 'approve')} onNo={() => onApprove(i, 'reject')} onAll={() => onApprove(i, 'approve-all')} />;
         })}
+        {onSuggest && showSuggestions && (
+          <div className="msg-in mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {[isChief ? CHIEF_SUGGESTION : MEMBER_SUGGESTION, ...SUGGESTIONS].map((s) => (
+              <button
+                key={s.label}
+                onClick={() => onSuggest(s.prompt)}
+                className="rounded-2xl border border-navy/15 bg-white px-4 py-3 text-left shadow-sm transition-colors hover:border-cta hover:bg-cta/5"
+              >
+                <span className="block text-sm font-bold text-navy">{s.label}</span>
+                <span className="mt-0.5 block text-xs text-heroslate">{s.desc}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

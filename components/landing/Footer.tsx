@@ -15,8 +15,9 @@ export default function Footer() {
           </nav>
         </div>
         <p className="text-[12px] text-heroslate leading-relaxed mt-8 max-w-md">
-          Always-on AI teammates in the cloud for small businesses.
-          Early access — features and pricing may change before launch.
+          Wayfind provides always-on AI teammates in the cloud for small businesses. Powered by
+          AWS infrastructure and Meta&apos;s open-weight AI models, your Bots help handle everyday
+          business work around the clock.
         </p>
         <p className="text-[12px] text-heroslate mt-3">© 2026 Tamago Labs Japan</p>
       </div>

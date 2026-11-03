@@ -82,7 +82,7 @@ export default function ComposerMenu({ open, onClose, botName, onSelectSkills, o
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-bold text-navy">Add files</span>
-                  <span className="block truncate text-xs text-heroslate">Upload to the shared computer</span>
+                  <span className="block truncate text-xs text-heroslate">Upload to the bot computer</span>
                 </span>
               </button>
               <input

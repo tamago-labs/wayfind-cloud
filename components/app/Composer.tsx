@@ -173,11 +173,6 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
                 Retry
               </button>
             )}
-            {/*{onGoLocal && (
-              <button type="button" onClick={onGoLocal} className="underline hover:text-slate-200">
-                Use local
-              </button>
-            )}*/}
           </span>
         )}
         <ComposerMenu
@@ -253,7 +248,7 @@ export default function Composer({ botName, draft, onDraft, onSend, onVoiceSend,
         <VoiceModal onVoiceSend={onVoiceSend} onClose={() => setVoiceOpen(false)} ownerId={ownerId} />
       )}
       <p className="mx-auto mt-2 max-w-2xl text-center text-xs text-slate-400">
-        Bots ask before anything irreversible. Secrets never go in chat.
+        Early access is free with limited usage. We&apos;ll let you know when paid plans arrive.
       </p>
     </div>
   );
