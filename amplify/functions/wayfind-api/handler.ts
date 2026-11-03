@@ -762,13 +762,23 @@ export const handler = async (
     if (path.endsWith("/computer/provision") && method === "POST") {
       const profile = await ensureProfile(claims);
       let computer = await findOrCreateComputer(ownerId, profile.id);
-      // Self-heal rows whose VM is gone (terminated out-of-band or by the
-      // suspend-window expiry): fall through to a fresh provision.
-      if (computer.microvmId && (computer.provisionStatus === "running" || computer.provisionStatus === "suspended")) {
+      // Self-heal any row holding a MicroVM, whatever its status label says
+      // (a stale label must never route a live VM to a fresh provision):
+      // gone VM → clear and fall through to boot; live VM with a stale
+      // label (e.g. poisoned "terminated") → relabel suspended so the
+      // resume path owns it.
+      if (computer.microvmId) {
         try {
           if (!(await vmAlive(computer.microvmId))) {
             await resetStaleRow(computer.id, computer.microvmId);
             computer = { ...computer, provisionStatus: "not_provisioned", microvmId: "" };
+          } else if (
+            computer.provisionStatus !== "running" &&
+            computer.provisionStatus !== "suspended" &&
+            computer.provisionStatus !== "provisioning"
+          ) {
+            await dataClient.models.Computer.update({ id: computer.id, provisionStatus: "suspended" });
+            computer = { ...computer, provisionStatus: "suspended" };
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -1154,6 +1164,10 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
   const prefix = `computers/${computerId}/workspace/`;
 
   await dataClient.models.Computer.update({ id: computerId, provisionStatus: "provisioning" });
+  // RunMicrovm may succeed before a later step (hooks, smoke test) fails —
+  // track it so the catch block can terminate the orphan instead of leaking
+  // an alive, billing, untracked VM.
+  let bootedMicrovmId: string | undefined;
   try {
     const run = await microvms.send(
       new RunMicrovmCommand({
@@ -1175,6 +1189,7 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
       }),
     );
     if (!run.microvmId) throw new Error("run-microvm returned no microvmId");
+    bootedMicrovmId = run.microvmId;
     const endpoint = await waitForRunning(run.microvmId);
     const token = await mintVmToken(run.microvmId);
 
@@ -1223,9 +1238,24 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
       decidedAt: new Date().toISOString(),
     });
   } catch (err) {
+    // Never poison the row: a mid-provision failure means "try again", not
+    // "dead". Marking "terminated" used to skip the vmAlive self-heal on the
+    // next boot and orphan the VM that just started (alive, billing, but
+    // untracked since microvmId is only stored on success).
+    if (bootedMicrovmId) {
+      try {
+        await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: bootedMicrovmId }));
+        console.log(`[wayfind-api] terminated ${bootedMicrovmId} after failed provision of ${computerId}`);
+      } catch (termErr) {
+        console.error(
+          `[wayfind-api] LEAKED microvm ${bootedMicrovmId} (provision of ${computerId} failed, terminate failed):`,
+          termErr instanceof Error ? termErr.message : String(termErr),
+        );
+      }
+    }
     await dataClient.models.Computer.update({
       id: computerId,
-      provisionStatus: "terminated",
+      provisionStatus: "not_provisioned",
     });
     throw err;
   }

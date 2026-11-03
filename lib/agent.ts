@@ -29,13 +29,12 @@ function agentBase(): string {
   return AGENT_URL;
 }
 
-/** Request paths go through here: cloud mode without a stored endpoint is a
- * loud error, never a silent localhost fallback. (Image/file URL builders
- * keep agentBase() — a broken thumbnail beats a crashed render.) */
+/** Request paths go through here. Cloud mode needs no browser-stored
+ * endpoint: the relay resolves the VM endpoint server-side per call, so a
+ * missing localStorage value (fresh sign-in, recycled VM) is normal, never
+ * an error. (Image/file URL builders keep agentBase() — a broken thumbnail
+ * beats a crashed render.) */
 function requireAgentBase(): string {
-  if (isCloudTransport() && !cloudEndpoint()) {
-    throw new Error('Cloud mode is on but no computer endpoint is stored — start your computer first.');
-  }
   return agentBase();
 }
 
