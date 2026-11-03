@@ -11,6 +11,7 @@ import type { Schema } from '@/amplify/data/resource';
 import ProfileModal from './ProfileModal';
 import SettingsModal from './Settings';
 import UsageModal from './UsageModal';
+import ConnectorsModal from '../Connectors/ConnectorsModal';
 import { newBotColors, newBotShapes } from '../seed';
 import { computerAction, provisionComputer } from '@/lib/wayfind-api';
 import { VM_ENDPOINT_KEY, TRANSPORT_EVENT, useTransport } from '@/lib/transport';
@@ -33,6 +34,7 @@ export default function RosterFooter() {
   const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [connectorsOpen, setConnectorsOpen] = useState(false);
   useEffect(() => {
     let alive = true;
     fetchUserAttributes()
@@ -264,12 +266,18 @@ export default function RosterFooter() {
             {initial}
           </button>
         </span>
-        <button className="flex flex-1 items-center justify-center gap-2.5 rounded-full bg-white py-2.5 font-semibold text-navy shadow-sm hover:bg-slate-50">
+        <button
+          onClick={() => setConnectorsOpen(true)}
+          className="flex flex-1 items-center justify-center gap-2.5 rounded-full bg-white py-2.5 font-semibold text-navy shadow-sm hover:bg-slate-50"
+        >
           Connectors
-          <span className="flex -space-x-1" aria-hidden="true">
-            <i className="grid h-5 w-5 place-items-center rounded bg-[#EA4335] text-[10px] font-bold not-italic text-white ring-2 ring-white">M</i>
-            <i className="grid h-5 w-5 place-items-center rounded bg-navy text-[10px] font-bold not-italic text-white ring-2 ring-white">N</i>
-            <i className="grid h-5 w-5 place-items-center rounded bg-blagoon text-[10px] font-bold not-italic text-white ring-2 ring-white">D</i>
+          <span className="flex -space-x-1.5" aria-hidden="true">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/connectors/stripe.png" alt="" className="h-5 w-5 rounded-full bg-white object-contain ring-2 ring-white" loading="lazy" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/connectors/hubspot.png" alt="" className="h-5 w-5 rounded-full bg-white object-contain ring-2 ring-white" loading="lazy" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/connectors/mailchimp.png" alt="" className="h-5 w-5 rounded-full bg-white object-contain ring-2 ring-white" loading="lazy" />
           </span>
           </button>
         </div>
@@ -292,6 +300,11 @@ export default function RosterFooter() {
         onComputerAction={(action) => void runComputerOp(() => computerAction(action))}
       />
       <UsageModal open={usageOpen} onClose={() => setUsageOpen(false)} ownerId={user?.userId ?? null} />
+      <ConnectorsModal
+        open={connectorsOpen}
+        onClose={() => setConnectorsOpen(false)}
+        computerReady={computer?.provisionStatus === 'running' || computer?.provisionStatus === 'suspended'}
+      />
     </div>
   );
 }

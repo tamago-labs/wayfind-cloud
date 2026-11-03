@@ -1,6 +1,6 @@
-﻿// Connector catalog shared by the landing /connectors page and (soon) the
-// app Settings Connectors section. Statuses will be driven by the backend
-// catalog once the Connectors section ships.
+﻿// Connector catalog shared by the landing /connectors page and the app
+// Connectors modal (Roster footer). Import instructions resolve via
+// connectorSetup() — one shared Zoho MCP guide for every Via Zoho MCP entry.
 //
 // Two dimensions: `type` is where the connector comes from (the page filter),
 // `category` is the job it does (the chip shown on each card).
@@ -45,6 +45,34 @@ export interface Connector {
   website?: string;
   /** Remote brand icon. Cards fall back to the category icon when absent. */
   image?: string;
+  /** Import instructions. Absent = derived from `status` (every `Via Zoho
+   * MCP` connector shares the Zoho MCP setup guide); set explicitly only to
+   * add a per-connector `note` (e.g. special permission callouts). */
+  setup?: ConnectorSetup;
+}
+
+/** How a connector gets imported onto the bot computer. */
+export interface ConnectorSetup {
+  provider: 'zoho-mcp';
+  /** Zoho MCP service name shown in the guide (e.g. "CRM" for Zoho CRM). */
+  service: string;
+  /** Optional per-connector callout rendered under the shared guide. */
+  note?: string;
+}
+
+/** Resolve import instructions: explicit `setup` wins, otherwise every
+ * `Via Zoho MCP` connector shares the Zoho MCP guide with the service name
+ * derived from the catalog name ("Zoho X" → "X", others verbatim). */
+export function connectorSetup(c: Connector): ConnectorSetup | undefined {
+  if (c.setup) return c.setup;
+  if (c.status !== 'Via Zoho MCP') return undefined;
+  const service = c.type === 'Zoho-based services' ? c.name.replace(/^Zoho\s+/, '') : c.name;
+  return { provider: 'zoho-mcp', service };
+}
+
+/** MCP server name for an imported connector — matches McpServerInfo naming. */
+export function connectorServerName(c: Connector): string {
+  return `zoho-${connectorSlug(c.name)}`;
 }
 
 // Placeholder inventory — mirrors the landing Connectors section.
