@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Check, KeyRound, ShieldCheck, ScrollText } from 'lucide-react';
 
 const cats: { n: string; items: string[] }[] = [
@@ -47,14 +48,12 @@ export default function Trust() {
                 </div>
               </div>
             ))}
-            <a
-              href="https://www.zoho.com/mcp/services/third-party-services.html?src=mcp-header"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/connectors"
               className="block border-t border-navy/10 pt-4 text-sm font-bold text-cta hover:underline"
             >
-              +100 more services via Zoho MCP &rarr;
-            </a>
+              100+ services ready to connect &rarr;
+            </Link>
           </div>
 
           <div className="grid place-items-center text-2xl font-bold text-cta" aria-hidden="true">

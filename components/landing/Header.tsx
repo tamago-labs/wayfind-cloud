@@ -10,7 +10,7 @@ import Mascot from '@/components/Mascot';
 const navLinks = [
   { href: '/#how', label: 'How it works' },
   { href: '/#usecases', label: 'Use cases' },
-  { href: '/#connectors', label: 'Connectors' },
+  { href: '/connectors', label: 'Connectors' },
   { href: '/#pricing', label: 'Pricing' },
   { href: '/#faq', label: 'FAQ' },
 ];

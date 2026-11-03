@@ -6,7 +6,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Wayfind Cloud — AI Teammates for Small Businesses",
   description:
-    "Hire AI teammates for finance, operations, marketing, and more. They remember your workflows, use your business tools, and work in the cloud. Start from $5/month. Free during early access.",
+    "Give your small business an AI team for finance, operations, marketing, and more. Your Bots remember workflows, use your business tools, and get work done in the cloud. Start free.",
 };
 
 export default function RootLayout({
