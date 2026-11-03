@@ -19,9 +19,9 @@ export default function FinalCta() {
             />
           ))}
         </div>
-        <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">Hire your first Bot today.</h2>
+        <h2 className="text-4xl font-extrabold tracking-tight sm:text-5xl">Build your AI team today.</h2>
         <p className="mx-auto mt-4 max-w-md text-lg text-white/70">
-          Free in early access. No card. Your first Bot is ready in seconds.
+          Start free during early access. No credit card required. Create your first Bot and put it to work in minutes.
         </p>
         <Link
           href="/app"

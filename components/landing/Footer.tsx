@@ -10,7 +10,7 @@ export default function Footer() {
           <nav className="flex flex-wrap items-center gap-6 text-[14px] font-medium text-navy">
             <Link href="/#pricing" className="hover:opacity-60 transition-opacity">Pricing</Link>
             <Link href="/#faq" className="hover:opacity-60 transition-opacity">FAQ</Link>
-            <Link href="https://github.com/tamago-labs/wayfind" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">GitHub</Link>
+            <Link href="https://github.com/tamago-labs/wayfind-cloud" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">GitHub</Link>
             <Link href="https://x.com/WayfindCloud" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">X (former Twitter)</Link>
           </nav>
         </div>

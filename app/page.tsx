@@ -5,7 +5,7 @@ import Hero from '@/components/landing/Hero';
 import Problem from '@/components/landing/Problem';
 import HowSection from '@/components/landing/HowSection';
 import UseCases from '@/components/landing/UseCases';
-import Trust from '@/components/landing/Trust';
+import Connectors from '@/components/landing/Connectors';
 import Pricing from '@/components/landing/Pricing';
 import Faq from '@/components/landing/Faq';
 import FinalCta from '@/components/landing/FinalCta';
@@ -19,7 +19,7 @@ export default function Home() {
       <Problem />
       <HowSection />
       <UseCases />
-      <Trust />
+      <Connectors />
       <Pricing />
       <Faq />
       <FinalCta />

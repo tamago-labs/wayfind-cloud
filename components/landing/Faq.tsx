@@ -1,11 +1,15 @@
 const faqs = [
   {
     q: 'Which AI models do my Bots use?',
-    a: 'Hosted Meta open-weight models (Muse Spark Open and Muse Glimmer), served via Modal, on every plan — no keys to bring, no setup. Premium adds Muse Wonder — Meta\u2019s new frontier, in the class of GPT-6 and Claude Fable — for complex work, agentic coding, and graphical computer work.',
+    a: 'Meta open-weight models (Muse Spark Open), served via Modal, on every plan. Premium adds Muse Wonder for complex and agentic work.',
   },
   {
     q: 'What can a Bot actually do?',
     a: 'Complete multi-step work across your connected apps, remember your workflows, and keep going in the background. A Bot produces finished results — reconciliation reports, drafted emails, prepared announcements — and asks for your approval before anything sensitive.',
+  },
+  {
+    q: 'Is the free plan really free?',
+    a: 'Yes. Watch ads to earn credits, then spend them on chats, images and tools as you please — up to 3 Bots with memory, no credit card required.',
   },
   {
     q: 'Do I need to watch every step?',
@@ -22,10 +26,6 @@ const faqs = [
   {
     q: 'Will it run with my laptop closed?',
     a: 'That is the design: your computer lives in the cloud, so you message a Bot, close the lid, and come back to the result. It arrives with the cloud computer rollout — early access today covers accounts, Bots and the app around it.',
-  },
-  {
-    q: 'Will I pay while my Bots are idle?',
-    a: 'No. A suspended computer costs nothing, and you only pay for active Bot work and active computer minutes.',
   },
   {
     q: 'Where is Wayfind available?',
