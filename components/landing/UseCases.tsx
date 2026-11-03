@@ -30,9 +30,9 @@ const cases: { icon: LucideIcon; title: string; body: string; get: string; tag?:
   },
   {
     icon: FolderKanban,
-    title: 'Organize the paperwork',
-    body: 'Sort documents, pull the numbers together, and prepare reports your accountant can use.',
-    get: 'Audit-ready files',
+    title: 'Coordinate daily operations',
+    body: 'Track deadlines, collect updates, follow up on pending tasks, and keep everyone aligned without chasing people yourself.',
+    get: 'Everyone aligned, nothing chased',
   },
   {
     icon: ShieldCheck,

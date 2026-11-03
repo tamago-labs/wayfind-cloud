@@ -8,10 +8,10 @@ const plans = [
     name: 'Free',
     price: '$0',
     features: [
-      '1 Bot with temporary storage',
+      'Up to 3 Bots with memory',
       'Muse Spark Open',
-      'Limited usage',
-      'Enough to try your first Bot',
+      'Watch ads to earn credits',
+      'Spend credits on chats, images and tools',
     ],
     featured: false,
   },
@@ -19,10 +19,10 @@ const plans = [
     name: 'Starter',
     price: '$5',
     features: [
-      'Up to 3 Bots with shared storage',
+      'Up to 10 Bots with memory',
       'Muse Spark Open',
       'Generous usage limits',
-      'Enough to close your month-end books',
+      'Enough for a small business to hand off the busywork',
     ],
     featured: true,
   },
@@ -31,9 +31,9 @@ const plans = [
     price: '$30',
     features: [
       'Unlimited Bots and group chats',
-      'Muse Wonder for complex and graphical work',
+      'Muse Wonder for browser work',
       'Highest usage limits',
-      'Your back office on autopilot',
+      'The best-value AI team on the market',
     ],
     featured: false,
   },
@@ -64,7 +64,8 @@ export default function Pricing() {
             Free in early access. Simple after.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-lg text-heroslate">
-            No card needed today. Idle time is never charged.
+            Explore your AI team for free, then choose a plan that fits your business. Powered by
+            Meta&apos;s open-weight AI models.
           </p>
         </div>
         <div
@@ -92,7 +93,7 @@ export default function Pricing() {
               <p className="mt-3 text-5xl font-extrabold">
                 {p.price}
                 <span className={`text-lg font-semibold ${p.featured ? 'text-white/60' : 'text-heroslate'}`}>
-                  /mo
+                  /month
                 </span>
               </p>
               <ul className={`mt-6 flex-1 space-y-2.5 ${p.featured ? 'text-white/80' : 'text-heroslate'}`}>

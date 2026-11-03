@@ -64,8 +64,8 @@ export default function Hero() {
           <Link href="/app" className="rounded-full bg-cta px-8 py-4 font-semibold text-white hover:bg-ctahover transition-colors">
             Create your first Bot
           </Link>
-          <span className="text-sm text-heroslate">Free in early access. No card.</span>
         </div>
+        <p className="mt-4 text-sm text-heroslate">Free during early access. No credit card required.</p>
       </motion.div>
     </section>
   );
