@@ -878,6 +878,27 @@ server.listen(PORT, () => {
   console.log(`wayfind agent listening on :${PORT} (workspace ${WORKSPACE_DIR})`);
 });
 
+// Periodic safety-net push: a platform hard-kill (8h lifetime expiry) runs
+// no hook, so without this anything changed since the last run-push or
+// suspend would die with the VM. Manifest-diff keeps idle ticks to a
+// no-op; an in-flight guard skips overlaps with run/suspend pushes.
+let periodicPushInFlight = false;
+const periodicPushTimer = setInterval(() => {
+  if (periodicPushInFlight) return;
+  const ctx = syncCtx();
+  if (!ctx) return;
+  periodicPushInFlight = true;
+  void pushWorkspace(ctx)
+    .then(({ pushed }) => {
+      if (pushed > 0) console.log(`[sync] periodic push: ${pushed} file(s)`);
+    })
+    .catch((err) => console.error('[sync] periodic push failed:', err instanceof Error ? err.message : err))
+    .finally(() => {
+      periodicPushInFlight = false;
+    });
+}, 5 * 60_000);
+periodicPushTimer.unref?.();
+
 // Post-run workspace push (trailing debounce): a platform kill loses at
 // most one run instead of everything since the last suspend, and it keeps
 // the suspend-hook flush tiny so the hook beats its timeout.

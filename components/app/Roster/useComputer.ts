@@ -145,16 +145,23 @@ export function retryComputerStart(): void {
 /** Mid-session death: the relay 410s (row already reset server-side) and
  * lib/agent.ts broadcasts `wayfind:computer-gone`. Flip immediately so the
  * UI gates instead of staying green-but-dead, then re-provision debounced —
- * history hydration fires one 410 per bot, only the first may boot. */
+ * history hydration fires one 410 per bot, only the first may boot.
+ * A null computer (auto-start never completed) also recovers: the 410
+ * already reset the server-side row, so refresh-then-provision heals it
+ * instead of leaving "Setting up your computer…" forever. */
 let goneTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function handleComputerGone(): void {
   if (typeof window === 'undefined') return;
   if (window.localStorage.getItem(TRANSPORT_KEY) !== 'cloud') return;
   const st = snap.computer?.provisionStatus;
-  // Already recovering/booting (or never started) — the normal paths own it.
-  if (snap.busy || st === 'provisioning' || !snap.computer) return;
-  set({ computer: { ...snap.computer, provisionStatus: 'not_provisioned' }, error: '' });
+  // Already recovering/booting — the normal paths own it.
+  if (snap.busy || st === 'provisioning') return;
+  if (snap.computer) {
+    set({ computer: { ...snap.computer, provisionStatus: 'not_provisioned' }, error: '' });
+  } else {
+    set({ error: '' });
+  }
   window.localStorage.removeItem(VM_ENDPOINT_KEY);
   window.dispatchEvent(new Event(TRANSPORT_EVENT));
   if (goneTimer) return;
@@ -165,6 +172,11 @@ export function handleComputerGone(): void {
     void (async () => {
       set({ busy: true });
       try {
+        // No known row (auto-start never completed): reload first — the 410
+        // already reset the server-side row, so this alone often heals it.
+        if (!snap.computer) await refreshComputer(true);
+        const after = snap.computer?.provisionStatus;
+        if (after === 'running' || after === 'suspended') return;
         const { data } = (await provisionComputer()) as { data?: Row };
         set({ computer: toInfo(data) });
       } catch (err) {

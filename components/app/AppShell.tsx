@@ -114,10 +114,10 @@ export default function AppShell() {
   }, [user?.userId]);
 
   // Hydrate per-bot history from the agent server (each Bot id is its
-  // conversation). Empty history + ready computer → the bot introduces
-  // itself with a real model run (once per bot); failures stay silent and
-  // the thread simply starts empty.
+  // conversation). Skipped while gated: history lives on the VM, so a
+  // missing VM would just 410 — the effect re-runs when ungated.
   useEffect(() => {
+    if (gated) return;
     const b = bots[cur];
     if (!b?.id || b.msgs.length > 0) return;
     let alive = true;
@@ -148,8 +148,10 @@ export default function AppShell() {
               },
         );
       } catch (err) {
-        // history stays empty; the thread starts clean
-        console.error('[AppShell] history fetch failed:', err);
+        // 410 = VM gone (expected mid-recycle; the computer-gone broadcast
+        // already scheduled recovery) — not worth a console error per bot.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/→ 410/.test(msg)) console.error('[AppShell] history fetch failed:', err);
       }
     })();
     return () => {
@@ -686,6 +688,13 @@ export default function AppShell() {
           gated ? (
             <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
               {bootHint}
+              <button
+                type="button"
+                onClick={() => retryComputerStart()}
+                className="rounded-full bg-navy px-2.5 py-0.5 text-[11px] font-extrabold text-white hover:opacity-80"
+              >
+                Retry
+              </button>
             </div>
           ) : null
         ) : (
