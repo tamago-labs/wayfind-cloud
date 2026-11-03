@@ -3,7 +3,7 @@ export { default as Hero } from './Hero';
 export { default as Problem } from './Problem';
 export { default as HowSection } from './HowSection';
 export { default as UseCases } from './UseCases';
-export { default as Trust } from './Trust';
+export { default as Connectors } from './Connectors';
 export { default as Pricing } from './Pricing';
 export { default as Faq } from './Faq';
 export { default as FinalCta } from './FinalCta';
