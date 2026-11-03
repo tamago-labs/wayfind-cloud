@@ -688,13 +688,6 @@ export default function AppShell() {
           gated ? (
             <div className="mx-4 mb-1 flex items-center justify-center gap-2 rounded-full bg-bamber/25 px-4 py-1.5 text-center text-xs font-bold text-navy">
               {bootHint}
-              <button
-                type="button"
-                onClick={() => retryComputerStart()}
-                className="rounded-full bg-navy px-2.5 py-0.5 text-[11px] font-extrabold text-white hover:opacity-80"
-              >
-                Retry
-              </button>
             </div>
           ) : null
         ) : (

@@ -155,15 +155,21 @@ export function handleComputerGone(): void {
   if (typeof window === 'undefined') return;
   if (window.localStorage.getItem(TRANSPORT_KEY) !== 'cloud') return;
   const st = snap.computer?.provisionStatus;
-  // Already recovering/booting — the normal paths own it.
-  if (snap.busy || st === 'provisioning') return;
-  if (snap.computer) {
+  // A boot already in flight owns recovery — but still flip the snapshot so
+  // the gate closes honestly ("Booting…") instead of showing a stale-ready
+  // screen while the VM is gone. Only skip scheduling a duplicate provision.
+  const recovering = snap.busy || st === 'provisioning';
+  if (snap.computer && st !== 'not_provisioned') {
     set({ computer: { ...snap.computer, provisionStatus: 'not_provisioned' }, error: '' });
-  } else {
+  } else if (!snap.computer) {
     set({ error: '' });
   }
   window.localStorage.removeItem(VM_ENDPOINT_KEY);
   window.dispatchEvent(new Event(TRANSPORT_EVENT));
+  // A boot is already in flight somewhere (busy here, or another tab got
+  // 202): don't stack a duplicate provision — the 10s poll converges the
+  // snapshot when it completes.
+  if (recovering) return;
   if (goneTimer) return;
   goneTimer = setTimeout(() => {
     goneTimer = null;

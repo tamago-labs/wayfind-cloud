@@ -128,13 +128,18 @@ export interface StreamHandlers {
 /** Same as fetch, but against the active transport with VM auth headers. */
 async function agentFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`${requireAgentBase()}${path}`, {
+    // Proxy GETs (e.g. /history/:id) must never be served from HTTP cache:
+    // a cached 410 kept a dead VM "dead" after recovery (same URL re-fires).
+    cache: 'no-store',
     ...init,
     headers: { ...(init?.headers ?? {}), ...(await transportAuthHeaders()) },
   });
   // The relay 410s when the VM is gone (row already reset server-side; the
   // VM itself never emits 410). Broadcast so the shared computer store can
   // flip to reconnecting and auto-reprovision instead of green-but-dead UI.
-  if (res.status === 410 && isCloudTransport() && typeof window !== 'undefined') {
+  // A 404 means the row holds no VM at all (same stale-snapshot disease) —
+  // broadcast too so recovery runs instead of idling on a dead screen.
+  if ((res.status === 410 || res.status === 404) && isCloudTransport() && typeof window !== 'undefined') {
     window.dispatchEvent(new Event('wayfind:computer-gone'));
   }
   return res;

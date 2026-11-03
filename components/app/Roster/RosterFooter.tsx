@@ -118,14 +118,16 @@ export default function RosterFooter() {
   }, [user?.userId, email]);
 
   // Computer lifecycle: auto-start once per sign-in (new users default to
-  // cloud + boot, see useComputer), poll while provisioning, refresh when
-  // Settings opens so the Computer tab never shows a stale snapshot.
+  // cloud + boot, see useComputer). Poll while the computer isn't usable so
+  // a stale snapshot (missed provision response, another tab's boot) always
+  // converges — refresh is read-only, it never boots anything by itself.
   useEffect(() => {
     if (!user?.userId) return;
     ensureComputerStart(user.userId);
   }, [user?.userId]);
   useEffect(() => {
-    if (computer?.provisionStatus !== 'provisioning') return;
+    const st = computer?.provisionStatus;
+    if (st === 'running' || st === 'suspended') return;
     const t = setInterval(() => void refreshComputer(true), 10_000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

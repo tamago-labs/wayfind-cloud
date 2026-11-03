@@ -139,6 +139,9 @@ const CORS = {
   "Access-Control-Allow-Headers": "Authorization, Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Content-Type": "application/json",
+  // API responses must never be cached: a cached 410 for a proxy GET kept a
+  // dead VM "dead" in the browser long after recovery (same URL re-fires).
+  "Cache-Control": "no-store",
 };
 
 const json = (statusCode: number, body: unknown): APIGatewayProxyStructuredResultV2 => ({
@@ -167,7 +170,7 @@ async function ensureProfile(claims: Claims) {
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "2026-11-02-relay+guarded-dedupe+usage-token+presigned-sync";
+const BACKEND_REV = "2026-11-03-relay+guarded-dedupe+usage-token+presigned-sync+no-store";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
