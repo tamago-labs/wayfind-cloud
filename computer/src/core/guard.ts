@@ -113,13 +113,36 @@ const READ_ONLY = new Set(['list', 'glob', 'read', 'grep', 'webfetch', 'websearc
 const FREE_ALLOW = new Set(['generate_image', 'edit_image', 'read_file']);
 
 /**
+ * Workspace-local writes never interrupt: `write`/`edit` are confined to
+ * the workspace by inside() — reversible, user-visible files. Asking per
+ * CSV or note file is pure friction (a dozen cards for one import job).
+ * External mutations (MCP writes, sends, API posts) still ask. Explicit
+ * `deny` rules still hold — guarded() throws in execute.
+ */
+const LOCAL_WRITE = new Set(['write', 'edit']);
+
+/** Read-like MCP tool names: list/get/fetch…elay — idempotent server-side
+ * reads that must never interrupt. Conservative on purpose: anything not
+ * matching still asks, so a misnamed write can only ever over-ask. */
+const MCP_READ_RE = /(^|_)(list|get|fetch|find|search|show|describe|view|check|count|query)(_|$)/i;
+
+/** True when an MCP tool name is a read (see MCP_READ_RE). Shared by the
+ * approval gate and the read cache so they can never disagree. */
+export function isMcpReadTool(toolName: string): boolean {
+  return MCP_READ_RE.test(toolName);
+}
+
+/**
  * SDK `needsApproval` policy for a tool: interrupt only when the rules say
  * "ask" AND the server runs in enforcing mode. Child runs inherit the
  * parent's delegation grant (the `task` spawn itself was already gated).
+ * `opts.isRead` marks per-call reads (MCP list/get/fetch…) — those skip
+ * the card unless explicitly denied, same as READ_ONLY builtins.
  */
 export function approvalPolicy<TArgs>(
   permission: string,
   targetOf: (args: TArgs) => string,
+  opts?: { isRead?: (input: TArgs) => boolean },
 ): (_ctx: unknown, input: TArgs) => Promise<boolean> {
   return async (_ctx: unknown, input: TArgs) => {
     if (runStore.getStore()?.child) return false;
@@ -128,7 +151,11 @@ export function approvalPolicy<TArgs>(
     // Already approved this run — don't park again.
     if (hasGrant(runStore.getStore()?.runId ?? '', permission, target)) return false;
     const action = decide(loadRules(), permission, target);
-    if ((READ_ONLY.has(permission) || FREE_ALLOW.has(permission)) && action !== 'deny') return false;
+    if (
+      (READ_ONLY.has(permission) || FREE_ALLOW.has(permission) || LOCAL_WRITE.has(permission) || opts?.isRead?.(input)) &&
+      action !== 'deny'
+    )
+      return false;
     return action === 'ask';
   };
 }

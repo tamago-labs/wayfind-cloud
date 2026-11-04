@@ -11,7 +11,7 @@ import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { WORKSPACE_DIR } from '../core/config.js';
 
-import { approvalPolicy, guarded, type GuardOpts } from '../core/guard.js';
+import { approvalPolicy, guarded, isMcpReadTool, type GuardOpts } from '../core/guard.js';
 export interface McpServerConfig {
   command?: string[];
   environment?: Record<string, string>;
@@ -101,6 +101,81 @@ export interface McpServerInfo {
 }
 
 const MCP_NAME_RE = /^[A-Za-z0-9_-]+$/;
+
+/* Read cache (P1): idempotent MCP reads repeat constantly across turns
+ * ("what's the balance?" → same list/get trio every message). Cache per
+ * server+tool+args for 10 min; a write on a server invalidates its reads
+ * (a posted transaction may change the next balance/list). Module-level so
+ * it spans runs/turns — one computer, one account. */
+interface CachedRead {
+  at: number;
+  args: string;
+  text: string;
+}
+const READ_CACHE = new Map<string, CachedRead>();
+const READ_CACHE_TTL_MS = 10 * 60_000;
+const READ_CACHE_MAX = 200;
+const READ_CACHE_TEXT_MAX = 8000;
+
+function readCacheKey(server: string, tool: string, args: unknown): string {
+  let a = '';
+  try {
+    a = JSON.stringify(args ?? {});
+  } catch {
+    a = '';
+  }
+  return `${server}::${tool}::${a}`;
+}
+
+function shortArgs(args: unknown): string {
+  let a = '';
+  try {
+    a = JSON.stringify(args ?? {});
+  } catch {
+    a = '';
+  }
+  return a.length > 160 ? `${a.slice(0, 160)}…` : a;
+}
+
+function readCacheGet(key: string): string | undefined {
+  const e = READ_CACHE.get(key);
+  if (!e) return undefined;
+  if (Date.now() - e.at > READ_CACHE_TTL_MS) {
+    READ_CACHE.delete(key);
+    return undefined;
+  }
+  return e.text;
+}
+
+function readCacheSet(key: string, args: string, text: string): void {
+  if (READ_CACHE.size >= READ_CACHE_MAX) {
+    const oldest = READ_CACHE.keys().next();
+    if (!oldest.done) READ_CACHE.delete(oldest.value);
+  }
+  READ_CACHE.set(key, { at: Date.now(), args, text: text.slice(0, READ_CACHE_TEXT_MAX) });
+}
+
+function readCacheInvalidateServer(server: string): void {
+  for (const k of [...READ_CACHE.keys()]) {
+    if (k.startsWith(`${server}::`)) READ_CACHE.delete(k);
+  }
+}
+
+/** Recently observed reads, newest first — rendered into the catalog
+ * prompt so the model trusts them instead of re-fetching. */
+export function recentMcpReads(
+  limit = 6,
+): Array<{ server: string; tool: string; args: string; text: string; ageSec: number }> {
+  const now = Date.now();
+  return [...READ_CACHE.entries()]
+    .filter(([, e]) => now - e.at <= READ_CACHE_TTL_MS)
+    .sort((a, b) => b[1].at - a[1].at)
+    .slice(0, limit)
+    .map(([k, e]) => {
+      const [server, tool] = k.split('::');
+      return { server, tool, args: e.args, text: e.text, ageSec: Math.round((now - e.at) / 1000) };
+    });
+}
 
 /** Read the raw server map. Missing file = no servers; corrupt file = no servers (logged). */
 export function readMcpConfig(): Record<string, McpServerConfig> {
@@ -343,6 +418,15 @@ export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<ty
             // the run with no card (restart via restart_mcp_server).
             const live = pool.get(serverName);
             const c = live?.client && live.hash === hash ? live.client : client;
+            // P1: serve idempotent reads from cache; writes invalidate.
+            const read = isMcpReadTool(t.name);
+            const cacheKey = read ? readCacheKey(serverName, t.name, args) : '';
+            if (read) {
+              const hit = readCacheGet(cacheKey);
+              if (hit !== undefined) return hit;
+            } else {
+              readCacheInvalidateServer(serverName);
+            }
             let timer: ReturnType<typeof setTimeout> | undefined;
             try {
               const res = (await Promise.race([
@@ -358,16 +442,17 @@ export async function loadMcpTools(opts: GuardOpts): Promise<Array<ReturnType<ty
                 }),
               ])) as { content?: Array<{ type: string; text?: string }> };
               const content = res.content ?? [];
-              return (
+              const out =
                 content
                   .map((c) => (c.type === 'text' ? (c.text ?? '') : `[${c.type}]`))
-                  .join('\n') || '(no output)'
-              );
+                  .join('\n') || '(no output)';
+              if (read) readCacheSet(cacheKey, shortArgs(args), out);
+              return out;
             } finally {
               if (timer) clearTimeout(timer);
             }
           }, opts),
-          needsApproval: approvalPolicy(`mcp:${serverName}`, () => t.name),
+          needsApproval: approvalPolicy(`mcp:${serverName}`, () => t.name, { isRead: () => isMcpReadTool(t.name) }),
         }),
       );
     }
@@ -502,11 +587,19 @@ export function mcpCatalogPrompt(): string {
   const lines = servers.map(
     (s) => `- ${s.name} (${s.type}, ${s.tools} tool${s.tools === 1 ? '' : 's'}${s.status === 'error' ? `, ERROR: ${s.lastError ?? 'connection failed'}` : ''})`,
   );
-  return (
+  const base =
     ' Registered MCP servers (already installed — use their <name>_<tool> tools directly, ' +
     'never call install_mcp_server for these; if one errors, call restart_mcp_server):\n' +
-    lines.join('\n')
+    lines.join('\n');
+  // P1: recently observed reads ride along so the model trusts them instead
+  // of re-fetching the same list/get every turn. Fresh ~10 min; any write on
+  // a server already evicted its entries.
+  const facts = recentMcpReads();
+  if (facts.length === 0) return base;
+  const factLines = facts.map(
+    (f) => `- ${f.server}.${f.tool}(${f.args}) [${f.ageSec}s ago] → ${f.text.slice(0, 300)}`,
   );
+  return base + '\nAlready observed (fresh — do NOT re-fetch these, use the values):\n' + factLines.join('\n');
 }
 
 export interface McpCandidate {
