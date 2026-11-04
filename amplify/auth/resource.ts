@@ -17,9 +17,9 @@ export const auth = defineAuth({
         },
         scopes: ['profile', 'email', 'openid']
       },
-      // Production URLs (e.g. https://<domain>/app) get added once the domain is known.
-      callbackUrls: ['http://localhost:3000/app'],
-      logoutUrls: ['http://localhost:3000/'],
+      // Production URLs for the live domain; localhost for local dev.
+      callbackUrls: ['http://localhost:3000/app', 'https://wayfind.click/app'],
+      logoutUrls: ['http://localhost:3000/', 'https://wayfind.click/'],
     },
   },
 });
