@@ -17,7 +17,7 @@ export default function HowSection() {
             controls
             preload="metadata"
             playsInline
-            src="/wayfind-video.mp4"
+            src="/wayfind-video-new.mp4"
           >
             Sorry, your browser doesn&rsquo;t support embedded videos.
           </video>
