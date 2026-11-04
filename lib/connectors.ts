@@ -182,12 +182,14 @@ export const CONNECTORS: Connector[] = [
   { name: 'Ringover', type: 'Other services', category: 'Communication', blurb: 'Calling, SMS and video in one.', status: 'Via Zoho MCP', image: '/connectors/ringover.png', description: 'Ringover: business telephony with call, SMS and video — your Bots can manage contacts and blacklists.', website: 'https://www.ringover.com', tools: ['Blacklist number', 'Create contact', 'Fetch contact', 'Remove from blacklist', 'Update contact', 'Update phone number'] },
   { name: 'Rocket.Chat', type: 'Other services', category: 'Communication', blurb: 'Chat you fully control.', status: 'Via Zoho MCP', image: '/connectors/rocketchat.png', description: 'Rocket.Chat: self-hosted team chat — your Bots can open channels and groups, and post for you.', website: 'https://www.rocket.chat', tools: ['Create channel', 'Create private group', 'Send channel message', 'Send group message'] },
   { name: 'Zulip', type: 'Other services', category: 'Communication', blurb: 'Threads keep chat sane.', status: 'Via Zoho MCP', image: '/connectors/zulip.png', description: 'Zulip: threaded open-source team chat — your Bots can post to streams and manage messages.', website: 'https://zulip.com', tools: ['Create stream', 'Fetch message', 'Fetch stream ID', 'Fetch user', 'Send message', 'Update message'] },
-  { name: 'USDC', type: 'Web3', category: 'Web3', blurb: 'Stablecoin balances and payments.' },
-  { name: 'Solana', type: 'Web3', category: 'Web3', blurb: 'Wallets and treasury activity.' },
-  { name: 'xStocks', type: 'Web3', category: 'Web3', blurb: 'Tokenized stock tracking.' },
+  // Web3 connectors hidden until ready (kept for re-enable):
+  // { name: 'USDC', type: 'Web3', category: 'Web3', blurb: 'Stablecoin balances and payments.' },
+  // { name: 'Solana', type: 'Web3', category: 'Web3', blurb: 'Wallets and treasury activity.' },
+  // { name: 'xStocks', type: 'Web3', category: 'Web3', blurb: 'Tokenized stock tracking.' },
 ];
 
-export const CONNECTOR_TYPES = ['Zoho-based services', 'Other services', 'Web3'] as const;
+// Web3 tab hidden with its connectors (see above) — re-add when ready.
+export const CONNECTOR_TYPES = ['Zoho-based services', 'Other services'] as const;
 
 export type ConnectorTypeFilter = (typeof CONNECTOR_TYPES)[number];
 
