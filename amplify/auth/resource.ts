@@ -17,9 +17,15 @@ export const auth = defineAuth({
         },
         scopes: ['profile', 'email', 'openid']
       },
-      // Production URLs for the live domain; localhost for local dev.
-      callbackUrls: ['http://localhost:3000/app', 'https://wayfind.click/app'],
-      logoutUrls: ['http://localhost:3000/', 'https://wayfind.click/'],
+      // Production URLs for the live domain (apex + www); localhost for local dev.
+      // Cognito matches these exactly — the origin that starts the OAuth flow
+      // must be listed here.
+      callbackUrls: [
+        'http://localhost:3000/app',
+        'https://wayfind.click/app',
+        'https://www.wayfind.click/app',
+      ],
+      logoutUrls: ['http://localhost:3000/', 'https://wayfind.click/', 'https://www.wayfind.click/'],
     },
   },
 });

@@ -103,8 +103,8 @@ apiLambda.addToRolePolicy(
 const apiFunctionUrl = apiLambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE, // every route verifies the Cognito JWT in the handler
   cors: {
-    // One config for local dev + prod (wayfind.click). No wildcard.
-    allowedOrigins: ["http://localhost:3000", "https://wayfind.click"],
+    // One config for local dev + prod (apex + www). No wildcard.
+    allowedOrigins: ["http://localhost:3000", "https://wayfind.click", "https://www.wayfind.click"],
     allowedMethods: [HttpMethod.ALL],
     allowedHeaders: ["*"],
     maxAge: Duration.minutes(5),
