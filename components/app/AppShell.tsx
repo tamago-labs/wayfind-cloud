@@ -24,7 +24,7 @@ const dataClient = generateClient<Schema>();
 
 const FOLLOW_UP_NO = 'Okay, I’ve held it. Tell me what to change.';
 
-const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
+const validColors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue', 'coral', 'grape'];
 const validShapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
 // Bots already greeted this session (module-level: survives remounts and
 // StrictMode double-effects so the hello run fires exactly once per bot).

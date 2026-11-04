@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Mascot, { type MascotColor, type MascotShape } from '@/components/Mascot';
 import type { BotEdits } from './index';
 
-const colors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue'];
+const colors: MascotColor[] = ['amber', 'moss', 'lagoon', 'ash', 'blue', 'coral', 'grape'];
 const shapes: MascotShape[] = ['blob', 'circle', 'squircle', 'pebble'];
 
 interface BotEditModalProps {

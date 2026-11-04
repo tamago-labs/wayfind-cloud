@@ -40,6 +40,8 @@ module.exports = {
         bmoss: '#7BA05B',
         blagoon: '#2BB3B1',
         bash: '#9AA3AE',
+        bcoral: '#E26D5A',
+        bgrape: '#8B5CF6',
       },
       fontFamily: {
         display: ['Space Grotesk', 'sans-serif'],

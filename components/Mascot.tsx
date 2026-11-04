@@ -1,6 +1,6 @@
 'use client';
 
-export type MascotColor = 'amber' | 'moss' | 'lagoon' | 'ash' | 'white' | 'blue';
+export type MascotColor = 'amber' | 'moss' | 'lagoon' | 'ash' | 'white' | 'blue' | 'coral' | 'grape';
 export type MascotSize = 'xs' | 'sm' | 'md' | 'lg';
 export type MascotMood = 'open' | 'happy' | 'sleepy';
 export type MascotBlink = 'calm' | 'sleepy' | 'off';
@@ -31,6 +31,8 @@ const colorMap: Record<MascotColor, string> = {
   ash: 'bg-bash',
   white: 'bg-white',
   blue: 'bg-cta',
+  coral: 'bg-bcoral',
+  grape: 'bg-bgrape',
 };
 
 const sizeMap: Record<MascotSize, string> = {
