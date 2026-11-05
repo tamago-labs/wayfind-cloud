@@ -1,8 +1,13 @@
 # Wayfind Cloud
 
-> **Always-on AI shouldn't require an enterprise budget.**
->
-> An affordable AI workforce that works across 100+ business apps, powered by Meta AI models & serverless Firecracker VMM.
+> Always-on AI teammates for small businesses — powered by Meta open-weight models + serverless Firecracker microVMs.
+
+**Hackathon Highlights**
+- Always-on AI teammates that work across **100+ business apps**
+- Each account gets an isolated Firecracker microVM that **pauses when idle and resumes in seconds**
+- Primary intelligence: **Muse Spark Open** (self-hosted on Modal) + Muse Image, Muse Voice, and grounded search
+- Real business workflows: bookkeeping, reconciliation, invoicing, approvals, and routines
+- Built for affordability — continuous AI without enterprise cost
 
 ## Overview
 
@@ -15,7 +20,7 @@ Wayfind delivers always-on AI teammates for everyday business workflows. Connect
 | Resource | Link |
 |---|---|
 | Live | https://wayfind.click |
-| Video Demo (3 mins) | https://youtu.be/tQ3zqXdn3WE |
+| Video Demo (3 mins) | https://youtu.be/TM7GRNuOMcY |
 | Documentation | https://wayfind.click/docs |
 | Presentation | [Pitch deck](./docs/presentation.html) |
 | X | https://x.com/WayfindCloud |
