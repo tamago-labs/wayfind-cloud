@@ -170,7 +170,7 @@ async function ensureProfile(claims: Claims) {
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "2026-11-03-relay+guarded-dedupe+usage-token+presigned-sync+no-store";
+const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,

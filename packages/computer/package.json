@@ -1,6 +1,6 @@
 {
   "name": "wayfind-computer",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Wayfind agent CLI + HTTP/SSE server that runs inside the cloud computer (MicroVM). Stack A: @openai/agents with opencode-shaped tools.",
   "type": "module",

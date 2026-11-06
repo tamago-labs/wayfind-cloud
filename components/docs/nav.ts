@@ -27,8 +27,11 @@ export const DOC_NAV: DocSection[] = [
     ],
   },
   {
-    title: 'Models',
-    links: [{ href: '/docs/models', label: 'Models' }],
+    title: 'Resources',
+    links: [
+      { href: '/docs/models', label: 'Models' },
+      { href: '/docs/changelog', label: 'Changelog' },
+    ],
   },
 ];
 

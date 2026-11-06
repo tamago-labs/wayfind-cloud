@@ -8,8 +8,8 @@ export default function Footer() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <Logo />
           <nav className="flex flex-wrap items-center gap-6 text-[14px] font-medium text-navy">
-            <Link href="/connectors" className="hover:opacity-60 transition-opacity">Connectors</Link>
-            <Link href="/docs" className="hover:opacity-60 transition-opacity">Docs</Link> 
+            <Link href="/docs" className="hover:opacity-60 transition-opacity">Docs</Link>
+            <Link href="/docs/changelog" className="hover:opacity-60 transition-opacity">Changelog</Link>
             <Link href="https://github.com/tamago-labs/wayfind-cloud" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">GitHub</Link>
             <Link href="https://x.com/WayfindCloud" target="_blank" rel="noopener noreferrer" className="hover:opacity-60 transition-opacity">X (former Twitter)</Link>
           </nav>
