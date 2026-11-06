@@ -49,10 +49,11 @@ export interface AgentSelection {
 /** Tools unavailable to read-only research subagents. */
 const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot', 'generate_image', 'edit_image', 'install_mcp_server', 'restart_mcp_server', 'schedule_task']);
 
-/** Cross-bot messaging for the chief thread: runner + visible roster. */
+/** Cross-bot messaging: runner + visible roster. isChief selects the guidance voice. */
 export interface TeamChannel {
   send: MessageRunner;
   roster: RosterEntry[];
+  isChief: boolean;
 }
 
 /** Logged once per process so a boot line proves which code is live. */
@@ -123,9 +124,13 @@ export async function createTriageAgent(
     ? 'You can create a new bot with the create_bot tool when the user asks for one — they confirm on a card before it is created. Never claim a bot exists unless create_bot confirmed it. '
     : '';
   const teamGuidance = team
-    ? rosterDirectory(team.roster) +
-      ' When the user\'s text @mentions a bot by name, or asks you to consult one, call message_bot with that bot\'s name and relay its reply. ' +
-      'Delegate — do not redo the work yourself while it answers. '
+    ? team.isChief
+      ? rosterDirectory(team.roster, true) +
+        ' When the user\'s text @mentions a bot by name, or asks you to consult one, call message_bot with that bot\'s name and relay its reply. ' +
+        'Delegate — do not redo the work yourself while it answers. '
+      : rosterDirectory(team.roster, false) +
+        ' When the user asks you to check with them, escalate something, or get their input, call message_bot with their name and relay the reply. ' +
+        'Otherwise answer directly from your own role and skills. '
     : '';
   if (ask) tools.push(createQuestionTool(opts, ask));
   if (runChild) tools.push(createTaskTool(runChild, opts));

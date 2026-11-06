@@ -32,6 +32,7 @@ PASS/FAIL (shapes, states, files — never model-output quality).
 | `10-question` | model asks the user via the `question` tool; harness answers through `POST /questions/:id`; run resumes with the answer (120s tool-side timeout → "Unanswered") |
 | `08-conversation` | per-`conversationId` transcript isolation (no bleed), own-word recall, `/history` matches (wipes nothing; uses stamped test conversations) |
 | `09-search` | `webfetch` returns a live page as markdown (keyless); `websearch` answers from Exa when a key exists (`/status.search`), otherwise must say a key is missing gracefully |
+| `12-team` | member thread with chief-only roster relays the chief's reply; self-message refused by the delegation guard |
 
 Stop on first FAIL (each script exits non-zero). `05` approves every ask on the approve path; the reject path rejects once and asserts the file was never written. Set `APPROVAL_TIMEOUT_MS` is gone — parked runs wait indefinitely for a decision (restart the server to drop them). `05` can still
 take minutes on a slow model.

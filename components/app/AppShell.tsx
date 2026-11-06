@@ -213,12 +213,18 @@ export default function AppShell() {
           .catch(() => undefined);
         const runId = await postTask(v, targetId ?? undefined, system, targetSkills ?? undefined, targetMcp ?? undefined, {
           canManageBots: targetIsChief,
-          // Chief-only: the model sees the roster so it can propose bots and @mention them.
+          // Chief: the model sees every bot so it can propose and @mention them.
+          // Member: the model sees the chief only — it can escalate/consult, nothing else.
           roster: targetIsChief
             ? bots
                 .filter((b) => b.id)
                 .map((b) => ({ id: b.id as string, name: b.name, role: b.role, skills: b.skillsEnabled, mcp: b.mcpEnabled }))
-            : undefined,
+            : (() => {
+                const chief = bots.find((b) => b.isChiefOfStaff && b.id && b.id !== targetId);
+                return chief
+                  ? [{ id: chief.id as string, name: chief.name, role: chief.role, skills: chief.skillsEnabled, mcp: chief.mcpEnabled }]
+                  : undefined;
+              })(),
           botName: targetName,
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(user?.userId ? { ownerId: user.userId } : {}),
@@ -705,7 +711,11 @@ export default function AppShell() {
           onOpenSkills={() => setSkillsOpen(true)}
           onOpenMcp={() => setMcpOpen(true)}
           ownerId={user?.userId}
-          mentionNames={bot.isChiefOfStaff ? bots.filter((b) => b.id && b.id !== bot.id).map((b) => b.name) : []}
+          mentionNames={(() => {
+            if (bot.isChiefOfStaff) return bots.filter((b) => b.id && b.id !== bot.id).map((b) => b.name);
+            const chief = bots.find((b) => b.isChiefOfStaff && b.id);
+            return chief ? [chief.name] : [];
+          })()}
           disabled={gated}
           disabledHint={gated ? bootHint : undefined}
           onRetry={gated ? () => retryComputerStart() : undefined}

@@ -39,9 +39,9 @@ const CHIEF_SUGGESTION = {
 };
 
 const MEMBER_SUGGESTION = {
-  label: 'Add a skill',
-  desc: 'Install react-best-practices',
-  prompt: 'Install the skill npx skills add vercel-labs/agent-skills/skills/react-best-practices',
+  label: 'Ask the chief',
+  desc: 'Escalate to your chief of staff',
+  prompt: 'Ask my chief of staff for help with this.',
 };
 
 const SUGGESTIONS = [

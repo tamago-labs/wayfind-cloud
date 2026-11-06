@@ -24,10 +24,12 @@ export interface RosterEntry {
 /** Send a message to another bot; resolves with that bot's reply text. */
 export type MessageRunner = (botName: string, message: string) => Promise<string>;
 
-export function rosterDirectory(roster: RosterEntry[]): string {
+export function rosterDirectory(roster: RosterEntry[], isChief: boolean): string {
   if (roster.length === 0) return 'You have no other bots yet.';
+  const header = isChief ? 'Bots you coordinate:' : 'Your chief of staff:';
   return (
-    'Bots you coordinate:\n' +
+    header +
+    '\n' +
     roster.map((b) => `- ${b.name}${b.role ? ` (${b.role})` : ''}`).join('\n')
   );
 }
@@ -36,10 +38,10 @@ export function createMessageBotTool(send: MessageRunner, opts: GuardOpts): Retu
   return tool({
     name: 'message_bot',
     description:
-      'Send a message to one of the user\'s other bots and get its reply. ' +
+      'Send a message to another bot on your team and get its reply. ' +
       'Use when the user\'s text @mentions a bot by name, or asks you to consult one. ' +
       'The other bot answers in its own role — relay its reply in your own words, keeping any Sources list. ' +
-      'Never call message_bot for yourself.',
+      'Only message bots listed in your team roster, never yourself.',
     parameters: z.object({
       bot: z.string().describe('Bot name exactly as listed (without the @)'),
       message: z.string().describe('What to ask or tell that bot, as the user would write it'),

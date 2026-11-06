@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { MemorySession, run, RunState } from '@openai/agents';
 import { PROVIDER_MODEL, WORKSPACE_DIR } from '../core/config.js';
 import { inside } from '../agent/tools/paths.js';
-import { createTriageAgent, type AgentSelection } from '../agent/agent.js';
+import { createTriageAgent, type AgentSelection, type TeamChannel } from '../agent/agent.js';
 import type { QuestionPrompt } from '../agent/tools/question.js';
 import type { BotRequest, BotRequestResult } from '../agent/tools/create_bot.js';
 import type { MessageRunner, RosterEntry } from '../agent/tools/message_bot.js';
@@ -65,8 +65,10 @@ export interface Run {
   allowedMcp?: string[];
   /** Chief-of-staff capability: create_bot tool + bot_request hook. Mirrored so resume rebuilds the same agent. */
   canManageBots?: boolean;
-  /** Team roster for @mentions (chief thread). Mirrored so resume rebuilds the same agent. */
+  /** Team roster for @mentions. Chief thread: all bots. Member thread: the chief only. Mirrored so resume rebuilds the same agent. */
   roster?: RosterEntry[];
+  /** Bots already consulted up this delegation chain (incl. self) — bounce guard. */
+  delegationPath?: string[];
   /** This run's bot name — used for the [via …] tag on cross-bot messages. */
   botName?: string;
   /** Cognito sub threaded from POST /task. Per-user metering key. */
@@ -453,9 +455,7 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
     makeRunChild(runState),
     makeQuestionHook(runState),
     runState.canManageBots ? makeBotRequestHook(runState) : undefined,
-    runState.canManageBots
-      ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) }
-      : undefined,
+    teamFor(runState),
   );
   let state: Awaited<ReturnType<typeof RunState.fromString>>;
   try {
@@ -573,8 +573,10 @@ export interface StartRunOpts {
   allowedMcp?: string[];
   /** Chief-of-staff run: exposes the create_bot tool (confirm card in frontend). */
   canManageBots?: boolean;
-  /** Team roster (all bots incl. self) for @mentions. Only the chief thread sends it. */
+  /** Team roster (all bots incl. self) for @mentions. Chief thread: every bot. Member thread: the chief only. */
   roster?: RosterEntry[];
+  /** Bots already consulted up this delegation chain (incl. self) — bounce guard. */
+  delegationPath?: string[];
   /** This run's bot name — [via …] tag on cross-bot messages. */
   botName?: string;
   /** Cognito sub from the frontend. Threads into every usage event. */
@@ -678,6 +680,18 @@ function makeRunChild(runState: Run): (req: ChildRequest) => Promise<ChildResult
 const childSessions = new Map<string, { session: MemorySession; depth: number }>();
 
 /**
+ * Team channel for the `message_bot` tool. Decoupled from `canManageBots`
+ * (which gates create_bot only): any run with a non-empty roster can message
+ * — the chief sees every bot, members see the chief only. The frontend
+ * decides the roster; the VM trusts it like any other /task field.
+ */
+function teamFor(runState: Run): TeamChannel | undefined {
+  const roster = (runState.roster ?? []).filter((b) => b.id);
+  if (roster.length === 0) return undefined;
+  return { send: makeMessageRunner(runState), roster, isChief: runState.canManageBots === true };
+}
+
+/**
  * MessageRunner for the `message_bot` tool: run the message as a real turn
  * in the target bot's own conversation (its session, system, skills) and
  * return the reply. Transcript lines carry the target conversationId with
@@ -701,6 +715,14 @@ function makeMessageRunner(runState: Run): MessageRunner {
     if (runState.depth + 1 > MAX_TASK_DEPTH) {
       return 'Depth cap reached — answer from your own context instead of delegating.';
     }
+    // Bounce guard: refuse to re-consult a bot already up this chain
+    // (incl. yourself) — the depth cap alone would burn 4 turns ping-ponging.
+    const seen = [runState.botName, ...(runState.delegationPath ?? [])]
+      .filter((n): n is string => !!n)
+      .map((n) => n.toLowerCase());
+    if (seen.includes(target.name.toLowerCase())) {
+      return `You already consulted @${target.name} up the chain — answer from that context instead of asking again.`;
+    }
     const sender = runState.botName?.trim() || 'Chief';
     const system = target.role
       ? `You are "${target.name}". Role: ${target.role}.`
@@ -714,6 +736,7 @@ function makeMessageRunner(runState: Run): MessageRunner {
         allowedSkills: target.skills ?? undefined,
         allowedMcp: target.mcp ?? undefined,
         depth: runState.depth + 1,
+        delegationPath: [...seen, target.name.toLowerCase()],
         delegated: true,
         ownerId: runState.ownerId,
         apiUrl: runState.apiUrl,
@@ -868,7 +891,7 @@ function extractWebSources(raw: unknown): Array<{ title: string; url: string }> 
 async function executeRun(runState: Run, text: string, opts: StartRunOpts): Promise<string> {
   const startedAt = Date.now();
   try {
-    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills, runState.allowedMcp, runState.ownerId, runState.conversationId, runState.apiUrl, runState.idToken), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, runState.canManageBots ? { send: makeMessageRunner(runState), roster: (runState.roster ?? []).filter((b) => b.id) } : undefined);
+    const agent = await createTriageAgent(auditTo(runState.id, runState.allowedSkills, runState.allowedMcp, runState.ownerId, runState.conversationId, runState.apiUrl, runState.idToken), runState.sel, makeRunChild(runState), makeQuestionHook(runState), runState.canManageBots ? makeBotRequestHook(runState) : undefined, teamFor(runState));
     // History isolation: children get ONLY their prompt. Top-level input is
     // the live turn (plus JSONL seed on first contact); the session carries
     // everything else. The brief rides bracketed every turn, never persisted.
@@ -926,6 +949,7 @@ function newRunState(opts: StartRunOpts): Run {
     allowedMcp: opts.allowedMcp,
     canManageBots: opts.canManageBots,
     roster: opts.roster,
+    delegationPath: opts.delegationPath,
     botName: opts.botName,
     ownerId: opts.ownerId,
     apiUrl: opts.apiUrl,
