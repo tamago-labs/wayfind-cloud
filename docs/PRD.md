@@ -217,7 +217,7 @@ no per-user encryption exists.)
   **Meta-direct** (`api.meta.ai`: `muse-image-1.0` generation,
   `muse-spark-1.3` grounded search/file reading, speech-to-text). The CLI
   treats providers uniformly through one model client
-  (`computer/src/providers/`), plus cheap paths for image/voice/search.
+  (`packages/computer/src/providers/`), plus cheap paths for image/voice/search.
   Only paid APIs, keys in the VM keystore via `/hooks/run` — no pooled
   consumer subscriptions.
 - Watchers (RSS/web/app events) are NOT built; no routine/scheduler
@@ -266,7 +266,7 @@ is never promised: it suspends, and resumes fast.
 ### 8.1 Computer implementation plan (v7 — what the VM actually contains, as-built 2026-11)
 
 - **Image:** slim `node:24-alpine` + the **wayfind agent server**
-  (`chat|run/status/skills` via `computer/src/cli.ts`, no browser in v1)
+  (`chat|run/status/skills` via `packages/computer/src/cli.ts`, no browser in v1)
   + HTTP agent server on its endpoint. Workspace at `/workspace`
   (durable; everything else is replaceable). Hooks: `/ready` health ·
   `/run` mint per-Computer identity (never at build time, §8) + pull

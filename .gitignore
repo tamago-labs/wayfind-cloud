@@ -41,12 +41,12 @@ amplify_outputs*
 amplifyconfiguration*
 
 # microvm spike scripts (local creds + state + zips)
-scripts/microvm/.env
-scripts/microvm/.microvm-state.json
-scripts/microvm/**/*.zip
+scripts/microvm-tests/.env
+scripts/microvm-tests/.microvm-state.json
+scripts/microvm-tests/**/*.zip
 
 # computer golden-image pipeline (local creds + state + stage + zips)
-scripts/computer-image/.env
-scripts/computer-image/.computer-image-state.json
-scripts/computer-image/**/*.zip
-scripts/computer-image/stage/
+packages/computer/scripts/image/.env
+packages/computer/scripts/image/.computer-image-state.json
+packages/computer/scripts/image/**/*.zip
+packages/computer/scripts/image/stage/

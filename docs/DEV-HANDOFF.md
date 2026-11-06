@@ -138,7 +138,7 @@ M1 question is slim-image resume latency vs chat UX.
 
 ## 5. Computer image + CLI — repo-owned spec (build after M1)
 
-- `computer/` (new top-level dir): `Dockerfile` (slim: Node + CLI on
+- `packages/computer/` (monorepo package): `Dockerfile` (slim: Node + CLI on
  the managed base — no browser in v1), `agent/` (HTTP server:
  task in → transcript events/artifacts/approval-requests out),
  `cli/` (the `wayfind` CLI: `chat`, `run`, `skill list|run|save`,
@@ -267,7 +267,7 @@ Recorded 2026-10-29 (hello-world spike, since cleaned up):
 Recorded 2026-10-31 (golden computer image, Phase 1):
 - Image `arn:aws:lambda:ap-southeast-1:057386374967:microvm-image:wayfind-computer` v1.0 (build: CREATING→CREATED ~13×15s polls; first build pulls `node:24-alpine`)
 - Bundle 21.2 MB zip (`dist/` + prod-only `node_modules` + `workspace/providers.json` catalog; zero keys — zip audited, no `.env`/keystore)
-- Pipeline `scripts/computer-image/`: `01-package-upload` (tsc build + `--omit=dev` stage + S3) → `02-create-image` → `03-run-computer` (manual boot + `/run` identity + cloud chat test)
+- Pipeline `packages/computer/scripts/image/`: `01-package-upload` (tsc build + `--omit=dev` stage + S3) → `02-create-image` → `03-run-computer` (manual boot + `/run` identity + cloud chat test)
 - Server hooks (Phase 2, in-image): `/ready` health, `/hooks/run` (keystore 0600 + env + provider-cache reset + workspace pull), `/hooks/suspend|resume|terminate` (S3 sync under `computers/<computerId>/workspace/`, `.wayfind/` never leaves the VM)
 
 Recorded 2026-11-01 (image rebuild: events endpoint + guard fix):

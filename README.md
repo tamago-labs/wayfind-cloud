@@ -154,17 +154,17 @@ The important distinction is that Wayfind does not provision one permanently run
 
 The main application is built with Next.js and TypeScript. The cloud computer hosts the agent runtime and its available tools.
 
-**What the computer is:** `computer/` is a Node.js agent server (agent loop, tools, MCP clients, skills, routines, approvals, usage metering) that runs inside an AWS Lambda MicroVM. Each account gets one isolated VM; Bots share it.
+**What the computer is:** `packages/computer/` is a Node.js agent server (agent loop, tools, MCP clients, skills, routines, approvals, usage metering) that runs inside an AWS Lambda MicroVM. Each account gets one isolated VM; Bots share it.
 
 **Local vs cloud:**
 
 | | Local | Cloud |
 |---|---|---|
 | Agent server | `npx tsx src/server.ts` on `:8080` for development | Same server compiled to `dist/`, baked into the MicroVM image |
-| Workspace | `computer/workspace/` on disk | Synced to S3 per account, restored on resume |
+| Workspace | `packages/computer/workspace/` on disk | Synced to S3 per account, restored on resume |
 | Keys | `.env` / keystore on your machine | Zero keys in the image — injected per-VM at boot from Amplify secrets |
 
-**How `scripts/computer-image/` works:** the golden-image pipeline packages the agent into a bootable MicroVM image.
+**How `packages/computer/scripts/image/` works:** the golden-image pipeline packages the agent into a bootable MicroVM image.
 
 1. `01-package-upload.ts` — builds `dist/`, stages the bundle, zips, and uploads to S3.
 2. `02-create-image.ts` — creates the MicroVM image from the bundle and polls until `CREATED`.
