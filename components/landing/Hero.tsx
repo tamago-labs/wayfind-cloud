@@ -38,8 +38,16 @@ export default function Hero() {
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="relative mx-auto max-w-4xl px-6 pb-40 pt-20 text-center"
+        className="relative mx-auto max-w-4xl px-6 pb-40 pt-10 text-center"
       >
+        <a
+          href="https://web3.wayfind.click/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mb-5 inline-flex items-center gap-2 rounded-full bg-navy px-4 py-1.5 text-sm font-bold text-white transition-colors hover:bg-cta"
+        >
+          🎉 New: Web3 Gateway — your Bots can now transact onchain <span aria-hidden="true">→</span>
+        </a>
         <div className="mx-auto mb-6 flex justify-center -space-x-3">
           {mascots.map((color, i) => (
             <Mascot

@@ -24,12 +24,13 @@ const CATEGORY_ICON: Record<ConnectorCategory, typeof Briefcase> = {
   Development: Code2,
   Ecommerce: ShoppingBag,
   Web3: Coins,
+  Solana: Coins,
 };
 
 const STATUS_STYLE: Record<ConnectorStatus, string> = {
   Available: 'bg-blagoon/10 text-blagoon',
   'Via Zoho MCP': 'bg-cta/10 text-cta',
-  'Via Wayfind Web3 MCP': 'bg-bamber/15 text-navy',
+  'Via Web3 Gateway': 'bg-bamber/15 text-navy',
   'Coming soon': 'bg-navy/5 text-heroslate',
 };
 
@@ -149,7 +150,9 @@ export default function ConnectorsPage() {
             </p>
           </div>
           <Link
-            href="/app"
+            href="https://x.com/WayfindCloud"
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-cta px-6 py-3 text-sm font-bold text-white hover:bg-ctahover"
           >
             Request a connector <ArrowRight className="h-4 w-4" />

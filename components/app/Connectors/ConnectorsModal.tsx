@@ -14,6 +14,7 @@ import type { Connector, ConnectorTypeFilter } from '@/lib/connectors';
 import { getMcpServers, patchMcpServer, restartMcpServer, saveMcpServer } from '@/lib/agent';
 import type { McpServer } from '@/lib/agent';
 import ZohoMcpGuide from './ZohoMcpGuide';
+import Web3GatewayGuide from './Web3GatewayGuide';
 
 interface ConnectorsModalProps {
   open: boolean;
@@ -126,7 +127,9 @@ export default function ConnectorsModal({ open, onClose, computerReady }: Connec
         message:
           live && live.tools > 0
             ? `Connected — ${live.tools} tools live for all your Bots.`
-            : 'Saved, but the computer reports 0 tools — check the endpoint URL and permissions in Zoho, then retry.',
+            : c.status === 'Via Web3 Gateway'
+              ? 'Saved, but the computer reports 0 tools — check the endpoint URL and wallet connection in the Web3 app, then retry.'
+              : 'Saved, but the computer reports 0 tools — check the endpoint URL and permissions in Zoho, then retry.',
       });
     } catch (err) {
       setResult({ ok: false, message: err instanceof Error ? err.message : String(err) });
@@ -263,8 +266,14 @@ export default function ConnectorsModal({ open, onClose, computerReady }: Connec
 
                 {setup && (
                   <>
-                    <h4 className="mt-4 font-brico text-sm font-extrabold text-navy">1 · Set up Zoho MCP</h4>
-                    <ZohoMcpGuide service={setup.service} note={setup.note} />
+                    <h4 className="mt-4 font-brico text-sm font-extrabold text-navy">
+                      {setup.provider === 'web3-gateway' ? '1 · Get your remote MCP endpoint' : '1 · Set up Zoho MCP'}
+                    </h4>
+                    {setup.provider === 'web3-gateway' ? (
+                      <Web3GatewayGuide note={setup.note} />
+                    ) : (
+                      <ZohoMcpGuide service={setup.service ?? ''} note={setup.note} />
+                    )}
                   </>
                 )}
 
@@ -280,8 +289,12 @@ export default function ConnectorsModal({ open, onClose, computerReady }: Connec
                     <input
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
-                      placeholder="Paste your Zoho MCP endpoint URL…"
-                      aria-label="Zoho MCP endpoint URL"
+                      placeholder={
+                        selected.status === 'Via Web3 Gateway'
+                          ? 'Paste your Web3 Gateway URL…'
+                          : 'Paste your Zoho MCP endpoint URL…'
+                      }
+                      aria-label="MCP endpoint URL"
                       inputMode="url"
                       spellCheck={false}
                       className="mt-2 w-full rounded-xl border border-navy/15 bg-ice px-4 py-2.5 font-mono text-xs text-navy outline-none placeholder:font-sans placeholder:text-sm placeholder:text-heroslate/60 focus:border-cta"

@@ -279,6 +279,11 @@ Recorded 2026-11-01 (image rebuild: events endpoint + guard fix):
 - Rebuilt again (server appends unrendered images): runs track `generatedImages` via `GuardOpts.onFileSaved`; completion appends relative `/files/view?path=…` markdown for anything the model failed to echo; frontend `normalizeSrc` resolves relative + loopback URLs to the active transport
 - Suspend survival (presigned sync, no VM creds): backend mints presigned PUT/GET URLs (`/computer/sync/upload-urls|download-urls`, usage-token auth, 25MB/file cap); VM `sync.ts` rewritten to HTTPS transfers; runtime suspend hook never 500s; `COMPUTER_API_URL` env feeds the VM its API base
 
+Recorded 2026-11-06 (P2P spike S0 → parked; WS-link design parked with it):
+- Verdict: HyperDHT laptop↔MicroVM does not establish. Laptop stack OK (local loopback ping/pong 2.5s), VM DHT OK (`bootstrapped:true, selfLookup:true` via HTTP /debug), but laptop `dht.connect` → repeated `PEER_NOT_FOUND`. Root cause at DHT-routing level, out of spike budget.
+- Platform gotchas learned: image build snapshots the RUNNING container — boot-time keypairs/sockets freeze stale (identical pubkey across VMs; fix = lazy init post-restore); `udx-native` ships no `linux-arm64-musl` prebuild (fleet is ARM64) — use glibc base (`node:24-slim`) for anything bundling hyperdht.
+- WS-link alternative validated on paper (endpoint subprotocols `lambda-microvm[.authentication,.port]` per AWS launching docs) but also parked: product is live, link needs more thought. No link code in repo (reverted); resume here when ready.
+
 ## 9. Guardrails (apply to every phase)
 
 - Nothing user-facing claims a feature before an acceptance test passes

@@ -5,7 +5,9 @@
 // Two dimensions: `type` is where the connector comes from (the page filter),
 // `category` is the job it does (the chip shown on each card).
 
-export type ConnectorStatus = 'Available' | 'Via Zoho MCP' | 'Via Wayfind Web3 MCP' | 'Coming soon';
+import { WEB3_CONNECTORS } from './connectors/web3';
+
+export type ConnectorStatus = 'Available' | 'Via Zoho MCP' | 'Via Web3 Gateway' | 'Coming soon';
 
 export type ConnectorType = 'Zoho-based services' | 'Other services' | 'Web3';
 
@@ -22,7 +24,8 @@ export type ConnectorCategory =
   | 'Operations'
   | 'Development'
   | 'Ecommerce'
-  | 'Web3';
+  | 'Web3'
+  | 'Solana';
 
 export interface Connector {
   name: string;
@@ -53,26 +56,31 @@ export interface Connector {
 
 /** How a connector gets imported onto the bot computer. */
 export interface ConnectorSetup {
-  provider: 'zoho-mcp';
-  /** Zoho MCP service name shown in the guide (e.g. "CRM" for Zoho CRM). */
-  service: string;
+  provider: 'zoho-mcp' | 'web3-gateway';
+  /** Zoho MCP service name shown in the guide (e.g. "CRM" for Zoho CRM).
+   * Unused by the Web3 Gateway guide. */
+  service?: string;
   /** Optional per-connector callout rendered under the shared guide. */
   note?: string;
 }
 
 /** Resolve import instructions: explicit `setup` wins, otherwise every
  * `Via Zoho MCP` connector shares the Zoho MCP guide with the service name
- * derived from the catalog name ("Zoho X" → "X", others verbatim). */
+ * derived from the catalog name ("Zoho X" → "X", others verbatim), and every
+ * `Via Web3 Gateway` connector shares the Web3 Gateway guide. */
 export function connectorSetup(c: Connector): ConnectorSetup | undefined {
   if (c.setup) return c.setup;
+  if (c.status === 'Via Web3 Gateway') return { provider: 'web3-gateway' };
   if (c.status !== 'Via Zoho MCP') return undefined;
   const service = c.type === 'Zoho-based services' ? c.name.replace(/^Zoho\s+/, '') : c.name;
   return { provider: 'zoho-mcp', service };
 }
 
-/** MCP server name for an imported connector — matches McpServerInfo naming. */
+/** MCP server name for an imported connector — matches McpServerInfo naming.
+ * Web3 connectors get their own prefix so they never collide with Zoho ones. */
 export function connectorServerName(c: Connector): string {
-  return `zoho-${connectorSlug(c.name)}`;
+  const prefix = c.status === 'Via Web3 Gateway' ? 'web3' : 'zoho';
+  return `${prefix}-${connectorSlug(c.name)}`;
 }
 
 // Placeholder inventory — mirrors the landing Connectors section.
@@ -182,14 +190,10 @@ export const CONNECTORS: Connector[] = [
   { name: 'Ringover', type: 'Other services', category: 'Communication', blurb: 'Calling, SMS and video in one.', status: 'Via Zoho MCP', image: '/connectors/ringover.png', description: 'Ringover: business telephony with call, SMS and video — your Bots can manage contacts and blacklists.', website: 'https://www.ringover.com', tools: ['Blacklist number', 'Create contact', 'Fetch contact', 'Remove from blacklist', 'Update contact', 'Update phone number'] },
   { name: 'Rocket.Chat', type: 'Other services', category: 'Communication', blurb: 'Chat you fully control.', status: 'Via Zoho MCP', image: '/connectors/rocketchat.png', description: 'Rocket.Chat: self-hosted team chat — your Bots can open channels and groups, and post for you.', website: 'https://www.rocket.chat', tools: ['Create channel', 'Create private group', 'Send channel message', 'Send group message'] },
   { name: 'Zulip', type: 'Other services', category: 'Communication', blurb: 'Threads keep chat sane.', status: 'Via Zoho MCP', image: '/connectors/zulip.png', description: 'Zulip: threaded open-source team chat — your Bots can post to streams and manage messages.', website: 'https://zulip.com', tools: ['Create stream', 'Fetch message', 'Fetch stream ID', 'Fetch user', 'Send message', 'Update message'] },
-  // Web3 connectors hidden until ready (kept for re-enable):
-  // { name: 'USDC', type: 'Web3', category: 'Web3', blurb: 'Stablecoin balances and payments.' },
-  // { name: 'Solana', type: 'Web3', category: 'Web3', blurb: 'Wallets and treasury activity.' },
-  // { name: 'xStocks', type: 'Web3', category: 'Web3', blurb: 'Tokenized stock tracking.' },
+  ...WEB3_CONNECTORS,
 ];
 
-// Web3 tab hidden with its connectors (see above) — re-add when ready.
-export const CONNECTOR_TYPES = ['Zoho-based services', 'Other services'] as const;
+export const CONNECTOR_TYPES = ['Zoho-based services', 'Other services', 'Web3'] as const;
 
 export type ConnectorTypeFilter = (typeof CONNECTOR_TYPES)[number];
 
