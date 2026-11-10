@@ -121,7 +121,6 @@ const schema = a.schema({
   // function stamps owner=userId at approval so users can only ever see
   // their own single-use, short-lived code rows.
   DeviceCode: a
-  DeviceCode: a
     .model({
       codeHash: a.string().required(), // sha256 of the user-facing XXXX-XXXX code
       status: a.enum(["pending", "approved", "denied", "expired"]),
