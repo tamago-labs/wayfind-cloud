@@ -13,7 +13,7 @@ import {
   TerminateMicrovmCommand,
   GetMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
-import { createVerify, createPublicKey, randomUUID } from "crypto";
+import { createVerify, createPublicKey, createHash, randomBytes, randomUUID } from "crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { DynamoDBClient, ListTablesCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
@@ -79,6 +79,10 @@ interface Claims {
   aud?: string;
   exp: number;
   iss: string;
+  // Present when the bearer is an opaque CLI token (P0 login) rather than
+  // a Cognito JWT. Such callers are authenticated but must never mint
+  // further credentials (device approval requires a Cognito session).
+  cliTokenId?: string;
   [k: string]: unknown;
 }
 
@@ -104,8 +108,10 @@ async function getPublicKey(kid: string, iss: string) {
 async function verifyToken(authHeader: string | undefined): Promise<Claims> {
   if (!authHeader?.startsWith("Bearer ")) throw new Error("missing bearer token");
   const token = authHeader.slice(7);
+  // Opaque CLI tokens (P0 login) carry no dots — Cognito JWTs always have
+  // exactly three segments. Route before any JWT parsing.
+  if (token.split(".").length !== 3) return verifyCliToken(token);
   const [h, p, s] = token.split(".");
-  if (!h || !p || !s) throw new Error("malformed token");
 
   const header = JSON.parse(Buffer.from(h, "base64url").toString());
   const claims = JSON.parse(Buffer.from(p, "base64url").toString()) as Claims;
@@ -129,6 +135,87 @@ async function verifyToken(authHeader: string | undefined): Promise<Claims> {
   const ok = verifier.verify(key, Buffer.from(s, "base64url"));
   if (!ok) throw new Error("bad signature");
   return claims;
+}
+
+/* ---------------- CLI token verification (P0 login) ---------------- */
+
+const sha256hex = (s: string): string => createHash("sha256").update(s).digest("hex");
+
+// Opaque CLI tokens minted by the device flow. Stored hashed; looked up by
+// tokenHash GSI. Identity is the cloud user (userId = Cognito sub).
+async function verifyCliToken(token: string): Promise<Claims> {
+  if (!token || token.length < 32) throw new Error("malformed token");
+  const { data } = await dataClient.models.CliToken.cliTokenByTokenHash({
+    tokenHash: sha256hex(token),
+  });
+  const row = (data ?? [])[0] as unknown as {
+    id: string;
+    userId?: string | null;
+    expiresAt?: string | null;
+    revokedAt?: string | null;
+  } | undefined;
+  if (!row || !row.userId) throw new Error("unknown CLI token");
+  if (row.revokedAt) throw new Error("CLI token revoked");
+  if (row.expiresAt && new Date(row.expiresAt).getTime() < Date.now()) {
+    throw new Error("CLI token expired");
+  }
+  return {
+    sub: row.userId,
+    exp: Math.floor(new Date(row.expiresAt ?? Date.now() + 86_400_000).getTime() / 1000),
+    iss: "wayfind-cli",
+    cliTokenId: row.id,
+  };
+}
+
+/* ---------------- CLI device flow (P0 login) ---------------- */
+
+const CLI_LOGIN_URL = "https://wayfind.click/cli-login";
+const DEVICE_CODE_TTL_MS = 10 * 60_000;
+const CLI_TOKEN_TTL_MS = 90 * 24 * 3_600_000;
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // unambiguous: no 0/O, 1/I
+
+function newUserCode(): string {
+  const bytes = randomBytes(8);
+  let code = "";
+  for (const b of bytes) code += CODE_ALPHABET[b % CODE_ALPHABET.length];
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
+
+function newCliToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+// Best-effort per-instance rate limit on code minting (Lambda instances are
+// ephemeral; this blunts casual abuse, not a distributed attack).
+const deviceCodeRate = new Map<string, { count: number; windowStart: number }>();
+function deviceRateOk(ip: string): boolean {
+  const now = Date.now();
+  const cur = deviceCodeRate.get(ip);
+  if (!cur || now - cur.windowStart > 3_600_000) {
+    deviceCodeRate.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  cur.count += 1;
+  return cur.count <= 10;
+}
+
+async function findDeviceCode(code: string) {
+  const { data } = await dataClient.models.DeviceCode.deviceCodeByCodeHash({
+    codeHash: sha256hex(code.trim().toUpperCase()),
+  });
+  return ((data ?? [])[0] ?? null) as unknown as {
+    id: string;
+    status?: string | null;
+    userId?: string | null;
+    cliTokenId?: string | null;
+    deviceName?: string | null;
+    tokenOnce?: string | null;
+    expiresAt?: string | null;
+  } | null;
+}
+
+function deviceExpired(row: { expiresAt?: string | null }): boolean {
+  return !!row.expiresAt && new Date(row.expiresAt).getTime() < Date.now();
 }
 
 /* ---------------- helpers ---------------- */
@@ -170,7 +257,7 @@ async function ensureProfile(claims: Claims) {
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store";
+const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -725,7 +812,76 @@ export const handler = async (
     return json(200, { files });
   }
 
-  // Everything below requires a verified Cognito token
+  // POST /auth/device — mint a device-flow code (public; the CLI calls this
+  // before it has any credential). Body: { deviceName? }.
+  // Returns { code, url, expiresIn }. Rate-limited per source IP.
+  if (path.endsWith("/auth/device") && method === "POST") {
+    const ip = event.requestContext.http.sourceIp ?? "unknown";
+    if (!deviceRateOk(ip)) return json(429, { error: "too many code requests, try again later" });
+    let deviceName = "";
+    try {
+      const parsed = JSON.parse(event.body ?? "{}") as { deviceName?: unknown };
+      if (typeof parsed.deviceName === "string") deviceName = parsed.deviceName.slice(0, 80);
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    const code = newUserCode();
+    const now = new Date().toISOString();
+    const { data: row, errors } = await dataClient.models.DeviceCode.create({
+      codeHash: sha256hex(code),
+      status: "pending",
+      deviceName: deviceName || undefined,
+      createdAt: now,
+      expiresAt: new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString(),
+    });
+    if (errors || !row) return json(500, { error: `device code create failed: ${JSON.stringify(errors)}` });
+    return json(200, { code, url: CLI_LOGIN_URL, expiresIn: DEVICE_CODE_TTL_MS / 1000 });
+  }
+
+  // POST /auth/device/poll — CLI polls with { code }. Public.
+  // → { status: pending, expiresIn } | { status: approved, token, expiresAt }
+  //   | { status: denied|expired }. The token is revealed exactly once.
+  if (path.endsWith("/auth/device/poll") && method === "POST") {
+    let code = "";
+    try {
+      const parsed = JSON.parse(event.body ?? "{}") as { code?: unknown };
+      if (typeof parsed.code === "string") code = parsed.code;
+    } catch {
+      return json(400, { error: "Invalid JSON body" });
+    }
+    if (!code) return json(400, { error: "code is required" });
+    const row = await findDeviceCode(code);
+    if (!row) return json(404, { error: "unknown or expired code" });
+    if (deviceExpired(row) || row.status === "expired") {
+      if (row.status !== "expired") {
+        try {
+          await dataClient.models.DeviceCode.update({ id: row.id, status: "expired" });
+        } catch { /* best-effort */ }
+      }
+      return json(200, { status: "expired" });
+    }
+    if (row.status === "denied") return json(200, { status: "denied" });
+    if (row.status === "approved") {
+      if (!row.tokenOnce) return json(200, { status: "approved", token: null });
+      const token = row.tokenOnce;
+      try {
+        await dataClient.models.DeviceCode.update({ id: row.id, tokenOnce: null });
+      } catch { /* best-effort: the token was already minted, still return it */ }
+      // Look up the CliToken row for expiry info (non-fatal if missing).
+      let expiresAt: string | null = null;
+      try {
+        const fetched = await dataClient.models.CliToken.get({ id: row.cliTokenId ?? "" });
+        expiresAt = (fetched.data as unknown as { expiresAt?: string } | null)?.expiresAt ?? null;
+      } catch { /* ignore */ }
+      return json(200, { status: "approved", token, expiresAt });
+    }
+    const expiresIn = row.expiresAt
+      ? Math.max(0, Math.round((new Date(row.expiresAt).getTime() - Date.now()) / 1000))
+      : DEVICE_CODE_TTL_MS / 1000;
+    return json(200, { status: "pending", expiresIn });
+  }
+
+  // Everything below requires a verified identity: Cognito JWT or CLI token.
   let claims: Claims;
   try {
     claims = await verifyToken(event.headers.authorization ?? event.headers.Authorization);
@@ -735,6 +891,111 @@ export const handler = async (
   const ownerId = claims.sub;
 
   try {
+    // POST /auth/device/approve — browser approval for a CLI device code.
+    // Cognito sessions ONLY: a CLI token must never mint further credentials.
+    // Body: { code, action: "approve"|"deny" }. Approve mints a CliToken for
+    // the verified caller (same user — userId comes from the Cognito JWT).
+    if (path.endsWith("/auth/device/approve") && method === "POST") {
+      if (claims.cliTokenId) return json(403, { error: "device approval requires a browser (Cognito) session" });
+      let code = "";
+      let action = "approve";
+      try {
+        const parsed = JSON.parse(event.body ?? "{}") as { code?: unknown; action?: unknown };
+        if (typeof parsed.code === "string") code = parsed.code;
+        if (parsed.action === "deny") action = "deny";
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      if (!code) return json(400, { error: "code is required" });
+      const row = await findDeviceCode(code);
+      if (!row) return json(404, { error: "unknown or expired code" });
+      if (deviceExpired(row) || row.status !== "pending") {
+        return json(410, { error: `code is ${deviceExpired(row) ? "expired" : row.status}` });
+      }
+      if (action === "deny") {
+        await dataClient.models.DeviceCode.update({ id: row.id, status: "denied" });
+        return json(200, { ok: true, status: "denied" });
+      }
+      const profile = await ensureProfile(claims);
+      const token = newCliToken();
+      const now = new Date().toISOString();
+      const { data: cliToken, errors } = await dataClient.models.CliToken.create({
+        tokenHash: sha256hex(token),
+        userId: ownerId,
+        deviceName: row.deviceName ?? undefined,
+        createdAt: now,
+        expiresAt: new Date(Date.now() + CLI_TOKEN_TTL_MS).toISOString(),
+      });
+      if (errors || !cliToken) {
+        return json(500, { error: `CLI token create failed: ${JSON.stringify(errors)}` });
+      }
+      await stampOwner("CliToken", (cliToken as unknown as { id: string }).id, ownerId);
+      await dataClient.models.DeviceCode.update({
+        id: row.id,
+        status: "approved",
+        userId: ownerId,
+        cliTokenId: (cliToken as unknown as { id: string }).id,
+        tokenOnce: token,
+      });
+      return json(200, { ok: true, status: "approved", email: profile.email ?? claims.email ?? null });
+    }
+
+    // GET /auth/me — who is this bearer? Works for Cognito and CLI tokens.
+    // The CLI uses this as its session check (login guard).
+    if (path.endsWith("/auth/me") && method === "GET") {
+      let email: string | null = typeof claims.email === "string" ? claims.email : null;
+      if (!email) {
+        try {
+          const { data: profiles } = await dataClient.models.UserProfile.profileByOwnerId({ ownerId });
+          email = (profiles ?? [])[0]?.email ?? null;
+        } catch { /* best-effort */ }
+      }
+      return json(200, { userId: ownerId, email, via: claims.cliTokenId ? "cli" : "cognito" });
+    }
+
+    // POST /auth/revoke — revoke CLI tokens. A CLI bearer revokes itself;
+    // a Cognito session may revoke one ({ cliTokenId }) or all ({ all: true }).
+    if (path.endsWith("/auth/revoke") && method === "POST") {
+      let cliTokenId = "";
+      let all = false;
+      try {
+        const parsed = JSON.parse(event.body ?? "{}") as { cliTokenId?: unknown; all?: unknown };
+        if (typeof parsed.cliTokenId === "string") cliTokenId = parsed.cliTokenId;
+        if (parsed.all === true) all = true;
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      const revoke = async (id: string): Promise<boolean> => {
+        let row: { userId?: string | null; revokedAt?: string | null } | null = null;
+        try {
+          const fetched = await dataClient.models.CliToken.get({ id });
+          row = fetched.data as unknown as typeof row;
+        } catch {
+          return false;
+        }
+        if (!row || row.userId !== ownerId || row.revokedAt) return false;
+        await dataClient.models.CliToken.update({ id, revokedAt: new Date().toISOString() });
+        return true;
+      };
+      if (claims.cliTokenId) {
+        const ok = await revoke(claims.cliTokenId);
+        return json(200, { ok, revoked: ok ? [claims.cliTokenId] : [] });
+      }
+      if (all) {
+        const { data: rows } = await dataClient.models.CliToken.cliTokensByUserId({ userId: ownerId });
+        const revoked: string[] = [];
+        for (const r of rows ?? []) {
+          const id = (r as unknown as { id: string }).id;
+          if (await revoke(id)) revoked.push(id);
+        }
+        return json(200, { ok: true, revoked });
+      }
+      if (!cliTokenId) return json(400, { error: "cliTokenId or all:true is required" });
+      const ok = await revoke(cliTokenId);
+      if (!ok) return json(404, { error: "token not found" });
+      return json(200, { ok: true, revoked: [cliTokenId] });
+    }
+
     // POST /computer/request - get-or-create the caller's Computer row.
     // No approval gate: any signed-in user may provision (gatekeeper removed).
     if (path.endsWith("/computer/request") && method === "POST") {

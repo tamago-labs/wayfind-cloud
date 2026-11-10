@@ -4,7 +4,8 @@ import { routineTickFunction } from "../jobs/routine-tick/resource";
 
 /**
  * Wayfind Cloud data — Phase 3 (PRD A11).
- * 5 owner-authorized models. Wallet-era models (PriceSnapshot, SavedReview,
+ * 5 owner-authorized models + 2 function-only CLI-auth models (DeviceCode,
+ * CliToken — P0 login; the function is their sole accessor). Wallet-era models (PriceSnapshot, SavedReview,
  * wallet UserProfile) are removed; there is no publicApiKey access anywhere.
  * Chat transcripts live on the agent server (per-Bot conversation scope),
  * NOT in DynamoDB — Conversation/Message were removed to avoid dual-write.
@@ -113,6 +114,38 @@ const schema = a.schema({
     .secondaryIndexes((index) => [
       index("ownerId").queryField("routinesByOwnerId"),
       index("status").sortKeys(["nextRunAt"]).queryField("routinesDue"),
+    ]),
+  // CLI device flow (P0 login). DeviceCode carries no model-level rule, so
+  // the schema-level allow.resource(wayfindApiFunction) makes the function
+  // its sole accessor. CliToken adds owner read for /app device management.
+  DeviceCode: a
+    .model({
+      codeHash: a.string().required(), // sha256 of the user-facing XXXX-XXXX code
+      status: a.enum(["pending", "approved", "denied", "expired"]),
+      userId: a.string(), // Cognito sub, set at approval
+      cliTokenId: a.id(),
+      deviceName: a.string(), // reported by the CLI, shown on the approval page
+      tokenOnce: a.string(), // minted CLI token plaintext; read+cleared on first poll
+      createdAt: a.datetime(),
+      expiresAt: a.datetime(), // ~10 min after creation
+    })
+    .secondaryIndexes((index) => [index("codeHash").queryField("deviceCodeByCodeHash")]),
+
+  CliToken: a
+    .model({
+      tokenHash: a.string().required(), // sha256 of the opaque CLI token
+      userId: a.string().required(), // Cognito sub — CLI identity IS the cloud user
+      deviceName: a.string(),
+      createdAt: a.datetime(),
+      expiresAt: a.datetime(), // ~90 days; rotation lands in P1
+      revokedAt: a.datetime(),
+    })
+    .authorization((allow) => [
+      allow.owner().to(["read"]),
+    ])
+    .secondaryIndexes((index) => [
+      index("tokenHash").queryField("cliTokenByTokenHash"),
+      index("userId").queryField("cliTokensByUserId"),
     ]),
 }).authorization((allow) => [
   allow.resource(wayfindApiFunction),
