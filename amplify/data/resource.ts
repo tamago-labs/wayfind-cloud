@@ -126,7 +126,6 @@ const schema = a.schema({
       cliTokenId: a.id(),
       deviceName: a.string(), // reported by the CLI, shown on the approval page
       tokenOnce: a.string(), // minted CLI token plaintext; read+cleared on first poll
-      createdAt: a.datetime(),
       expiresAt: a.datetime(), // ~10 min after creation
     })
     .secondaryIndexes((index) => [index("codeHash").queryField("deviceCodeByCodeHash")]),
@@ -136,7 +135,6 @@ const schema = a.schema({
       tokenHash: a.string().required(), // sha256 of the opaque CLI token
       userId: a.string().required(), // Cognito sub — CLI identity IS the cloud user
       deviceName: a.string(),
-      createdAt: a.datetime(),
       expiresAt: a.datetime(), // ~90 days; rotation lands in P1
       revokedAt: a.datetime(),
     })

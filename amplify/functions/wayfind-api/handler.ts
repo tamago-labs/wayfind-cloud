@@ -826,12 +826,10 @@ export const handler = async (
       return json(400, { error: "Invalid JSON body" });
     }
     const code = newUserCode();
-    const now = new Date().toISOString();
     const { data: row, errors } = await dataClient.models.DeviceCode.create({
       codeHash: sha256hex(code),
       status: "pending",
       deviceName: deviceName || undefined,
-      createdAt: now,
       expiresAt: new Date(Date.now() + DEVICE_CODE_TTL_MS).toISOString(),
     });
     if (errors || !row) return json(500, { error: `device code create failed: ${JSON.stringify(errors)}` });
@@ -918,12 +916,10 @@ export const handler = async (
       }
       const profile = await ensureProfile(claims);
       const token = newCliToken();
-      const now = new Date().toISOString();
       const { data: cliToken, errors } = await dataClient.models.CliToken.create({
         tokenHash: sha256hex(token),
         userId: ownerId,
         deviceName: row.deviceName ?? undefined,
-        createdAt: now,
         expiresAt: new Date(Date.now() + CLI_TOKEN_TTL_MS).toISOString(),
       });
       if (errors || !cliToken) {
