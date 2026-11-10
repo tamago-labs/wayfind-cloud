@@ -16,6 +16,9 @@ export const wayfindApiFunction = defineFunction({
     USER_POOL_CLIENT_ID: process.env.USER_POOL_CLIENT_ID ?? "",
     CORS_ORIGIN: process.env.CORS_ORIGIN ?? "https://wayfind.click",
     COMPUTER_IMAGE_ARN: process.env.COMPUTER_IMAGE_ARN ?? "",
+    EXEC_IMAGE_ARN: process.env.EXEC_IMAGE_ARN ?? "",
+    // Minimal exec-sandbox image (wayfind-sandbox, P1). Disposable sessions:
+    // provisioned per run, never resumed, terminated on idle/expiry.
     COMPUTER_WORKSPACE_BUCKET: process.env.COMPUTER_WORKSPACE_BUCKET ?? "",
     COMPUTER_REGION: process.env.COMPUTER_REGION ?? "ap-southeast-1",
     // Public base of THIS function URL (stable per backend; changes only if

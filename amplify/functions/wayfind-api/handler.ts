@@ -257,7 +257,7 @@ async function ensureProfile(claims: Claims) {
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth";
+const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -915,11 +915,20 @@ export const handler = async (
         return json(200, { ok: true, status: "denied" });
       }
       const profile = await ensureProfile(claims);
+      // Empty-string profile emails (created before email capture) must not
+      // shadow a real Cognito claim — use ||, not ??, throughout.
+      const email =
+        (typeof claims.email === "string" && claims.email) || profile.email || undefined;
+      if (email && !profile.email) {
+        try {
+          await dataClient.models.UserProfile.update({ id: profile.id, email });
+        } catch { /* best-effort backfill */ }
+      }
       const token = newCliToken();
       const { data: cliToken, errors } = await dataClient.models.CliToken.create({
         tokenHash: sha256hex(token),
         userId: ownerId,
-        email: profile.email ?? (typeof claims.email === "string" ? claims.email : undefined),
+        email,
         deviceName: row.deviceName ?? undefined,
         expiresAt: new Date(Date.now() + CLI_TOKEN_TTL_MS).toISOString(),
       });
@@ -1002,6 +1011,190 @@ export const handler = async (
       const ok = await revoke(cliTokenId);
       if (!ok) return json(404, { error: "token not found" });
       return json(200, { ok: true, revoked: [cliTokenId] });
+    }
+
+    // POST /sandbox/provision — boot a disposable exec sandbox (P1).
+    // Body: { idleTtlSeconds? } (300..28800, default 1800). Returns
+    // { sandboxId, endpoint, sessionToken, provisionedAt }. The CLI holds
+    // the sessionToken in memory and presents it per relay call — no DB
+    // row, no resume, no suspend. Auth here is bearer-capability:
+    // knowledge of the unguessable sessionToken + an authenticated caller.
+    // P1-hardening adds SandboxSession rows (owner check) + metering from
+    // GetMicrovm startedAt/terminatedAt at terminate time.
+    if (path.endsWith("/sandbox/provision") && method === "POST") {
+      const imageArn = env.EXEC_IMAGE_ARN;
+      if (!imageArn) return json(500, { error: "EXEC_IMAGE_ARN is not configured" });
+      let idleTtl = 1800;
+      try {
+        const parsed = JSON.parse(event.body ?? "{}") as { idleTtlSeconds?: unknown };
+        if (typeof parsed.idleTtlSeconds === "number" && Number.isFinite(parsed.idleTtlSeconds)) {
+          idleTtl = Math.min(28_800, Math.max(300, Math.floor(parsed.idleTtlSeconds)));
+        }
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      const region = env.COMPUTER_REGION ?? "ap-southeast-1";
+      let bootedMicrovmId: string | undefined;
+      try {
+        const run = await microvms.send(
+          new RunMicrovmCommand({
+            imageIdentifier: imageArn,
+            runHookPayload: JSON.stringify({ provisionedFor: ownerId, purpose: "wayfind-exec" }),
+            ingressNetworkConnectors: [
+              `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:ALL_INGRESS`,
+            ],
+            egressNetworkConnectors: [
+              // NOTE: full egress until P1 workstream 3 lands the allowlist.
+              `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
+            ],
+            // Disposable: no auto-resume, short idle TTL, hard 8h cap.
+            // suspendedDurationSeconds is type-required but inert here:
+            // suspend/resume hooks are DISABLED on the exec image, so an
+            // idle VM never comes back — it ages out and terminates.
+            idlePolicy: { autoResumeEnabled: false, maxIdleDurationSeconds: idleTtl, suspendedDurationSeconds: 3600 },
+            maximumDurationInSeconds: 28_800,
+          }),
+        );
+        if (!run.microvmId) throw new Error("run-microvm returned no microvmId");
+        bootedMicrovmId = run.microvmId;
+        const endpoint = await waitForRunning(run.microvmId);
+        const token = await mintVmToken(run.microvmId);
+        // Session bearer: the exec agent gates everything on this. Unguessable,
+        // held in CLI memory, never stored server-side (disposable model).
+        const sessionToken = randomBytes(32).toString("base64url");
+        const hookRes = await vmFetch(endpoint, token, "/hooks/run", { sessionToken });
+        if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
+        // Smoke: the agent answers an exec.
+        const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" });
+        if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
+        return json(200, {
+          sandboxId: run.microvmId,
+          endpoint,
+          sessionToken,
+          provisionedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        if (bootedMicrovmId) {
+          try {
+            await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: bootedMicrovmId }));
+            console.log(`[wayfind-api] terminated ${bootedMicrovmId} after failed sandbox provision`);
+          } catch (termErr) {
+            console.error(
+              `[wayfind-api] LEAKED microvm ${bootedMicrovmId} (sandbox provision failed, terminate failed):`,
+              termErr instanceof Error ? termErr.message : String(termErr),
+            );
+          }
+        }
+        return json(502, { error: `sandbox provision failed: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    }
+
+    // POST /sandbox/terminate { sandboxId } — end a session now. Best-effort
+    // ownership: the caller must present the session bearer (capability).
+    if (path.endsWith("/sandbox/terminate") && method === "POST") {
+      let sandboxId = "";
+      let sessionToken = "";
+      try {
+        const parsed = JSON.parse(event.body ?? "{}") as { sandboxId?: unknown; sessionToken?: unknown };
+        if (typeof parsed.sandboxId === "string") sandboxId = parsed.sandboxId;
+        if (typeof parsed.sessionToken === "string") sessionToken = parsed.sessionToken;
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      if (!sandboxId || !sessionToken) return json(400, { error: "sandboxId and sessionToken are required" });
+      // Capability check: prove the caller holds this session's bearer by
+      // running a no-op through the agent with it. Wrong token → 401/503
+      // from the agent → 403 here. MicroVM ids are unguessable, but this
+      // makes termination proof-of-holdership, not proof-of-guessing.
+      try {
+        const endpoint = await waitForRunning(sandboxId, 30_000);
+        const token = await mintVmToken(sandboxId);
+        const probe = await fetch(`https://${endpoint}/exec`, {
+          method: "POST",
+          headers: {
+            "X-aws-proxy-auth": token,
+            Authorization: `Bearer ${sessionToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ cmd: "true" }),
+        });
+        if (probe.status === 401 || probe.status === 503) {
+          return json(403, { error: "bad session token for this sandbox" });
+        }
+        if (!probe.ok) throw new Error(`probe → ${probe.status}`);
+      } catch {
+        return json(404, { error: "sandbox not found or unreachable" });
+      }
+      try {
+        await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: sandboxId }));
+      } catch (err) {
+        if (err instanceof Error && /not found/i.test(`${err.name} ${err.message}`)) {
+          return json(200, { ok: true, alreadyGone: true });
+        }
+        return json(502, { error: "terminate failed" });
+      }
+      return json(200, { ok: true });
+    }
+
+    // ANY /sandbox/proxy/* — relay CLI traffic to a disposable sandbox.
+    // Auth: the caller's user identity (gate) + per-call session capability
+    // via X-Sandbox-Id / X-Sandbox-Token headers (Authorization stays the
+    // user's Cognito/CliToken bearer). VM token minted server-side per call.
+    if (path.includes("/sandbox/proxy/")) {
+      const headers = event.headers ?? {};
+      const sandboxId =
+        headers["x-sandbox-id"] ?? headers["X-Sandbox-Id"] ?? headers["X-sandbox-id"] ?? "";
+      const sessionToken =
+        headers["x-sandbox-token"] ?? headers["X-Sandbox-Token"] ?? headers["X-sandbox-token"] ?? "";
+      if (!sandboxId || !sessionToken) {
+        return json(400, { error: "X-Sandbox-Id and X-Sandbox-Token headers are required" });
+      }
+      let endpoint: string;
+      try {
+        endpoint = await waitForRunning(sandboxId, 30_000);
+      } catch {
+        return json(410, { error: "that sandbox no longer exists — provision a fresh one" });
+      }
+      let token: string;
+      try {
+        token = await mintVmToken(sandboxId, 30);
+      } catch {
+        return json(502, { error: "microvm token mint failed" });
+      }
+      const sub = path.slice(path.indexOf("/sandbox/proxy/") + "/sandbox/proxy/".length);
+      const qs = event.rawQueryString ? `?${event.rawQueryString}` : "";
+      const ctype = headers["content-type"] ?? headers["Content-Type"];
+      const accept = headers["accept"] ?? headers["Accept"];
+      let upstream: Response;
+      try {
+        upstream = await fetch(`https://${endpoint}/${sub}${qs}`, {
+          method,
+          headers: {
+            "X-aws-proxy-auth": token,
+            Authorization: `Bearer ${sessionToken}`,
+            ...(ctype ? { "Content-Type": ctype } : {}),
+            ...(accept ? { Accept: accept } : {}),
+          },
+          body:
+            method === "GET" || method === "HEAD"
+              ? undefined
+              : event.isBase64Encoded
+                ? Buffer.from(event.body ?? "", "base64")
+                : (event.body ?? undefined),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return json(502, { error: `sandbox unreachable: ${msg.slice(0, 200)}` });
+      }
+      const upType = upstream.headers.get("content-type") ?? "application/octet-stream";
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
+      return {
+        statusCode: upstream.status,
+        headers: { ...CORS, "Content-Type": upType },
+        body: textish ? buf.toString("utf8") : buf.toString("base64"),
+        ...(textish ? {} : { isBase64Encoded: true }),
+      };
     }
 
     // POST /computer/request - get-or-create the caller's Computer row.
