@@ -167,6 +167,39 @@ async function verifyCliToken(token: string): Promise<Claims> {
   };
 }
 
+/* ---------------- sandbox sessions (P1 workstream 2) ---------------- */
+
+type SandboxRow = {
+  id: string;
+  sandboxId?: string | null;
+  sessionToken?: string | null;
+  endpoint?: string | null;
+  status?: string | null;
+  provisionedAt?: string | null;
+  lastUsedAt?: string | null;
+};
+
+/** Newest active row for the owner; heals stale rows (VM gone → terminated). */
+async function findActiveSession(ownerId: string): Promise<SandboxRow | null> {
+  const { data } = await dataClient.models.SandboxSession.sandboxSessionsByOwnerId({ ownerId });
+  const rows = ((data ?? []) as unknown as SandboxRow[]).filter((r) => r.status === 'active');
+  rows.sort((a, b) => String(b.provisionedAt ?? '').localeCompare(String(a.provisionedAt ?? '')));
+  for (const row of rows) {
+    if (!row.sandboxId) continue;
+    if (await vmAlive(row.sandboxId)) return row;
+    try {
+      await dataClient.models.SandboxSession.update({ id: row.id, status: 'terminated' });
+    } catch { /* best-effort heal */ }
+  }
+  return null;
+}
+
+async function touchSession(id: string): Promise<void> {
+  try {
+    await dataClient.models.SandboxSession.update({ id, lastUsedAt: new Date().toISOString() });
+  } catch { /* best-effort */ }
+}
+
 /* ---------------- CLI device flow (P0 login) ---------------- */
 
 const CLI_LOGIN_URL = "https://wayfind.click/cli-login";
@@ -257,7 +290,7 @@ async function ensureProfile(claims: Claims) {
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox";
+const BACKEND_REV = "1.1.0+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -1013,25 +1046,38 @@ export const handler = async (
       return json(200, { ok: true, revoked: [cliTokenId] });
     }
 
-    // POST /sandbox/provision — boot a disposable exec sandbox (P1).
-    // Body: { idleTtlSeconds? } (300..28800, default 1800). Returns
-    // { sandboxId, endpoint, sessionToken, provisionedAt }. The CLI holds
-    // the sessionToken in memory and presents it per relay call — no DB
-    // row, no resume, no suspend. Auth here is bearer-capability:
-    // knowledge of the unguessable sessionToken + an authenticated caller.
-    // P1-hardening adds SandboxSession rows (owner check) + metering from
-    // GetMicrovm startedAt/terminatedAt at terminate time.
-    if (path.endsWith("/sandbox/provision") && method === "POST") {
+  // POST /sandbox/provision — boot a disposable exec sandbox (P1).
+  // Body: { idleTtlSeconds? (300..28800, default 1800), reuse?: boolean }.
+  // reuse:true returns the caller's live session instead of booting when one
+  // exists (warm path for `run`). Always records a SandboxSession row.
+  // Returns { sandboxId, endpoint, sessionToken, provisionedAt, reused }.
+  if (path.endsWith("/sandbox/provision") && method === "POST") {
       const imageArn = env.EXEC_IMAGE_ARN;
       if (!imageArn) return json(500, { error: "EXEC_IMAGE_ARN is not configured" });
       let idleTtl = 1800;
+      let reuse = false;
       try {
-        const parsed = JSON.parse(event.body ?? "{}") as { idleTtlSeconds?: unknown };
+        const parsed = JSON.parse(event.body ?? "{}") as { idleTtlSeconds?: unknown; reuse?: unknown };
         if (typeof parsed.idleTtlSeconds === "number" && Number.isFinite(parsed.idleTtlSeconds)) {
           idleTtl = Math.min(28_800, Math.max(300, Math.floor(parsed.idleTtlSeconds)));
         }
+        if (parsed.reuse === true) reuse = true;
       } catch {
         return json(400, { error: "Invalid JSON body" });
+      }
+      // Warm path: an existing live session wins over a fresh boot.
+      if (reuse) {
+        const live = await findActiveSession(ownerId);
+        if (live?.sandboxId) {
+          void touchSession(live.id);
+          return json(200, {
+            sandboxId: live.sandboxId,
+            endpoint: live.endpoint,
+            sessionToken: live.sessionToken,
+            provisionedAt: live.provisionedAt,
+            reused: true,
+          });
+        }
       }
       const region = env.COMPUTER_REGION ?? "ap-southeast-1";
       let bootedMicrovmId: string | undefined;
@@ -1059,38 +1105,69 @@ export const handler = async (
         bootedMicrovmId = run.microvmId;
         const endpoint = await waitForRunning(run.microvmId);
         const token = await mintVmToken(run.microvmId);
-        // Session bearer: the exec agent gates everything on this. Unguessable,
-        // held in CLI memory, never stored server-side (disposable model).
+        // Session bearer: the exec agent gates everything on this.
+        // Unguessable; recorded on the owner's SandboxSession row (same
+        // secrecy as Computer.usageToken) so the relay can resolve it.
         const sessionToken = randomBytes(32).toString("base64url");
         const hookRes = await vmFetch(endpoint, token, "/hooks/run", { sessionToken });
         if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
         // Smoke: the agent answers an exec with the fresh session bearer.
         const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
         if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
+        const provisionedAt = new Date().toISOString();
+        try {
+          const { data: row, errors } = await dataClient.models.SandboxSession.create({
+            ownerId,
+            sandboxId: run.microvmId,
+            sessionToken,
+            endpoint,
+            status: "active",
+            provisionedAt,
+            lastUsedAt: provisionedAt,
+          });
+          if (errors || !row) throw new Error(JSON.stringify(errors));
+          await stampOwner("SandboxSession", (row as unknown as { id: string }).id, ownerId);
+        } catch (rowErr) {
+          console.error(`[wayfind-api] session row write failed (session still usable):`, rowErr);
+        }
         return json(200, {
           sandboxId: run.microvmId,
           endpoint,
           sessionToken,
-          provisionedAt: new Date().toISOString(),
+          provisionedAt,
+          reused: false,
         });
       } catch (err) {
         if (bootedMicrovmId) {
-          try {
-            await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: bootedMicrovmId }));
+          const gone = await terminateAndVerify(bootedMicrovmId);
+          if (gone) {
             console.log(`[wayfind-api] terminated ${bootedMicrovmId} after failed sandbox provision`);
-          } catch (termErr) {
-            console.error(
-              `[wayfind-api] LEAKED microvm ${bootedMicrovmId} (sandbox provision failed, terminate failed):`,
-              termErr instanceof Error ? termErr.message : String(termErr),
-            );
           }
         }
         return json(502, { error: `sandbox provision failed: ${err instanceof Error ? err.message : String(err)}` });
       }
     }
 
-    // POST /sandbox/terminate { sandboxId } — end a session now. Best-effort
-    // ownership: the caller must present the session bearer (capability).
+    // GET /sandbox/session — the caller's live session, if any.
+    // Powers `run` warm reuse and `status` without the caller holding ids.
+    // The session bearer is NOT returned here (relay resolves it server-side).
+    if (path.endsWith("/sandbox/session") && method === "GET") {
+      const live = await findActiveSession(ownerId);
+      if (!live?.sandboxId) return json(200, { session: null });
+      return json(200, {
+        session: {
+          sandboxId: live.sandboxId,
+          endpoint: live.endpoint,
+          provisionedAt: live.provisionedAt,
+          lastUsedAt: live.lastUsedAt,
+        },
+      });
+    }
+
+    // POST /sandbox/terminate { sandboxId? } — end a session now.
+    // sandboxId optional: without it, terminates the caller's live session.
+    // Ownership = the caller's own SandboxSession row, plus the agent
+    // re-verifies the stored bearer (proof-of-holdership, not guessing).
     if (path.endsWith("/sandbox/terminate") && method === "POST") {
       let sandboxId = "";
       let sessionToken = "";
@@ -1100,6 +1177,13 @@ export const handler = async (
         if (typeof parsed.sessionToken === "string") sessionToken = parsed.sessionToken;
       } catch {
         return json(400, { error: "Invalid JSON body" });
+      }
+      // No ids given → terminate the caller's live session (row-resolved).
+      if (!sandboxId) {
+        const live = await findActiveSession(ownerId);
+        if (!live?.sandboxId) return json(200, { ok: true, alreadyGone: true });
+        sandboxId = live.sandboxId;
+        sessionToken = typeof live.sessionToken === "string" ? live.sessionToken : "";
       }
       if (!sandboxId || !sessionToken) return json(400, { error: "sandboxId and sessionToken are required" });
       // Capability check: prove the caller holds this session's bearer by
@@ -1125,36 +1209,52 @@ export const handler = async (
       } catch {
         return json(404, { error: "sandbox not found or unreachable" });
       }
+      const gone = await terminateAndVerify(sandboxId);
+      if (!gone) return json(502, { error: "terminate unverified — check console, VM may still bill" });
       try {
-        await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: sandboxId }));
-      } catch (err) {
-        if (err instanceof Error && /not found/i.test(`${err.name} ${err.message}`)) {
-          return json(200, { ok: true, alreadyGone: true });
+        const { data: rows } = await dataClient.models.SandboxSession.sandboxSessionsByOwnerId({ ownerId });
+        for (const r of (rows ?? []) as unknown as Array<{ id: string; sandboxId?: string | null }>) {
+          if (r.sandboxId === sandboxId) {
+            await dataClient.models.SandboxSession.update({ id: r.id, status: "terminated" });
+          }
         }
-        return json(502, { error: "terminate failed" });
-      }
+      } catch { /* best-effort row cleanup */ }
       return json(200, { ok: true });
     }
 
     // ANY /sandbox/proxy/* — relay CLI traffic to a disposable sandbox.
-    // Auth: the caller's user identity (gate) + per-call session capability
-    // via X-Sandbox-Id / X-Sandbox-Token headers (Authorization stays the
-    // user's Cognito/CliToken bearer). VM token minted server-side per call.
+    // Auth: the caller's user identity (gate). Session resolution: explicit
+    // X-Sandbox-Id / X-Sandbox-Token headers win; otherwise the caller's
+    // live SandboxSession row is used (so the CLI needs no stored ids).
+    // VM token minted server-side per call.
     if (path.includes("/sandbox/proxy/")) {
       const headers = event.headers ?? {};
-      const sandboxId =
+      let sandboxId: string =
         headers["x-sandbox-id"] ?? headers["X-Sandbox-Id"] ?? headers["X-sandbox-id"] ?? "";
-      const sessionToken =
+      let sessionToken: string =
         headers["x-sandbox-token"] ?? headers["X-Sandbox-Token"] ?? headers["X-sandbox-token"] ?? "";
+      let rowId: string | null = null;
       if (!sandboxId || !sessionToken) {
-        return json(400, { error: "X-Sandbox-Id and X-Sandbox-Token headers are required" });
+        const live = await findActiveSession(ownerId);
+        if (!live?.sandboxId || typeof live.sessionToken !== "string" || !live.sessionToken) {
+          return json(404, { error: "no active sandbox — provision one first" });
+        }
+        sandboxId = live.sandboxId;
+        sessionToken = live.sessionToken;
+        rowId = live.id;
       }
       let endpoint: string;
       try {
         endpoint = await waitForRunning(sandboxId, 30_000);
       } catch {
+        if (rowId) {
+          try {
+            await dataClient.models.SandboxSession.update({ id: rowId, status: "terminated" });
+          } catch { /* best-effort heal */ }
+        }
         return json(410, { error: "that sandbox no longer exists — provision a fresh one" });
       }
+      if (rowId) void touchSession(rowId);
       let token: string;
       try {
         token = await mintVmToken(sandboxId, 30);
@@ -1514,6 +1614,35 @@ async function dedupeComputers(ownerId: string, keepId: string): Promise<void> {
     }
   } catch {
     // Listing failed - proceed with the picked row.
+  }
+}
+
+/** Terminate and verify: poll until TERMINATED/NotFound. Fire-and-forget
+ * terminates have leaked billing VMs when the call raced boot. */
+async function terminateAndVerify(microvmId: string, timeoutMs = 60_000): Promise<boolean> {
+  try {
+    await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: microvmId }));
+  } catch (err) {
+    if (err instanceof Error && /not found/i.test(`${err.name} ${err.message}`)) return true;
+    console.error(`[wayfind-api] terminate call failed for ${microvmId}:`, err);
+    return false;
+  }
+  const start = Date.now();
+  for (;;) {
+    try {
+      const res = await microvms.send(new GetMicrovmCommand({ microvmIdentifier: microvmId }));
+      const state = res.state as string | undefined;
+      if (state === 'TERMINATED' || state === 'FAILED') return true;
+    } catch (err) {
+      if (err instanceof Error && /not found/i.test(`${err.name} ${err.message}`)) return true;
+      console.error(`[wayfind-api] terminate-verify GetMicrovm failed for ${microvmId}:`, err);
+      return false;
+    }
+    if (Date.now() - start > timeoutMs) {
+      console.error(`[wayfind-api] LEAKED microvm ${microvmId}: still alive ${timeoutMs / 1000}s after terminate`);
+      return false;
+    }
+    await sleep(5000);
   }
 }
 

@@ -92,6 +92,26 @@ const schema = a.schema({
     ])
     .secondaryIndexes((index) => [index("ownerId").queryField("ledgerByOwnerId")]),
 
+  // Sandbox sessions (P1 workstream 2): one row per provisioned disposable
+  // microVM. Lets `run` reuse a warm session, powers `status`/`stop`, and
+  // gives metering exact wall-clock. Same access shape as Computer.
+  SandboxSession: a
+    .model({
+      ownerId: a.string().required(), // Cognito sub
+      sandboxId: a.string().required(), // microvmId
+      sessionToken: a.string(), // per-session bearer (same secrecy as usageToken)
+      endpoint: a.string(),
+      status: a.enum(["active", "terminated"]),
+      provisionedAt: a.datetime(),
+      lastUsedAt: a.datetime(),
+    })
+    .authorization((allow) => [
+      allow.owner(),
+    ])
+    .secondaryIndexes((index) => [
+      index("ownerId").queryField("sandboxSessionsByOwnerId"),
+    ]),
+
   Routine: a
     .model({
       ownerId: a.string().required(),

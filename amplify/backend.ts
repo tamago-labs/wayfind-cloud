@@ -92,6 +92,7 @@ apiLambda.addToRolePolicy(
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/CreditLedger-*`,
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/CliToken-*`,
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/DeviceCode-*`,
+        `arn:aws:dynamodb:${scope.region}:${scope.account}:table/SandboxSession-*`,
       ],
     }),
   );
