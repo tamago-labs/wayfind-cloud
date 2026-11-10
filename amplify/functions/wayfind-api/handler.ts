@@ -962,10 +962,11 @@ export const handler = async (
         return json(400, { error: "Invalid JSON body" });
       }
       const revoke = async (id: string): Promise<boolean> => {
-        let row: { userId?: string | null; revokedAt?: string | null } | null = null;
+        type TokenRow = { userId?: string | null; revokedAt?: string | null } | null;
+        let row: TokenRow = null;
         try {
           const fetched = await dataClient.models.CliToken.get({ id });
-          row = fetched.data as unknown as typeof row;
+          row = fetched.data as unknown as TokenRow;
         } catch {
           return false;
         }
