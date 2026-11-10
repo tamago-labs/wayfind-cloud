@@ -1064,8 +1064,8 @@ export const handler = async (
         const sessionToken = randomBytes(32).toString("base64url");
         const hookRes = await vmFetch(endpoint, token, "/hooks/run", { sessionToken });
         if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
-        // Smoke: the agent answers an exec.
-        const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" });
+        // Smoke: the agent answers an exec with the fresh session bearer.
+        const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
         if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
         return json(200, {
           sandboxId: run.microvmId,
@@ -1591,10 +1591,20 @@ async function waitForRunning(microvmId: string, timeoutMs = 5 * 60_000): Promis
   }
 }
 
-async function vmFetch(endpoint: string, token: string, path: string, body?: unknown): Promise<Response> {
+async function vmFetch(
+  endpoint: string,
+  token: string,
+  path: string,
+  body?: unknown,
+  sessionToken?: string,
+): Promise<Response> {
   return fetch(`https://${endpoint}${path}`, {
     method: "POST",
-    headers: { "X-aws-proxy-auth": token, "Content-Type": "application/json" },
+    headers: {
+      "X-aws-proxy-auth": token,
+      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+      "Content-Type": "application/json",
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 }
