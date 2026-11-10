@@ -933,6 +933,9 @@ export const handler = async (
         cliTokenId: (cliToken as unknown as { id: string }).id,
         tokenOnce: token,
       });
+      try {
+        await stampOwner("DeviceCode", row.id, ownerId);
+      } catch { /* best-effort: approval already recorded */ }
       return json(200, { ok: true, status: "approved", email: profile.email ?? claims.email ?? null });
     }
 

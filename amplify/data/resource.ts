@@ -115,9 +115,12 @@ const schema = a.schema({
       index("ownerId").queryField("routinesByOwnerId"),
       index("status").sortKeys(["nextRunAt"]).queryField("routinesDue"),
     ]),
-  // CLI device flow (P0 login). DeviceCode carries no model-level rule, so
-  // the schema-level allow.resource(wayfindApiFunction) makes the function
-  // its sole accessor. CliToken adds owner read for /app device management.
+  // CLI device flow (P0 login). Same access shape as CreditLedger (proven to
+  // synth+deploy): function has full access via schema-level
+  // allow.resource(wayfindApiFunction); users get owner-scoped read. The
+  // function stamps owner=userId at approval so users can only ever see
+  // their own single-use, short-lived code rows.
+  DeviceCode: a
   DeviceCode: a
     .model({
       codeHash: a.string().required(), // sha256 of the user-facing XXXX-XXXX code
@@ -128,6 +131,9 @@ const schema = a.schema({
       tokenOnce: a.string(), // minted CLI token plaintext; read+cleared on first poll
       expiresAt: a.datetime(), // ~10 min after creation
     })
+    .authorization((allow) => [
+      allow.owner().to(["read"]),
+    ])
     .secondaryIndexes((index) => [index("codeHash").queryField("deviceCodeByCodeHash")]),
 
   CliToken: a
