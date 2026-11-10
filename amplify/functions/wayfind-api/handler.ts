@@ -919,6 +919,7 @@ export const handler = async (
       const { data: cliToken, errors } = await dataClient.models.CliToken.create({
         tokenHash: sha256hex(token),
         userId: ownerId,
+        email: profile.email ?? (typeof claims.email === "string" ? claims.email : undefined),
         deviceName: row.deviceName ?? undefined,
         expiresAt: new Date(Date.now() + CLI_TOKEN_TTL_MS).toISOString(),
       });
@@ -943,6 +944,13 @@ export const handler = async (
     // The CLI uses this as its session check (login guard).
     if (path.endsWith("/auth/me") && method === "GET") {
       let email: string | null = typeof claims.email === "string" ? claims.email : null;
+      if (!email && claims.cliTokenId) {
+        try {
+          const fetched = await dataClient.models.CliToken.get({ id: claims.cliTokenId });
+          const rowEmail = (fetched.data as unknown as { email?: string | null } | null)?.email;
+          if (typeof rowEmail === "string" && rowEmail) email = rowEmail;
+        } catch { /* best-effort */ }
+      }
       if (!email) {
         try {
           const { data: profiles } = await dataClient.models.UserProfile.profileByOwnerId({ ownerId });

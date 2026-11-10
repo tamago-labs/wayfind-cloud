@@ -139,6 +139,7 @@ const schema = a.schema({
     .model({
       tokenHash: a.string().required(), // sha256 of the opaque CLI token
       userId: a.string().required(), // Cognito sub — CLI identity IS the cloud user
+      email: a.string(), // snapshot of the Cognito email at approval (display only)
       deviceName: a.string(),
       expiresAt: a.datetime(), // ~90 days; rotation lands in P1
       revokedAt: a.datetime(),
