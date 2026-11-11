@@ -312,7 +312,10 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   // the next manifest entry, plus the agent's attestation evidence for the
   // receipt. Best-effort — an unreachable VM means the last recorded state
   // is final. Older images lack /bot/evidence (inference stays null).
+  // The outcome is reported (never silent): receipt.finalSnapshot tells
+  // the client whether history exists and why not.
   let finalEvidence: unknown = null;
+  let finalSnapshot: { recorded: boolean; seq?: number; error?: string } = { recorded: false };
   if (row.sandboxId && row.sessionToken) {
     try {
       const endpoint = await waitForRunning(row.sandboxId, 30_000);
@@ -345,6 +348,9 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
           await stampOwner("Checkpoint", (cp as unknown as { id: string }).id, ownerId);
           manifest.push(`${seq}:${env.sha256.toLowerCase()}`);
           row.checkpointManifest = manifest;
+          finalSnapshot = { recorded: true, seq };
+        } else {
+          finalSnapshot = { recorded: false, error: "agent returned a malformed envelope" };
         }
       }
       try {
@@ -354,8 +360,14 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
         // Older images lack /bot/evidence — inference evidence stays null.
       }
     } catch (err) {
-      console.log(`[wayfind-api] final snapshot skipped for ${cid}: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(`[wayfind-api] final snapshot skipped for ${cid}: ${msg}`);
+      if (!finalSnapshot.recorded && !finalSnapshot.error) {
+        finalSnapshot = { recorded: false, error: msg.slice(0, 200) };
+      }
     }
+  } else {
+    finalSnapshot = { recorded: false, error: "no live sandbox on record" };
   }
   let verified = false;
   if (row.sandboxId) {
@@ -386,6 +398,7 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
     provisionedAt: row.createdAt ?? null,
     terminatedAt,
     cleanup: { vmTerminated: verified },
+    finalSnapshot,
     inference: finalEvidence,
   };
   try {
