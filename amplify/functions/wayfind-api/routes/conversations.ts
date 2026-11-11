@@ -181,19 +181,33 @@ export async function handleConversationsList(ctx: Ctx): Promise<RouteResult> {
   const { method, path, ownerId } = ctx;
   if (!path.endsWith("/conversations") || method !== "GET") return null;
   const { data } = await dataClient.models.Conversation.conversationsByOwnerId({ ownerId });
-  const items = ((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => ({
-    conversationId: r.id,
-    botId: r.botId ?? null,
-    model: r.model,
-    provider: r.provider,
-    securityLevel: r.securityLevel,
-    status: r.status,
-    checkpointManifest: r.checkpointManifest ?? [],
-    receipt: r.receipt ?? null,
-    provisionedAt: r.createdAt ?? null,
-    lastUsedAt: r.updatedAt ?? null, // Amplify-managed; bumps on every row touch
-    terminatedAt: r.terminatedAt ?? null,
-  }));
+  const items = ((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => {
+    // AWSJSON comes back as a string — parse for API consumers (CLI verify,
+    // website panel). Fall back to raw on any shape surprise.
+    let receiptOut: unknown = null;
+    if (typeof r.receipt === "string") {
+      try {
+        receiptOut = JSON.parse(r.receipt);
+      } catch {
+        receiptOut = r.receipt;
+      }
+    } else if (r.receipt != null) {
+      receiptOut = r.receipt;
+    }
+    return {
+      conversationId: r.id,
+      botId: r.botId ?? null,
+      model: r.model,
+      provider: r.provider,
+      securityLevel: r.securityLevel,
+      status: r.status,
+      checkpointManifest: r.checkpointManifest ?? [],
+      receipt: receiptOut,
+      provisionedAt: r.createdAt ?? null,
+      lastUsedAt: r.updatedAt ?? null, // Amplify-managed; bumps on every row touch
+      terminatedAt: r.terminatedAt ?? null,
+    };
+  });
   return json(200, { conversations: items });
 }
 
@@ -298,11 +312,13 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   try {
     // NOTE: AppSync returns row errors in `errors`, NOT as throws — an
     // unchecked update can report 200 while persisting nothing.
+    // a.json() (AWSJSON) takes a JSON *string* as the mutation variable —
+    // passing the object rejects with "Variable 'receipt' has an invalid value".
     const { data: updated, errors: updateErrors } = await dataClient.models.Conversation.update({
       id: cid,
       status: "closed",
       terminatedAt,
-      receipt,
+      receipt: JSON.stringify(receipt),
     });
     if (updateErrors || !updated) {
       throw new Error(`row update rejected: ${JSON.stringify(updateErrors)}`);
