@@ -402,11 +402,15 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
     finalSnapshot,
     inference: finalEvidence,
   };
+  // Class flips BEFORE signing: the signature must cover the exact bytes
+  // verifiers will check (signing the "observed" shape then relabeling
+  // produces signatures that can never verify).
+  receipt.class = "signed";
   try {
-    const signature = signReceiptBody(receipt);
-    receipt.signature = signature;
-    receipt.class = "signed";
+    receipt.signature = signReceiptBody(receipt);
   } catch (err) {
+    delete receipt.signature;
+    receipt.class = "observed";
     console.log(`[wayfind-api] receipt left unsigned for ${cid}: ${err instanceof Error ? err.message : String(err)}`);
   }
   try {
