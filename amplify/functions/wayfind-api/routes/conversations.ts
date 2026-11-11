@@ -308,17 +308,17 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   const row = await getOwnedConversation(ownerId, cid);
   if (!row) return json(404, { error: "conversation not found" });
   if (row.status !== "live") return json(200, { ok: true, alreadyClosed: true });
-  // Final snapshot: ask the agent for a sealed transcript envelope and
-  // store it as the next manifest entry. Best-effort — an unreachable VM
-  // means the last recorded checkpoint is the final state.
+  // Final snapshot + evidence pull: sealed transcript envelope stored as
+  // the next manifest entry, plus the agent's attestation evidence for the
+  // receipt. Best-effort — an unreachable VM means the last recorded state
+  // is final. Older images lack /bot/evidence (inference stays null).
+  let finalEvidence: unknown = null;
   if (row.sandboxId && row.sessionToken) {
     try {
       const endpoint = await waitForRunning(row.sandboxId, 30_000);
       const token = await mintVmToken(row.sandboxId, 30);
-      const snap = await fetch(`https://${endpoint}/checkpoint`, {
-        method: "POST",
-        headers: { "X-aws-proxy-auth": token, Authorization: `Bearer ${row.sessionToken}` },
-      });
+      const authz = { "X-aws-proxy-auth": token, Authorization: `Bearer ${row.sessionToken}` };
+      const snap = await fetch(`https://${endpoint}/checkpoint`, { method: "POST", headers: authz });
       if (snap.ok) {
         const env = (await snap.json()) as { seq?: unknown; sha256?: string; nonce?: string; data?: string };
         const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
@@ -347,6 +347,12 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
           row.checkpointManifest = manifest;
         }
       }
+      try {
+        const ev = await fetch(`https://${endpoint}/bot/evidence`, { method: "POST", headers: authz });
+        if (ev.ok) finalEvidence = await ev.json();
+      } catch {
+        // Older images lack /bot/evidence — inference evidence stays null.
+      }
     } catch (err) {
       console.log(`[wayfind-api] final snapshot skipped for ${cid}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -362,8 +368,8 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
     verified = true;
   }
   // Receipt v0 (unsigned, class observed): binds what this backend saw —
-  // session metadata, checkpoint manifest, metering, cleanup outcome.
-  // Transcript-level and inference evidence bind in Phase 2 (signed).
+  // session metadata, checkpoint manifest, inference evidence pulled from
+  // the agent before the kill, metering, cleanup outcome.
   const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
   const terminatedAt = new Date().toISOString();
   const receipt = {
@@ -380,6 +386,7 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
     provisionedAt: row.createdAt ?? null,
     terminatedAt,
     cleanup: { vmTerminated: verified },
+    inference: finalEvidence,
   };
   try {
     // NOTE: AppSync returns row errors in `errors`, NOT as throws — an
