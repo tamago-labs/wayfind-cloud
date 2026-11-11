@@ -59,18 +59,22 @@ export async function savePolicy(
   }
   const { data } = await dataClient.models.Policy.policiesByOwner({ ownerId });
   const rows = ((data ?? []) as unknown as Array<{ id: string; updatedAt?: string | null; createdAt?: string | null }>);
-  const patch: Record<string, unknown> = {};
-  if (input.mandatoryLevel !== undefined) patch.mandatoryLevel = input.mandatoryLevel;
+  const patch: {
+    mandatoryLevel?: "none" | "standard" | "verified_inference";
+    allowedModels?: string[];
+    maxIdleTtlSeconds?: number;
+  } = {};
+  if (input.mandatoryLevel !== undefined) patch.mandatoryLevel = input.mandatoryLevel as "none" | "standard" | "verified_inference";
   if (input.allowedModels !== undefined) patch.allowedModels = input.allowedModels;
   if (input.maxIdleTtlSeconds !== undefined) patch.maxIdleTtlSeconds = Math.floor(input.maxIdleTtlSeconds);
   if (rows.length === 0) {
     const { data: created, errors } = await dataClient.models.Policy.create({
       ownerId,
-      mandatoryLevel: (patch.mandatoryLevel as "none" | "standard" | "verified_inference" | undefined) ?? "none",
-      ...(patch.allowedModels !== undefined ? { allowedModels: patch.allowedModels as string[] } : {}),
-      ...(patch.maxIdleTtlSeconds !== undefined ? { maxIdleTtlSeconds: patch.maxIdleTtlSeconds as number } : {}),
+      mandatoryLevel: patch.mandatoryLevel ?? "none",
+      ...(patch.allowedModels !== undefined ? { allowedModels: patch.allowedModels } : {}),
+      ...(patch.maxIdleTtlSeconds !== undefined ? { maxIdleTtlSeconds: patch.maxIdleTtlSeconds } : {}),
     });
-    if (errors || !created) throw new Error(JSON.stringify(errors));
+    if (errors || !created) throw new Error(`ownerIdLen=${ownerId.length} errors=${JSON.stringify(errors)}`);
     await stampOwner("Policy", (created as unknown as { id: string }).id, ownerId);
     return;
   }
