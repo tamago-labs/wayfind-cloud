@@ -130,7 +130,7 @@ const schema = a.schema({
       workspaceHash: a.string(), // sha256 of the attached workspace snapshot
       model: a.string().required(), // curated model id (e.g. Qwen/Qwen3.8-27B)
       provider: a.string().required(), // near-ai | meta-test
-      securityLevel: a.enum(["standard", "verified-inference"]),
+      securityLevel: a.enum(["standard", "verified_inference"]),
       status: a.enum(["live", "closed"]),
       sandboxId: a.string(), // microvmId while live
       endpoint: a.string(),

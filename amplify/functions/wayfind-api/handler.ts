@@ -1272,8 +1272,8 @@ export const handler = async (
       if (securityLevel === "strict-confidential") {
         return json(400, { error: "strict-confidential requires the Phase 3 Nitro backend — fails closed" });
       }
-      if (securityLevel !== "standard" && securityLevel !== "verified-inference") {
-        return json(400, { error: "securityLevel must be standard | verified-inference" });
+      if (securityLevel !== "standard" && securityLevel !== "verified_inference") {
+        return json(400, { error: "securityLevel must be standard | verified_inference" });
       }
       let idleTtl = 1800;
       if (typeof body.idleTtlSeconds === "number" && Number.isFinite(body.idleTtlSeconds)) {
@@ -1292,7 +1292,7 @@ export const handler = async (
               `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:ALL_INGRESS`,
             ],
             egressNetworkConnectors: [
-              // NOTE: full egress until the allowlist lands; verified-inference
+              // NOTE: full egress until the allowlist lands; verified_inference
               // conversations are still gated at the inference-policy layer.
               `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
             ],
@@ -1329,7 +1329,7 @@ export const handler = async (
             workspaceHash: typeof body.workspaceHash === "string" ? body.workspaceHash : undefined,
             model,
             provider: curated.provider,
-            securityLevel: securityLevel as "standard" | "verified-inference",
+            securityLevel: securityLevel as "standard" | "verified_inference",
             status: "live",
             sandboxId: run.microvmId,
             endpoint,
