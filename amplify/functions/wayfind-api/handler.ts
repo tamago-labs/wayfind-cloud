@@ -21,11 +21,13 @@ import {
 import {
   handleCheckpointRecord,
   handleCheckpointUpload,
+  handleCheckpointUrl,
   handleConversationKey,
   handleConversationMessage,
   handleConversationsCreate,
   handleConversationsList,
   handleConversationTerminate,
+  handleWorkspacePush,
 } from "./routes/conversations.js";
 import {
   handleComputerAction,
@@ -94,7 +96,9 @@ export const handler = async (
       handleConversationTerminate,
       handleCheckpointUpload,
       handleCheckpointRecord,
+      handleCheckpointUrl,
       handleConversationKey,
+      handleWorkspacePush,
       handleSandboxProxy,
       handleComputerRequest,
       handleComputerProvision,

@@ -1,7 +1,7 @@
 import { RunMicrovmCommand } from "@aws-sdk/client-lambda-microvms";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { json } from "../lib/respond.js";
 import { dataClient, env, microvms, s3sync, syncBucket } from "../lib/clients.js";
 import { stampOwner } from "../lib/owner.js";
@@ -13,6 +13,9 @@ import {
 } from "../lib/microvm.js";
 import {
   deriveConversationKey,
+  deriveWorkspaceKey,
+  sealWorkspaceFile,
+  sha256HexBytes,
   unwrapConversationKey,
   wrapConversationKey,
 } from "../lib/escrow.js";
@@ -75,6 +78,30 @@ export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> 
   if (typeof body.idleTtlSeconds === "number" && Number.isFinite(body.idleTtlSeconds)) {
     idleTtl = Math.min(28_800, Math.max(300, Math.floor(body.idleTtlSeconds)));
   }
+  // Bot bundle pinning: the bundle is the Bot row's canonical definition.
+  // Owner-checked; hash recorded so later runs can prove what was deployed.
+  let botBundleHash: string | undefined;
+  const botId = typeof body.botId === "string" && body.botId ? body.botId : undefined;
+  if (botId) {
+    const { data: bot } = await dataClient.models.Bot.get({ id: botId });
+    const b = bot as unknown as {
+      ownerId?: string; name?: string | null; role?: string | null;
+      description?: string | null; skillsEnabled?: string[] | null; mcpEnabled?: string[] | null;
+    } | null;
+    if (!b) return json(404, { error: "unknown bot" });
+    if (b.ownerId !== ownerId) return json(403, { error: "bot belongs to a different owner" });
+    botBundleHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          name: b.name ?? null,
+          role: b.role ?? null,
+          description: b.description ?? null,
+          skillsEnabled: b.skillsEnabled ?? null,
+          mcpEnabled: b.mcpEnabled ?? null,
+        }),
+      )
+      .digest("hex");
+  }
   const imageArn = env.EXEC_IMAGE_ARN;
   if (!imageArn) return json(500, { error: "EXEC_IMAGE_ARN is not configured" });
   const region = env.COMPUTER_REGION ?? "ap-southeast-1";
@@ -131,8 +158,8 @@ export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> 
     try {
       const { data: row, errors } = await dataClient.models.Conversation.create({
         ownerId,
-        botId: typeof body.botId === "string" ? body.botId : undefined,
-        botBundleHash: typeof body.botBundleHash === "string" ? body.botBundleHash : undefined,
+        botId,
+        botBundleHash,
         workspaceHash: typeof body.workspaceHash === "string" ? body.workspaceHash : undefined,
         model,
         provider: curated.provider,
@@ -269,9 +296,11 @@ export async function handleConversationMessage(ctx: Ctx): Promise<RouteResult> 
   return json(200, { result: data });
 }
 
-// POST /conversations/:id/terminate — close now. Best-effort verified kill
-// (already-gone counts as gone), row marked closed + terminatedAt.
-// Receipt binding lands in step 7; the row stays for history/audit.
+// POST /conversations/:id/terminate — close now. First takes a final
+// sealed snapshot (best-effort: a dead VM simply has nothing new to save),
+// then verified kill, row marked closed + terminatedAt + receipt v0.
+// Receipt binding of inference evidence lands in step 7; the row stays
+// for history/audit.
 export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult> {
   const { method, path, ownerId } = ctx;
   const cid = method === "POST" ? convIdFor(path, "terminate") : null;
@@ -279,6 +308,49 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   const row = await getOwnedConversation(ownerId, cid);
   if (!row) return json(404, { error: "conversation not found" });
   if (row.status !== "live") return json(200, { ok: true, alreadyClosed: true });
+  // Final snapshot: ask the agent for a sealed transcript envelope and
+  // store it as the next manifest entry. Best-effort — an unreachable VM
+  // means the last recorded checkpoint is the final state.
+  if (row.sandboxId && row.sessionToken) {
+    try {
+      const endpoint = await waitForRunning(row.sandboxId, 30_000);
+      const token = await mintVmToken(row.sandboxId, 30);
+      const snap = await fetch(`https://${endpoint}/checkpoint`, {
+        method: "POST",
+        headers: { "X-aws-proxy-auth": token, Authorization: `Bearer ${row.sessionToken}` },
+      });
+      if (snap.ok) {
+        const env = (await snap.json()) as { seq?: unknown; sha256?: string; nonce?: string; data?: string };
+        const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
+        const seq = manifest.length;
+        if (typeof env.sha256 === "string" && typeof env.nonce === "string" && typeof env.data === "string") {
+          if (!syncBucket) throw new Error("workspace bucket not configured");
+          const blobKey = `checkpoints/${ownerId}/${cid}/${seq}.bin`;
+          await s3sync.send(
+            new PutObjectCommand({
+              Bucket: syncBucket,
+              Key: blobKey,
+              Body: JSON.stringify(env),
+              ContentType: "application/json",
+            }),
+          );
+          const { data: cp, errors } = await dataClient.models.Checkpoint.create({
+            ownerId,
+            conversationId: cid,
+            seq,
+            sha256: env.sha256.toLowerCase(),
+            blobKey,
+          });
+          if (errors || !cp) throw new Error(JSON.stringify(errors));
+          await stampOwner("Checkpoint", (cp as unknown as { id: string }).id, ownerId);
+          manifest.push(`${seq}:${env.sha256.toLowerCase()}`);
+          row.checkpointManifest = manifest;
+        }
+      }
+    } catch (err) {
+      console.log(`[wayfind-api] final snapshot skipped for ${cid}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   let verified = false;
   if (row.sandboxId) {
     try {
@@ -399,20 +471,121 @@ export async function handleCheckpointRecord(ctx: Ctx): Promise<RouteResult> {
   return json(200, { ok: true, seq: body.seq, entry });
 }
 
+// GET /conversations/:id/checkpoint-url?seq=N — presigned GET for a sealed
+// checkpoint blob (15min). Works live or closed: history rendering needs
+// it after the VM is gone. The caller decrypts client-side with the
+// workspace key from GET /:id/key.
+export async function handleCheckpointUrl(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path, ownerId } = ctx;
+  if (method !== "GET" || !path.includes("/checkpoint-url")) return null;
+  const cid = convIdFor(path, "checkpoint-url");
+  if (!cid) return null;
+  const row = await getOwnedConversation(ownerId, cid);
+  if (!row) return json(404, { error: "conversation not found" });
+  const seqRaw = event.queryStringParameters?.seq ?? new URL(event.rawPath, "http://x").searchParams.get("seq");
+  const seq = Number(seqRaw);
+  const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
+  if (!Number.isInteger(seq) || seq < 0 || seq >= manifest.length) {
+    return json(404, { error: `no checkpoint seq ${String(seqRaw)} (manifest holds ${manifest.length})` });
+  }
+  if (!syncBucket) return json(500, { error: "workspace bucket not configured" });
+  const blobKey = `checkpoints/${ownerId}/${cid}/${seq}.bin`;
+  const url = await getSignedUrl(s3sync, new GetObjectCommand({ Bucket: syncBucket, Key: blobKey }), { expiresIn: 900 });
+  const wantSha = manifest[seq].split(":")[1] ?? null;
+  return json(200, { blobKey, url, sha256: wantSha });
+}
+
+// POST /conversations/:id/workspace — browser/CLI uploads workspace files.
+// Body: { files: [{ path, contentBase64 }] }. The backend seals each file
+// server-side (it holds the bearer-derived workspace key) and relays the
+// envelopes via sync/in; the VM decrypts in memory. Relay sees metadata +
+// ciphertext only. Updates row.workspaceHash to the manifest digest.
+export async function handleWorkspacePush(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path, ownerId } = ctx;
+  const cid = method === "POST" ? convIdFor(path, "workspace") : null;
+  if (!cid) return null;
+  let body: { files?: Array<{ path?: unknown; contentBase64?: unknown }> } = {};
+  try {
+    body = JSON.parse(event.body ?? "{}") as typeof body;
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+  const row = await getOwnedConversation(ownerId, cid);
+  if (!row || row.status !== "live" || !row.sandboxId || !row.sessionToken) {
+    return json(410, { error: "conversation is not live" });
+  }
+  const files = Array.isArray(body.files) ? body.files.slice(0, 200) : [];
+  if (files.length === 0) return json(400, { error: "files[] is required (max 200)" });
+  const key = deriveWorkspaceKey(row.sessionToken);
+  const sealed: Array<{ path: string; sha256: string; nonce: string; data: string }> = [];
+  let totalBytes = 0;
+  for (const f of files) {
+    if (typeof f?.path !== "string" || typeof f?.contentBase64 !== "string") {
+      return json(400, { error: "each file needs path + contentBase64" });
+    }
+    if (f.path.includes("..") || f.path.startsWith("/") || f.path.length > 512) {
+      return json(400, { error: `bad path: ${f.path.slice(0, 80)}` });
+    }
+    let plaintext: Buffer;
+    try {
+      plaintext = Buffer.from(f.contentBase64, "base64");
+    } catch {
+      return json(400, { error: `bad base64: ${f.path}` });
+    }
+    if (plaintext.length > 5 * 1024 * 1024) return json(413, { error: `file too large: ${f.path}` });
+    totalBytes += plaintext.length;
+    if (totalBytes > 50 * 1024 * 1024) return json(413, { error: "workspace push exceeds 50MB" });
+    const env = sealWorkspaceFile(key, f.path, plaintext);
+    sealed.push({ path: f.path, sha256: env.sha256, nonce: env.nonce, data: env.data });
+  }
+  let endpoint: string;
+  try {
+    endpoint = await waitForRunning(row.sandboxId, 30_000);
+  } catch {
+    return json(410, { error: "that sandbox no longer exists" });
+  }
+  let token: string;
+  try {
+    token = await mintVmToken(row.sandboxId, 30);
+  } catch {
+    return json(502, { error: "microvm token mint failed" });
+  }
+  // Relay in the same batches the CLI uses.
+  for (let i = 0; i < sealed.length; i += 50) {
+    const res = await vmFetch(endpoint, token, "/sync/in", { files: sealed.slice(i, i + 50) }, row.sessionToken);
+    if (!res.ok) return json(502, { error: `sync/in → ${res.status}: ${(await res.text()).slice(0, 200)}` });
+  }
+  const manifestDigest = createHash("sha256")
+    .update(sealed.map((f) => `${f.path}:${f.sha256}`).sort().join("\n"))
+    .digest("hex");
+  try {
+    const { errors } = await dataClient.models.Conversation.update({ id: cid, workspaceHash: manifestDigest });
+    if (errors) throw new Error(JSON.stringify(errors));
+  } catch (err) {
+    return json(500, { error: `workspace pushed but hash stamp failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+  return json(200, { ok: true, pushed: sealed.length, workspaceHash: manifestDigest });
+}
+
 // GET /conversations/:id/key — release the escrowed conversation key to
-// the owner over TLS (client-side history decrypt). Works live or
-// closed; the master key never leaves the server.
+// the owner over TLS (client-side history decrypt). Also derives the
+// workspace key from the session bearer so the website/CLI can open sealed
+// checkpoint blobs and pull files. Works live or closed; the master key
+// never leaves the server.
 export async function handleConversationKey(ctx: Ctx): Promise<RouteResult> {
   const { method, path, ownerId } = ctx;
   const cid = method === "GET" ? convIdFor(path, "key") : null;
   if (!cid) return null;
   const row = await getOwnedConversation(ownerId, cid);
-  if (!row || !row.encryptedKey) return json(404, { error: "conversation not found" });
+  if (!row || !row.encryptedKey || !row.sessionToken) return json(404, { error: "conversation not found" });
   let key: Buffer;
   try {
     key = unwrapConversationKey(row.encryptedKey);
   } catch {
     return json(500, { error: "key unwrap failed" });
   }
-  return json(200, { key: key.toString("base64") });
+  return json(200, {
+    key: key.toString("base64"),
+    workspaceKey: deriveWorkspaceKey(row.sessionToken).toString("base64"),
+  });
 }
