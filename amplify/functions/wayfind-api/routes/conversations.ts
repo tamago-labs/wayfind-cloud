@@ -296,14 +296,19 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
     cleanup: { vmTerminated: verified },
   };
   try {
-    await dataClient.models.Conversation.update({
+    // NOTE: AppSync returns row errors in `errors`, NOT as throws — an
+    // unchecked update can report 200 while persisting nothing.
+    const { data: updated, errors: updateErrors } = await dataClient.models.Conversation.update({
       id: cid,
       status: "closed",
       terminatedAt,
       receipt,
     });
+    if (updateErrors || !updated) {
+      throw new Error(`row update rejected: ${JSON.stringify(updateErrors)}`);
+    }
   } catch (err) {
-    return json(500, { error: `VM ${verified ? "terminated" : "kill unverified"} but row update failed: ${err instanceof Error ? err.message : String(err)}` });
+    return json(500, { error: `VM ${verified ? "terminated" : "kill unverified"} but row update failed: ${err instanceof Error ? err.message : String(err)}`, receipt });
   }
   return json(200, { ok: true, verified, receipt });
 }
