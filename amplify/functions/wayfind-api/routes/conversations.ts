@@ -529,6 +529,57 @@ export async function handleCheckpointUrl(ctx: Ctx): Promise<RouteResult> {
   return json(200, { blobKey, url, sha256: wantSha });
 }
 
+// GET /conversations/:id/checkpoint-blob?seq=N — same sealed blob as
+// checkpoint-url, but relayed through the API as JSON instead of a
+// presigned S3 URL. Browsers block cross-origin S3 GETs without bucket
+// CORS; this route has none of that problem (owner-authenticated, small
+// transcripts only — blobs over 5MB are rejected here, use the URL).
+export async function handleCheckpointBlob(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path, ownerId } = ctx;
+  if (method !== "GET" || !path.includes("/checkpoint-blob")) return null;
+  const cid = convIdFor(path, "checkpoint-blob");
+  if (!cid) return null;
+  const row = await getOwnedConversation(ownerId, cid);
+  if (!row) return json(404, { error: "conversation not found" });
+  let manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
+  if (manifest.length === 0) {
+    try {
+      const receiptRaw = (row as unknown as { receipt?: unknown }).receipt;
+      const receipt = typeof receiptRaw === "string" ? JSON.parse(receiptRaw) : receiptRaw;
+      const rm = (receipt as { checkpointManifest?: unknown } | null)?.checkpointManifest;
+      if (Array.isArray(rm)) manifest = rm.filter((e): e is string => typeof e === "string");
+    } catch {
+      // Fall through to the 404 below.
+    }
+  }
+  const seqRaw = event.queryStringParameters?.seq ?? new URL(event.rawPath, "http://x").searchParams.get("seq");
+  const seq = Number(seqRaw);
+  if (!Number.isInteger(seq) || seq < 0 || seq >= manifest.length) {
+    return json(404, { error: `no checkpoint seq ${String(seqRaw)} (manifest holds ${manifest.length})` });
+  }
+  if (!syncBucket) return json(500, { error: "workspace bucket not configured" });
+  const blobKey = `checkpoints/${ownerId}/${cid}/${seq}.bin`;
+  let text: string;
+  try {
+    const obj = await s3sync.send(new GetObjectCommand({ Bucket: syncBucket, Key: blobKey }));
+    const bytes = await obj.Body?.transformToByteArray();
+    if (!bytes) throw new Error("empty blob");
+    if (bytes.length > 5 * 1024 * 1024) {
+      return json(413, { error: "blob too large for relay — use checkpoint-url" });
+    }
+    text = Buffer.from(bytes).toString("utf8");
+  } catch (err) {
+    return json(502, { error: `blob read failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+  let env: unknown;
+  try {
+    env = JSON.parse(text);
+  } catch {
+    return json(502, { error: "blob is not a sealed envelope" });
+  }
+  return json(200, { blobKey, sha256: manifest[seq].split(":")[1] ?? null, envelope: env });
+}
+
 // POST /conversations/:id/workspace — browser/CLI uploads workspace files.
 // Body: { files: [{ path, contentBase64 }] }. The backend seals each file
 // server-side (it holds the bearer-derived workspace key) and relays the

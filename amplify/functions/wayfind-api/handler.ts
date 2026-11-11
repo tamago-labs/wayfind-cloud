@@ -19,6 +19,7 @@ import {
   handleSandboxTerminate,
 } from "./routes/sandbox.js";
 import {
+  handleCheckpointBlob,
   handleCheckpointRecord,
   handleCheckpointUpload,
   handleCheckpointUrl,
@@ -97,6 +98,7 @@ export const handler = async (
       handleCheckpointUpload,
       handleCheckpointRecord,
       handleCheckpointUrl,
+      handleCheckpointBlob,
       handleConversationKey,
       handleWorkspacePush,
       handleSandboxProxy,
