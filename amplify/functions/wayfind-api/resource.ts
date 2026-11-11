@@ -37,6 +37,10 @@ export const wayfindApiFunction = defineFunction({
     // node -e "console.log(require('crypto').generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}))"
     //   npx ampx sandbox secret set WAYFIND_RECEIPT_SIGNING_KEY
     WAYFIND_RECEIPT_SIGNING_KEY: secret("WAYFIND_RECEIPT_SIGNING_KEY"),
+    // Image-trust release ceremony (Phase 2, step 2): the publish script
+    // proves ownership of this secret; it is never an execution credential.
+    //   npx ampx sandbox secret set IMAGE_TRUST_SECRET  (32+ random chars)
+    IMAGE_TRUST_SECRET: secret("IMAGE_TRUST_SECRET"),
     // In-VM inference credential (Phase 1 step 4): injected per-boot into
     // the conversation VM via /hooks/run (memory-only, dies with the VM).
     //   npx ampx sandbox secret set NEARAI_CLOUD_API_KEY

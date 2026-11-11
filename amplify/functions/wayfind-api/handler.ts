@@ -40,6 +40,8 @@ import {
 import { handleComputerProxy, handleComputerToken } from "./routes/computerIO.js";
 import { handleChatMessage } from "./routes/chat.js";
 import { handleVerifyReceipt } from "./routes/verify.js";
+import { handleAuditList, handlePolicyGet, handlePolicyPut } from "./routes/policy.js";
+import { handleExportEvidence, handleImageTrustGet, handleImageTrustPublish } from "./routes/evidence.js";
 
 /* ---------------- handler (gate + dispatch; logic lives in routes/) ---------------- */
 
@@ -74,6 +76,12 @@ export const handler = async (
       handleAuthDevicePoll,
       handleVerifyKey,
       handleVerifyReceipt,
+      handlePolicyGet,
+      handlePolicyPut,
+      handleAuditList,
+      handleExportEvidence,
+      handleImageTrustPublish,
+      handleImageTrustGet,
     ]) {
       const res = await route(preCtx);
       if (res) return res;

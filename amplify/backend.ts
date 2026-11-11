@@ -105,6 +105,9 @@ apiLambda.addToRolePolicy(
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/SandboxSession-*`,
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/Conversation-*`,
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/Checkpoint-*`,
+        `arn:aws:dynamodb:${scope.region}:${scope.account}:table/Policy-*`,
+        `arn:aws:dynamodb:${scope.region}:${scope.account}:table/AuditEvent-*`,
+        `arn:aws:dynamodb:${scope.region}:${scope.account}:table/ImageTrust-*`,
       ],
     }),
   );

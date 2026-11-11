@@ -19,13 +19,15 @@ import {
   unwrapConversationKey,
   wrapConversationKey,
 } from "../lib/escrow.js";
+import { loadPolicy, policyAllows } from "../lib/policy.js";
+import { emitAudit } from "../lib/audit.js";
 import { receiptPublicKey, signReceiptBody } from "../lib/receipts.js";
 import { toVerificationReports } from "../lib/reports.js";
 import type { Ctx, RouteResult } from "../lib/ctx.js";
 
 // ---- ONE conversations (hybrid-C): session metadata + checkpoint pointers.
 // No history content in DynamoDB — transcript in the VM, sealed blobs in S3.
-const CURATED_MODELS: Record<string, { provider: string }> = {
+export const CURATED_MODELS: Record<string, { provider: string }> = {
   "Qwen/Qwen3.8-27B": { provider: "near-ai" },
 };
 
@@ -55,7 +57,7 @@ async function getOwnedConversation(owner: string, id: string) {
 //         idleTtlSeconds? }. Returns metadata only (no bearer, no key —
 // the relay resolves server-side; history key via GET /:id/key).
 export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> {
-  const { event, method, path, ownerId } = ctx;
+  const { event, method, path, ownerId, claims } = ctx;
   if (!path.endsWith("/conversations") || method !== "POST" || path.includes("/conversations/")) return null;
   let body: Record<string, unknown> = {};
   try {
@@ -75,10 +77,16 @@ export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> 
   if (securityLevel !== "standard" && securityLevel !== "verified_inference") {
     return json(400, { error: "securityLevel must be standard | verified_inference" });
   }
+  // Per-owner policy gate (Phase 2): fail closed on weaker levels,
+  // disallowed models, and clamp idle TTL to the cap.
+  const policy = await loadPolicy(ownerId);
+  const gate = policyAllows(policy, { model, curatedModels: Object.keys(CURATED_MODELS), securityLevel });
+  if (!gate.ok) return json(403, { error: gate.error });
   let idleTtl = 1800;
   if (typeof body.idleTtlSeconds === "number" && Number.isFinite(body.idleTtlSeconds)) {
     idleTtl = Math.min(28_800, Math.max(300, Math.floor(body.idleTtlSeconds)));
   }
+  idleTtl = Math.min(idleTtl, policy.maxIdleTtlSeconds);
   // Bot bundle pinning: the bundle is the Bot row's canonical definition.
   // Owner-checked; hash recorded so later runs can prove what was deployed.
   let botBundleHash: string | undefined;
@@ -174,9 +182,10 @@ export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> 
       });
       if (errors || !row) throw new Error(JSON.stringify(errors));
       conversationId = (row as unknown as { id: string }).id;
-      conversationCreatedAt =
-        (row as unknown as { createdAt?: string }).createdAt ?? conversationCreatedAt;
-      await stampOwner("Conversation", conversationId, ownerId);
+          conversationCreatedAt =
+            (row as unknown as { createdAt?: string }).createdAt ?? conversationCreatedAt;
+          await stampOwner("Conversation", conversationId, ownerId);
+          void emitAudit(ownerId, claims?.cliTokenId ? `cli:${claims.cliTokenId}` : `user:${ownerId}`, "conversation.created", conversationId, { model, provider: curated.provider, securityLevel });
     } catch (rowErr) {
       // Fail closed: without the row there is no history, quota, or audit.
       throw new Error(`conversation row write failed: ${rowErr instanceof Error ? rowErr.message : String(rowErr)}`);
@@ -303,7 +312,7 @@ export async function handleConversationMessage(ctx: Ctx): Promise<RouteResult> 
 // Receipt binding of inference evidence lands in step 7; the row stays
 // for history/audit.
 export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult> {
-  const { method, path, ownerId } = ctx;
+  const { method, path, ownerId, claims } = ctx;
   const cid = method === "POST" ? convIdFor(path, "terminate") : null;
   if (!cid) return null;
   const row = await getOwnedConversation(ownerId, cid);
@@ -431,6 +440,7 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   } catch (err) {
     return json(500, { error: `VM ${verified ? "terminated" : "kill unverified"} but row update failed: ${err instanceof Error ? err.message : String(err)}`, receipt });
   }
+  void emitAudit(ownerId, claims?.cliTokenId ? `cli:${claims.cliTokenId}` : `user:${ownerId}`, "conversation.terminated", cid, { verified, receiptClass: (receipt as Record<string, unknown>).class });
   return json(200, { ok: true, verified, receipt });
 }
 

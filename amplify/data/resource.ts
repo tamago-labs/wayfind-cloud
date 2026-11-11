@@ -137,7 +137,7 @@ const schema = a.schema({
       sessionToken: a.string(), // per-session bearer (same secrecy as usageToken)
       encryptedKey: a.string(), // escrowed conversation key (wrapped, opaque)
       checkpointManifest: a.string().array(), // ["<seq>:<sha256>", ...] hashes only
-      receipt: a.json(), // v0 unsigned manifest on close
+      receipt: a.json(), // v0 manifest on close (signed when the signing key is configured)
       terminatedAt: a.datetime(),
     })
     .authorization((allow) => [
@@ -162,6 +162,64 @@ const schema = a.schema({
     ])
     .secondaryIndexes((index) => [
       index("conversationId").sortKeys(["seq"]).queryField("checkpointsByConversation"),
+    ]),
+
+  // Per-owner execution policy (Phase 2). Enforced at conversation
+  // provision: requests weaker than mandatoryLevel fail closed; models
+  // outside allowedModels are rejected; idle TTL is clamped to the cap.
+  // Convention: at most one live row per owner (latest wins on read).
+  Policy: a
+    .model({
+      ownerId: a.string().required(), // Cognito sub
+      mandatoryLevel: a.enum(["none", "standard", "verified_inference"]),
+      allowedModels: a.string().array(), // empty/absent = curated list only
+      maxIdleTtlSeconds: a.integer(),
+    })
+    .authorization((allow) => [
+      allow.owner(),
+    ])
+    .secondaryIndexes((index) => [
+      index("ownerId").queryField("policiesByOwner"),
+    ]),
+
+  // Append-only audit trail (Phase 2). Function-written, owner-readable.
+  // No update/delete routes — history is immutable by construction.
+  AuditEvent: a
+    .model({
+      ownerId: a.string().required(), // Cognito sub
+      at: a.datetime().required(),
+      actor: a.string().required(), // user:<sub> | cli:<tokenId> | system
+      action: a.string().required(), // conversation.created|terminated|policy.updated|evidence.exported
+      conversationId: a.string(),
+      detail: a.string(), // short JSON (ids, hashes, levels — never secrets)
+    })
+    .authorization((allow) => [
+      allow.owner().to(["read"]),
+    ])
+    .secondaryIndexes((index) => [
+      index("ownerId").sortKeys(["at"]).queryField("auditByOwner"),
+    ]),
+
+  // Signed sandbox-image trust record (Phase 2, step 2). Published by the
+  // image release ceremony (bearer: IMAGE_TRUST_SECRET), readable by any
+  // signed-in user. The backend signs the manifest with the receipt key.
+  ImageTrust: a
+    .model({
+      key: a.string().required(), // always "current" (single active record)
+      imageArn: a.string().required(),
+      imageVersion: a.string(),
+      zipSha256: a.string().required(),
+      sbomSha256: a.string(),
+      builtAt: a.datetime().required(),
+      signature: a.json(), // {kid, algo, sig} over the canonical manifest
+      publishedBy: a.string(),
+      publishedAt: a.datetime(),
+    })
+    .authorization((allow) => [
+      allow.authenticated().to(["read"]),
+    ])
+    .secondaryIndexes((index) => [
+      index("key").queryField("imageTrustByKey"),
     ]),
 
   Routine: a
