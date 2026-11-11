@@ -129,7 +129,7 @@ const schema = a.schema({
       botBundleHash: a.string(), // sha256 of the deployed bot bundle
       workspaceHash: a.string(), // sha256 of the attached workspace snapshot
       model: a.string().required(), // curated model id (e.g. Qwen/Qwen3.8-27B)
-      provider: a.string().required(), // near-ai | meta-test
+      provider: a.string().required(), // near-ai (curated models only)
       securityLevel: a.enum(["standard", "verified_inference"]),
       status: a.enum(["live", "closed"]),
       sandboxId: a.string(), // microvmId while live

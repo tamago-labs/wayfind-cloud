@@ -26,7 +26,6 @@ import type { Ctx, RouteResult } from "../lib/ctx.js";
 // No history content in DynamoDB — transcript in the VM, sealed blobs in S3.
 const CURATED_MODELS: Record<string, { provider: string }> = {
   "Qwen/Qwen3.8-27B": { provider: "near-ai" },
-  "Muse Spark": { provider: "meta-test" },
 };
 
 function convIdFor(path: string, suffix: string): string | null {
