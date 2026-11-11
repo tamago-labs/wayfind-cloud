@@ -19,6 +19,7 @@ import {
   unwrapConversationKey,
   wrapConversationKey,
 } from "../lib/escrow.js";
+import { toVerificationReports } from "../lib/reports.js";
 import type { Ctx, RouteResult } from "../lib/ctx.js";
 
 // ---- ONE conversations (hybrid-C): session metadata + checkpoint pointers.
@@ -578,6 +579,49 @@ export async function handleCheckpointBlob(ctx: Ctx): Promise<RouteResult> {
     return json(502, { error: "blob is not a sealed envelope" });
   }
   return json(200, { blobKey, sha256: manifest[seq].split(":")[1] ?? null, envelope: env });
+}
+
+// GET /conversations/:id/verification-reports[?chatId=] — evidence as
+// NEAR Verification Center reports (iframe widget format). Live rows pull
+// fresh /bot/evidence from the VM; closed rows use the receipt copy.
+// One response report per array (widget rule): latest valid by default.
+export async function handleVerificationReports(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path, ownerId } = ctx;
+  if (method !== "GET" || !path.includes("/verification-reports")) return null;
+  const cid = convIdFor(path, "verification-reports");
+  if (!cid) return null;
+  const row = await getOwnedConversation(ownerId, cid);
+  if (!row) return json(404, { error: "conversation not found" });
+  let evidence: {
+    preflight?: unknown;
+    messages?: unknown;
+  } | null = null;
+  if (row.status === "live" && row.sandboxId && row.sessionToken) {
+    try {
+      const endpoint = await waitForRunning(row.sandboxId, 30_000);
+      const token = await mintVmToken(row.sandboxId, 30);
+      const ev = await fetch(`https://${endpoint}/bot/evidence`, {
+        method: "POST",
+        headers: { "X-aws-proxy-auth": token, Authorization: `Bearer ${row.sessionToken}` },
+      });
+      if (ev.ok) evidence = (await ev.json()) as typeof evidence;
+    } catch {
+      // Fall through to receipt copy / unverifiable below.
+    }
+  }
+  if (!evidence) {
+    try {
+      const receiptRaw = (row as unknown as { receipt?: unknown }).receipt;
+      const receipt = typeof receiptRaw === "string" ? JSON.parse(receiptRaw) : receiptRaw;
+      evidence = ((receipt as { inference?: unknown } | null)?.inference ?? null) as typeof evidence;
+    } catch {
+      evidence = null;
+    }
+  }
+  const model = (row as unknown as { model?: string }).model ?? "unknown";
+  const chatId = event.queryStringParameters?.chatId ?? undefined;
+  const reports = toVerificationReports(model, evidence as never, chatId);
+  return json(200, { reports });
 }
 
 // POST /conversations/:id/workspace — browser/CLI uploads workspace files.

@@ -28,6 +28,7 @@ import {
   handleConversationsCreate,
   handleConversationsList,
   handleConversationTerminate,
+  handleVerificationReports,
   handleWorkspacePush,
 } from "./routes/conversations.js";
 import {
@@ -99,6 +100,7 @@ export const handler = async (
       handleCheckpointRecord,
       handleCheckpointUrl,
       handleCheckpointBlob,
+      handleVerificationReports,
       handleConversationKey,
       handleWorkspacePush,
       handleSandboxProxy,
