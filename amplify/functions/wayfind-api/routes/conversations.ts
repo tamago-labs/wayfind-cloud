@@ -39,7 +39,7 @@ async function getOwnedConversation(owner: string, id: string) {
   return data as unknown as {
     id: string; status?: string | null; sandboxId?: string | null;
     sessionToken?: string | null; encryptedKey?: string | null;
-    checkpointManifest?: Array<string | null> | null;
+    checkpointManifest?: Array<string | null> | null; receipt?: unknown;
     botId?: string | null; botBundleHash?: string | null;
     workspaceHash?: string | null; model?: string | null;
     provider?: string | null; securityLevel?: string | null;
@@ -503,9 +503,22 @@ export async function handleCheckpointUrl(ctx: Ctx): Promise<RouteResult> {
   if (!cid) return null;
   const row = await getOwnedConversation(ownerId, cid);
   if (!row) return json(404, { error: "conversation not found" });
+  // Manifest source: the row field, falling back to the receipt copy.
+  // (Rows closed before the manifest-persist fix carry the manifest in
+  // the receipt only — history must still render for them.)
+  let manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
+  if (manifest.length === 0) {
+    try {
+      const receiptRaw = (row as unknown as { receipt?: unknown }).receipt;
+      const receipt = typeof receiptRaw === "string" ? JSON.parse(receiptRaw) : receiptRaw;
+      const rm = (receipt as { checkpointManifest?: unknown } | null)?.checkpointManifest;
+      if (Array.isArray(rm)) manifest = rm.filter((e): e is string => typeof e === "string");
+    } catch {
+      // Fall through to the 404 below.
+    }
+  }
   const seqRaw = event.queryStringParameters?.seq ?? new URL(event.rawPath, "http://x").searchParams.get("seq");
   const seq = Number(seqRaw);
-  const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
   if (!Number.isInteger(seq) || seq < 0 || seq >= manifest.length) {
     return json(404, { error: `no checkpoint seq ${String(seqRaw)} (manifest holds ${manifest.length})` });
   }
