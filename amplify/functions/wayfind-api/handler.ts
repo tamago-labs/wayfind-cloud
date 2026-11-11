@@ -76,12 +76,6 @@ export const handler = async (
       handleAuthDevicePoll,
       handleVerifyKey,
       handleVerifyReceipt,
-      handlePolicyGet,
-      handlePolicyPut,
-      handleAuditList,
-      handleExportEvidence,
-      handleImageTrustPublish,
-      handleImageTrustGet,
     ]) {
       const res = await route(preCtx);
       if (res) return res;
@@ -122,6 +116,12 @@ export const handler = async (
       handleComputerToken,
       handleComputerProxy,
       handleChatMessage,
+      handlePolicyGet,
+      handlePolicyPut,
+      handleAuditList,
+      handleExportEvidence,
+      handleImageTrustPublish,
+      handleImageTrustGet,
     ]) {
       const res = await route(ctx);
       if (res) return res;

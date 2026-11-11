@@ -68,13 +68,14 @@ export async function savePolicy(
   if (input.allowedModels !== undefined) patch.allowedModels = input.allowedModels;
   if (input.maxIdleTtlSeconds !== undefined) patch.maxIdleTtlSeconds = Math.floor(input.maxIdleTtlSeconds);
   if (rows.length === 0) {
-    const { data: created, errors } = await dataClient.models.Policy.create({
+    const input = {
       ownerId,
       mandatoryLevel: patch.mandatoryLevel ?? "none",
-      ...(patch.allowedModels !== undefined ? { allowedModels: patch.allowedModels } : {}),
-      ...(patch.maxIdleTtlSeconds !== undefined ? { maxIdleTtlSeconds: patch.maxIdleTtlSeconds } : {}),
-    });
-    if (errors || !created) throw new Error(`ownerIdLen=${ownerId.length} errors=${JSON.stringify(errors)}`);
+      ...(patch.allowedModels !== undefined ? { allowedModels: patch.allowedModels as string[] } : {}),
+      ...(patch.maxIdleTtlSeconds !== undefined ? { maxIdleTtlSeconds: patch.maxIdleTtlSeconds as number } : {}),
+    } as const;
+    const { data: created, errors } = await dataClient.models.Policy.create(input as never);
+    if (errors || !created) throw new Error(JSON.stringify(errors));
     await stampOwner("Policy", (created as unknown as { id: string }).id, ownerId);
     return;
   }
