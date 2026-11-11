@@ -33,6 +33,11 @@ export const wayfindApiFunction = defineFunction({
     // Unwrapped only for the owner over TLS. Set once:
     //   npx ampx sandbox secret set CONVERSATION_MASTER_KEY  (64 hex chars)
     CONVERSATION_MASTER_KEY: secret("CONVERSATION_MASTER_KEY"),
+    // In-VM inference credential (Phase 1 step 4): injected per-boot into
+    // the conversation VM via /hooks/run (memory-only, dies with the VM).
+    // meta-test has no in-VM path yet — /ai fails closed (501) for it.
+    //   npx ampx sandbox secret set NEARAI_CLOUD_API_KEY
+    NEARAI_CLOUD_API_KEY: secret("NEARAI_CLOUD_API_KEY"),
     // Shared with the routine-tick sweeper: proves /routines/fire calls
     // come from our own ticker, not the open internet (the Function URL
     // itself is authType NONE). Set once:

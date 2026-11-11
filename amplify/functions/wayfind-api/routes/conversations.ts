@@ -74,7 +74,7 @@ export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> 
   const imageArn = env.EXEC_IMAGE_ARN;
   if (!imageArn) return json(500, { error: "EXEC_IMAGE_ARN is not configured" });
   const region = env.COMPUTER_REGION ?? "ap-southeast-1";
-  let bootedMicrovmId: string | undefined;
+    let bootedMicrovmId: string | undefined;
   try {
     const run = await microvms.send(
       new RunMicrovmCommand({
@@ -97,7 +97,20 @@ export async function handleConversationsCreate(ctx: Ctx): Promise<RouteResult> 
     const endpoint = await waitForRunning(run.microvmId);
     const token = await mintVmToken(run.microvmId);
     const sessionToken = randomBytes(32).toString("base64url");
-    const hookRes = await vmFetch(endpoint, token, "/hooks/run", { sessionToken });
+    // In-VM inference credential (memory-only, dies with the VM). near-ai
+    // key comes from the Wayfind-held secret; meta-test has no in-VM path
+    // yet (/ai fails closed 501 for it). Missing secret → provision fails
+    // closed below ONLY for near-ai conversations, never silently keyless.
+    let aiCredentials: { provider: string; key: string; model: string } | undefined;
+    if (curated.provider === "near-ai") {
+      const nearKey = env.NEARAI_CLOUD_API_KEY ?? "";
+      if (!nearKey) throw new Error("NEARAI_CLOUD_API_KEY is not configured (Amplify secret)");
+      aiCredentials = { provider: "near-ai", key: nearKey, model };
+    }
+    const hookRes = await vmFetch(endpoint, token, "/hooks/run", {
+      sessionToken,
+      ...(aiCredentials ? { aiCredentials } : {}),
+    });
     if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
     const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
     if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
