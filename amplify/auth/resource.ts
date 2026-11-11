@@ -24,8 +24,9 @@ export const auth = defineAuth({
         'http://localhost:3000/app',
         'https://wayfind.click/app',
         'https://www.wayfind.click/app',
+        'https://one.wayfind.click/app'
       ],
-      logoutUrls: ['http://localhost:3000/', 'https://wayfind.click/', 'https://www.wayfind.click/'],
+      logoutUrls: ['http://localhost:3000/', 'https://wayfind.click/', 'https://www.wayfind.click/', 'https://one.wayfind.click/'],
     },
   },
 });

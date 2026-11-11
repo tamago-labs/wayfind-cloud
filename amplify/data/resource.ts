@@ -9,6 +9,10 @@ import { routineTickFunction } from "../jobs/routine-tick/resource";
  * wallet UserProfile) are removed; there is no publicApiKey access anywhere.
  * Chat transcripts live on the agent server (per-Bot conversation scope),
  * NOT in DynamoDB — Conversation/Message were removed to avoid dual-write.
+ * (The `Conversation` model added for Wayfind ONE is a different thing:
+ * disposable session metadata + checkpoint pointers. No history content
+ * ever lands in DynamoDB — transcripts stay in the MicroVM, checkpoints
+ * are sealed blobs in S3.)
  * Later phases add: MemoryItem, Approval (Phase 4), ConnectedApp (Phase 5),
  * Skill, Routine, Run (Phase 7).
  */
@@ -110,6 +114,54 @@ const schema = a.schema({
     ])
     .secondaryIndexes((index) => [
       index("ownerId").queryField("sandboxSessionsByOwnerId"),
+    ]),
+
+  // ONE conversations (hybrid-C): one row per disposable execution session.
+  // Metadata + checkpoint POINTERS only — no history content. The hot
+  // transcript lives in the MicroVM; checkpoints are sealed blobs in S3
+  // (opaque to the backend). encryptedKey is the per-conversation key
+  // wrapped with the Wayfind-held master key (escrow for history rendering
+  // after the VM dies; unwrapped only for the owner over TLS).
+  Conversation: a
+    .model({
+      ownerId: a.string().required(), // Cognito sub
+      botId: a.string(), // Bot row id the bundle was built from (optional)
+      botBundleHash: a.string(), // sha256 of the deployed bot bundle
+      workspaceHash: a.string(), // sha256 of the attached workspace snapshot
+      model: a.string().required(), // curated model id (e.g. Qwen/Qwen3.8-27B)
+      provider: a.string().required(), // near-ai | meta-test
+      securityLevel: a.enum(["standard", "verified-inference"]),
+      status: a.enum(["live", "closed"]),
+      sandboxId: a.string(), // microvmId while live
+      endpoint: a.string(),
+      sessionToken: a.string(), // per-session bearer (same secrecy as usageToken)
+      encryptedKey: a.string(), // escrowed conversation key (wrapped, opaque)
+      checkpointManifest: a.string().array(), // ["<seq>:<sha256>", ...] hashes only
+      receipt: a.json(), // v0 unsigned manifest on close
+      terminatedAt: a.datetime(),
+    })
+    .authorization((allow) => [
+      allow.owner(),
+    ])
+    .secondaryIndexes((index) => [
+      index("ownerId").queryField("conversationsByOwnerId"),
+    ]),
+
+  // Checkpoint pointers for a Conversation. Content lives in S3
+  // (checkpoints/{ownerId}/{conversationId}/{seq}.bin, sealed).
+  Checkpoint: a
+    .model({
+      ownerId: a.string().required(), // Cognito sub
+      conversationId: a.string().required(),
+      seq: a.integer().required(),
+      sha256: a.string().required(),
+      blobKey: a.string().required(),
+    })
+    .authorization((allow) => [
+      allow.owner(),
+    ])
+    .secondaryIndexes((index) => [
+      index("conversationId").sortKeys(["seq"]).queryField("checkpointsByConversation"),
     ]),
 
   Routine: a

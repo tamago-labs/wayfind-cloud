@@ -66,7 +66,17 @@ apiLambda.addToRolePolicy(
     effect: Effect.ALLOW,
     actions: ["s3:ListBucket"],
     resources: [`arn:aws:s3:::${workspaceBucket}`],
-    conditions: { StringLike: { "s3:prefix": ["computers/*"] } },
+    conditions: { StringLike: { "s3:prefix": ["computers/*", "checkpoints/*"] } },
+  }),
+);
+
+// Sealed conversation checkpoints (hybrid-C): opaque blobs, hash manifest in
+// DynamoDB. Backend reads/writes them for relay; plaintext never lands here.
+apiLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+    resources: [`arn:aws:s3:::${workspaceBucket}/checkpoints/*`],
   }),
 );
 
@@ -93,6 +103,8 @@ apiLambda.addToRolePolicy(
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/CliToken-*`,
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/DeviceCode-*`,
         `arn:aws:dynamodb:${scope.region}:${scope.account}:table/SandboxSession-*`,
+        `arn:aws:dynamodb:${scope.region}:${scope.account}:table/Conversation-*`,
+        `arn:aws:dynamodb:${scope.region}:${scope.account}:table/Checkpoint-*`,
       ],
     }),
   );
@@ -106,8 +118,14 @@ apiLambda.addToRolePolicy(
 const apiFunctionUrl = apiLambda.addFunctionUrl({
   authType: FunctionUrlAuthType.NONE, // every route verifies the Cognito JWT in the handler
   cors: {
-    // One config for local dev + prod (apex + www). No wildcard.
-    allowedOrigins: ["http://localhost:3000", "https://wayfind.click", "https://www.wayfind.click"],
+    // One config for local dev (both frontends) + prod. No wildcard.
+    allowedOrigins: [
+      "http://localhost:3000", // wayfind-cloud dashboard
+      "http://localhost:3001", // wayfind-one frontend (ONE)
+      "https://wayfind.click",
+      "https://www.wayfind.click",
+      "https://one.wayfind.click",
+    ],
     allowedMethods: [HttpMethod.ALL],
     allowedHeaders: ["*"],
     maxAge: Duration.minutes(5),

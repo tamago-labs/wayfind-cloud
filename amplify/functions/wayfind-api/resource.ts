@@ -28,6 +28,11 @@ export const wayfindApiFunction = defineFunction({
     COMPUTER_API_URL: process.env.COMPUTER_API_URL ?? "",
     MODAL_API_KEY: secret("MODAL_API_KEY"),
     PROVIDER_API_KEY: secret("PROVIDER_API_KEY"),
+    // Per-conversation escrow: conversation keys are wrapped with this
+    // master key (AES-256-GCM) for history rendering after the VM dies.
+    // Unwrapped only for the owner over TLS. Set once:
+    //   npx ampx sandbox secret set CONVERSATION_MASTER_KEY  (64 hex chars)
+    CONVERSATION_MASTER_KEY: secret("CONVERSATION_MASTER_KEY"),
     // Shared with the routine-tick sweeper: proves /routines/fire calls
     // come from our own ticker, not the open internet (the Function URL
     // itself is authType NONE). Set once:

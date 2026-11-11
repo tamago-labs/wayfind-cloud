@@ -13,7 +13,7 @@ import {
   TerminateMicrovmCommand,
   GetMicrovmCommand,
 } from "@aws-sdk/client-lambda-microvms";
-import { createVerify, createPublicKey, createHash, randomBytes, randomUUID } from "crypto";
+import { createVerify, createPublicKey, createHash, createCipheriv, hkdfSync, randomBytes, randomUUID } from "crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { DynamoDBClient, ListTablesCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
@@ -1220,6 +1220,172 @@ export const handler = async (
         }
       } catch { /* best-effort row cleanup */ }
       return json(200, { ok: true });
+    }
+
+    // ---- ONE conversations (hybrid-C): session metadata + checkpoint pointers.
+    // No history content in DynamoDB — transcript in the VM, sealed blobs in S3.
+    const CURATED_MODELS: Record<string, { provider: string }> = {
+      "Qwen/Qwen3.8-27B": { provider: "near-ai" },
+      "Muse Spark": { provider: "meta-test" },
+    };
+
+    function conversationMasterKey(): Buffer {
+      const hex = env.CONVERSATION_MASTER_KEY ?? "";
+      if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+        throw new Error("CONVERSATION_MASTER_KEY is not configured (64 hex chars)");
+      }
+      return Buffer.from(hex, "hex");
+    }
+
+    function wrapConversationKey(plaintext: Buffer): string {
+      const nonce = randomBytes(12);
+      const cipher = createCipheriv("aes-256-gcm", conversationMasterKey(), nonce);
+      const ct = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);
+      return `${nonce.toString("base64url")}.${ct.toString("base64url")}`;
+    }
+
+    async function findLiveConversation(owner: string) {
+      const { data } = await dataClient.models.Conversation.conversationsByOwnerId({ ownerId: owner });
+      const rows = (data ?? []) as unknown as Array<{ id: string; status?: string | null }>;
+      return rows.find((r) => r.status === "live") ?? null;
+    }
+
+    // POST /conversations — open a conversation: mint key, boot a disposable
+    // VM, record the session row. Bot bundle + workspace push land with the
+    // image task-runner (step 4); the VM boots ready for them.
+    // Body: { botId?, botBundleHash?, workspaceHash?, model?, securityLevel?,
+    //         idleTtlSeconds? }. Returns metadata only (no bearer, no key —
+    // the relay resolves server-side; history key via GET /:id/key).
+    if (path.endsWith("/conversations") && method === "POST" && !path.includes("/conversations/")) {
+      let body: Record<string, unknown> = {};
+      try {
+        body = JSON.parse(event.body ?? "{}") as Record<string, unknown>;
+      } catch {
+        return json(400, { error: "Invalid JSON body" });
+      }
+      const model = typeof body.model === "string" && body.model ? body.model : "Qwen/Qwen3.8-27B";
+      const curated = CURATED_MODELS[model];
+      if (!curated) {
+        return json(400, { error: `model not curated: ${model} (each model must pass scripts/near-ai-tests 00-07)` });
+      }
+      const securityLevel = typeof body.securityLevel === "string" ? body.securityLevel : "standard";
+      if (securityLevel === "strict-confidential") {
+        return json(400, { error: "strict-confidential requires the Phase 3 Nitro backend — fails closed" });
+      }
+      if (securityLevel !== "standard" && securityLevel !== "verified-inference") {
+        return json(400, { error: "securityLevel must be standard | verified-inference" });
+      }
+      let idleTtl = 1800;
+      if (typeof body.idleTtlSeconds === "number" && Number.isFinite(body.idleTtlSeconds)) {
+        idleTtl = Math.min(28_800, Math.max(300, Math.floor(body.idleTtlSeconds)));
+      }
+      const imageArn = env.EXEC_IMAGE_ARN;
+      if (!imageArn) return json(500, { error: "EXEC_IMAGE_ARN is not configured" });
+      const region = env.COMPUTER_REGION ?? "ap-southeast-1";
+      let bootedMicrovmId: string | undefined;
+      try {
+        const run = await microvms.send(
+          new RunMicrovmCommand({
+            imageIdentifier: imageArn,
+            runHookPayload: JSON.stringify({ provisionedFor: ownerId, purpose: "wayfind-conversation" }),
+            ingressNetworkConnectors: [
+              `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:ALL_INGRESS`,
+            ],
+            egressNetworkConnectors: [
+              // NOTE: full egress until the allowlist lands; verified-inference
+              // conversations are still gated at the inference-policy layer.
+              `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:INTERNET_EGRESS`,
+            ],
+            idlePolicy: { autoResumeEnabled: false, maxIdleDurationSeconds: idleTtl, suspendedDurationSeconds: 3600 },
+            maximumDurationInSeconds: 28_800,
+          }),
+        );
+        if (!run.microvmId) throw new Error("run-microvm returned no microvmId");
+        bootedMicrovmId = run.microvmId;
+        const endpoint = await waitForRunning(run.microvmId);
+        const token = await mintVmToken(run.microvmId);
+        const sessionToken = randomBytes(32).toString("base64url");
+        const hookRes = await vmFetch(endpoint, token, "/hooks/run", { sessionToken });
+        if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
+        const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
+        if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
+        // Conversation key: derived from the bearer (dies with the session),
+        // escrowed wrapped for history rendering after the VM is gone.
+        let encryptedKey: string;
+        try {
+          const ck = Buffer.from(hkdfSync("sha256", Buffer.from(sessionToken, "utf8"), "conversation-v1", "wayfind-conversation/v1", 32));
+          encryptedKey = wrapConversationKey(ck);
+        } catch (keyErr) {
+          throw new Error(`conversation key escrow failed: ${keyErr instanceof Error ? keyErr.message : String(keyErr)}`);
+        }
+        const provisionedAt = new Date().toISOString();
+        let conversationId = "";
+        let conversationCreatedAt = provisionedAt;
+        try {
+          const { data: row, errors } = await dataClient.models.Conversation.create({
+            ownerId,
+            botId: typeof body.botId === "string" ? body.botId : undefined,
+            botBundleHash: typeof body.botBundleHash === "string" ? body.botBundleHash : undefined,
+            workspaceHash: typeof body.workspaceHash === "string" ? body.workspaceHash : undefined,
+            model,
+            provider: curated.provider,
+            securityLevel: securityLevel as "standard" | "verified-inference",
+            status: "live",
+            sandboxId: run.microvmId,
+            endpoint,
+            sessionToken,
+            encryptedKey,
+            checkpointManifest: [],
+          });
+          if (errors || !row) throw new Error(JSON.stringify(errors));
+          conversationId = (row as unknown as { id: string }).id;
+          conversationCreatedAt =
+            (row as unknown as { createdAt?: string }).createdAt ?? provisionedAt;
+          await stampOwner("Conversation", conversationId, ownerId);
+        } catch (rowErr) {
+          // Fail closed: without the row there is no history, quota, or audit.
+          throw new Error(`conversation row write failed: ${rowErr instanceof Error ? rowErr.message : String(rowErr)}`);
+        }
+        return json(200, {
+          conversationId,
+          sandboxId: run.microvmId,
+          model,
+          provider: curated.provider,
+          securityLevel,
+          provisionedAt: conversationCreatedAt,
+        });
+      } catch (err) {
+        if (bootedMicrovmId) {
+          const gone = await terminateAndVerify(bootedMicrovmId);
+          if (gone) {
+            console.log(`[wayfind-api] terminated ${bootedMicrovmId} after failed conversation provision`);
+          }
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        const status = msg.includes("CONVERSATION_MASTER_KEY") ? 500 : 502;
+        return json(status, { error: `conversation provision failed: ${msg}` });
+      }
+    }
+
+    // GET /conversations — the caller's conversations, metadata only
+    // (no bearer, no endpoint, no escrowed key — those resolve server-side
+    // or via the dedicated key route).
+    if (path.endsWith("/conversations") && method === "GET") {
+      const { data } = await dataClient.models.Conversation.conversationsByOwnerId({ ownerId });
+      const items = ((data ?? []) as unknown as Array<Record<string, unknown>>).map((r) => ({
+        conversationId: r.id,
+        botId: r.botId ?? null,
+        model: r.model,
+        provider: r.provider,
+        securityLevel: r.securityLevel,
+        status: r.status,
+        checkpointManifest: r.checkpointManifest ?? [],
+        receipt: r.receipt ?? null,
+        provisionedAt: r.createdAt ?? null,
+        lastUsedAt: r.updatedAt ?? null, // Amplify-managed; bumps on every row touch
+        terminatedAt: r.terminatedAt ?? null,
+      }));
+      return json(200, { conversations: items });
     }
 
     // ANY /sandbox/proxy/* — relay CLI traffic to a disposable sandbox.
