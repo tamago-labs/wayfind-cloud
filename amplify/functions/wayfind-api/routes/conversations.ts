@@ -37,6 +37,10 @@ async function getOwnedConversation(owner: string, id: string) {
     id: string; status?: string | null; sandboxId?: string | null;
     sessionToken?: string | null; encryptedKey?: string | null;
     checkpointManifest?: Array<string | null> | null;
+    botId?: string | null; botBundleHash?: string | null;
+    workspaceHash?: string | null; model?: string | null;
+    provider?: string | null; securityLevel?: string | null;
+    createdAt?: string | null; terminatedAt?: string | null;
   };
 }
 
@@ -271,16 +275,37 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   } else {
     verified = true;
   }
+  // Receipt v0 (unsigned, class observed): binds what this backend saw —
+  // session metadata, checkpoint manifest, metering, cleanup outcome.
+  // Transcript-level and inference evidence bind in Phase 2 (signed).
+  const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
+  const terminatedAt = new Date().toISOString();
+  const receipt = {
+    version: "wayfind-receipt/v0",
+    class: "observed",
+    conversationId: cid,
+    botId: row.botId ?? null,
+    botBundleHash: row.botBundleHash ?? null,
+    workspaceHash: row.workspaceHash ?? null,
+    model: row.model ?? null,
+    provider: row.provider ?? null,
+    securityLevel: row.securityLevel ?? null,
+    checkpointManifest: manifest,
+    provisionedAt: row.createdAt ?? null,
+    terminatedAt,
+    cleanup: { vmTerminated: verified },
+  };
   try {
     await dataClient.models.Conversation.update({
       id: cid,
       status: "closed",
-      terminatedAt: new Date().toISOString(),
+      terminatedAt,
+      receipt,
     });
   } catch (err) {
     return json(500, { error: `VM ${verified ? "terminated" : "kill unverified"} but row update failed: ${err instanceof Error ? err.message : String(err)}` });
   }
-  return json(200, { ok: true, verified });
+  return json(200, { ok: true, verified, receipt });
 }
 
 // POST /conversations/:id/checkpoint-upload — { seq } → presigned PUT for
