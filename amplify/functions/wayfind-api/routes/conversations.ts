@@ -19,6 +19,7 @@ import {
   unwrapConversationKey,
   wrapConversationKey,
 } from "../lib/escrow.js";
+import { receiptPublicKey, signReceiptBody } from "../lib/receipts.js";
 import { toVerificationReports } from "../lib/reports.js";
 import type { Ctx, RouteResult } from "../lib/ctx.js";
 
@@ -379,12 +380,12 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
   } else {
     verified = true;
   }
-  // Receipt v0 (unsigned, class observed): binds what this backend saw —
-  // session metadata, checkpoint manifest, inference evidence pulled from
-  // the agent before the kill, metering, cleanup outcome.
+  // Receipt v0: binds what this backend saw — session metadata, checkpoint
+  // manifest, inference evidence, metering, cleanup outcome. Signed when
+  // the signing key is configured (class "signed"); otherwise "observed".
   const manifest = (row.checkpointManifest ?? []).filter((e): e is string => typeof e === "string");
   const terminatedAt = new Date().toISOString();
-  const receipt = {
+  const receipt: Record<string, unknown> = {
     version: "wayfind-receipt/v0",
     class: "observed",
     conversationId: cid,
@@ -401,6 +402,13 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
     finalSnapshot,
     inference: finalEvidence,
   };
+  try {
+    const signature = signReceiptBody(receipt);
+    receipt.signature = signature;
+    receipt.class = "signed";
+  } catch (err) {
+    console.log(`[wayfind-api] receipt left unsigned for ${cid}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   try {
     // NOTE: AppSync returns row errors in `errors`, NOT as throws — an
     // unchecked update can report 200 while persisting nothing.

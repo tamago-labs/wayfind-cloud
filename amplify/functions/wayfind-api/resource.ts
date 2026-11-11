@@ -33,6 +33,10 @@ export const wayfindApiFunction = defineFunction({
     // Unwrapped only for the owner over TLS. Set once:
     //   npx ampx sandbox secret set CONVERSATION_MASTER_KEY  (64 hex chars)
     CONVERSATION_MASTER_KEY: secret("CONVERSATION_MASTER_KEY"),
+    // Receipt signing key (Phase 2): Ed25519 PKCS#8 PEM. Generate offline:
+    // node -e "console.log(require('crypto').generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}))"
+    //   npx ampx sandbox secret set WAYFIND_RECEIPT_SIGNING_KEY
+    WAYFIND_RECEIPT_SIGNING_KEY: secret("WAYFIND_RECEIPT_SIGNING_KEY"),
     // In-VM inference credential (Phase 1 step 4): injected per-boot into
     // the conversation VM via /hooks/run (memory-only, dies with the VM).
     //   npx ampx sandbox secret set NEARAI_CLOUD_API_KEY

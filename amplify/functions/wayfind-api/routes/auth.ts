@@ -1,6 +1,19 @@
 import { dataClient } from "../lib/clients.js";
 import { json } from "../lib/respond.js";
-import {
+import { receiptPublicKey } from "../lib/receipts.js";
+
+// GET /verify-key — public receipt-signing key (Ed25519 SPKI PEM + kid).
+// No auth: verifiers need it before they have any credential. Fails closed
+// (503) when the signing key isn't configured — receipts are unsigned then.
+export async function handleVerifyKey(ctx: Ctx): Promise<RouteResult> {
+  const { method, path } = ctx;
+  if (!path.endsWith("/verify-key") || method !== "GET") return null;
+  try {
+    return json(200, receiptPublicKey());
+  } catch {
+    return json(503, { error: "receipt signing not configured" });
+  }
+}import {
   CLI_LOGIN_URL,
   CLI_TOKEN_TTL_MS,
   DEVICE_CODE_TTL_MS,

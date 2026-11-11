@@ -11,6 +11,7 @@ import {
   handleAuthDevicePoll,
   handleAuthMe,
   handleAuthRevoke,
+  handleVerifyKey,
 } from "./routes/auth.js";
 import {
   handleSandboxProvision,
@@ -38,6 +39,7 @@ import {
 } from "./routes/computer.js";
 import { handleComputerProxy, handleComputerToken } from "./routes/computerIO.js";
 import { handleChatMessage } from "./routes/chat.js";
+import { handleVerifyReceipt } from "./routes/verify.js";
 
 /* ---------------- handler (gate + dispatch; logic lives in routes/) ---------------- */
 
@@ -70,6 +72,8 @@ export const handler = async (
       handleSyncDownloadUrls,
       handleAuthDevice,
       handleAuthDevicePoll,
+      handleVerifyKey,
+      handleVerifyReceipt,
     ]) {
       const res = await route(preCtx);
       if (res) return res;
