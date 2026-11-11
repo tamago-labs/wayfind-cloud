@@ -410,6 +410,7 @@ export async function handleConversationTerminate(ctx: Ctx): Promise<RouteResult
       id: cid,
       status: "closed",
       terminatedAt,
+      checkpointManifest: manifest,
       receipt: JSON.stringify(receipt),
     });
     if (updateErrors || !updated) {
