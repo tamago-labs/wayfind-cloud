@@ -77,6 +77,15 @@ const schema = a.schema({
       usageToken: a.string(),
       requestedAt: a.datetime(),
       decidedAt: a.datetime(),
+      // ONE outer-computer flow (PLAN-P2): kind discriminates which product
+      // owns this row — absent reads as "classic". teamManifestSha /
+      // lastTeamSyncAt track S3 team-sync state; outerModel pins the
+      // default Meta model for this computer. All nullable so existing
+      // classic rows are untouched.
+      kind: a.enum(["classic", "one_outer"]),
+      teamManifestSha: a.string(),
+      lastTeamSyncAt: a.datetime(),
+      outerModel: a.string(),
     })
     .authorization((allow) => [
       allow.owner(),
@@ -108,12 +117,18 @@ const schema = a.schema({
       status: a.enum(["active", "terminated"]),
       provisionedAt: a.datetime(),
       lastUsedAt: a.datetime(),
+      // ONE nesting link (PLAN-P2): the outer computer that spawned this
+      // run; policy pins the run policy (ONE inner runs use
+      // "verified_inference"). Nullable — classic sandbox sessions predate it.
+      parentComputerId: a.string(),
+      policy: a.string(),
     })
     .authorization((allow) => [
       allow.owner(),
     ])
     .secondaryIndexes((index) => [
       index("ownerId").queryField("sandboxSessionsByOwnerId"),
+      index("parentComputerId").queryField("sandboxRunsByComputer"),
     ]),
 
   // ONE conversations (hybrid-C): one row per disposable execution session.
