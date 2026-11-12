@@ -13,6 +13,10 @@ import {
 } from "../lib/microvm.js";
 import { emitAudit } from "../lib/audit.js";
 import { signReceiptBody } from "../lib/receipts.js";
+import {
+  deriveWorkspaceKey,
+  sealWorkspaceFile,
+} from "../lib/escrow.js";
 import { CURATED_MODELS } from "./conversations.js";
 import type { Ctx, RouteResult } from "../lib/ctx.js";
 
@@ -86,9 +90,14 @@ function sandboxIdFor(path: string, suffix: string): string | null {
 }
 
 // POST /sandboxes — spawn an inner sandbox.
-// Body: { computerId?, goal?, goalHash?, fileEnvelopes?, model?,
-//         idleTtlSeconds? }. fileEnvelopes = sealed [{path,sha256,nonce,
-// data}] pushed direct-to-inner (bytes never transit the outer).
+// Body: { computerId?, goal?, goalHash?, fileInputs?, fileEnvelopes?,
+//         model?, idleTtlSeconds? }.
+// fileInputs = [{ path, contentBase64 }] plaintext from the outer computer
+// (it legitimately holds these bytes): sealed HERE with the inner
+// session-derived workspace key before pushing, so the inner VM receives
+// sealed envelopes and nothing sensitive is persisted in the clear.
+// fileEnvelopes = pre-sealed [{path,sha256,nonce,data}] (for callers that
+// can seal). Path jail + 10MB/file + 20 files max, fail closed.
 // Policy is pinned by construction: curated near-ai model only,
 // verified_inference only — no securityLevel param exists to weaken.
 // Returns { sandboxId, model, provider, provisionedAt } — no endpoint,
@@ -157,11 +166,42 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
     if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
     const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
     if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
-    // Sealed file intake: envelopes move control-plane → inner directly.
-    // The outer never decrypts; the relay never sees plaintext.
-    const envelopes = Array.isArray(body.fileEnvelopes) ? body.fileEnvelopes : [];
-    if (envelopes.length > 0) {
-      const push = await vmFetch(endpoint, token, "/sync/in", { files: envelopes }, sessionToken);
+    // Sealed file intake. Two shapes, same destination:
+    // - fileInputs (plaintext from the outer, which legitimately holds
+    //   these bytes): sealed HERE with the inner session-derived workspace
+    //   key. Plaintext lives only in this Lambda's memory, never persisted.
+    // - fileEnvelopes (pre-sealed by a caller that holds the key).
+    // Either way the inner VM receives sealed envelopes via /sync/in, and
+    // the outer never handles anything it can't already read.
+    const wsKey = deriveWorkspaceKey(sessionToken);
+    const sealed: Array<{ path: string; sha256: string; nonce: string; data: string }> = [];
+    const cleanPath = (p: unknown): string | null => {
+      if (typeof p !== "string" || !p || p.length > 256) return null;
+      const parts = p.split("/").filter((s) => s !== "" && s !== ".");
+      if (parts.length === 0 || parts.some((s) => s === ".." || s === ".wayfind")) return null;
+      return parts.join("/");
+    };
+    const inputs = Array.isArray(body.fileInputs) ? body.fileInputs : [];
+    if (inputs.length > 20) throw new Error("fileInputs: max 20 files");
+    for (const f of inputs as Array<{ path?: unknown; contentBase64?: unknown }>) {
+      const rel = cleanPath(f?.path);
+      if (!rel) throw new Error("fileInputs: bad path (jailed, no .wayfind)");
+      if (typeof f?.contentBase64 !== "string") throw new Error("fileInputs: contentBase64 required");
+      const bytes = Buffer.from(f.contentBase64, "base64");
+      if (bytes.length > 10 * 1024 * 1024) throw new Error(`fileInputs: ${rel} exceeds 10MB`);
+      const s = sealWorkspaceFile(wsKey, rel, bytes);
+      sealed.push({ path: rel, ...s });
+    }
+    const preSealed = Array.isArray(body.fileEnvelopes) ? body.fileEnvelopes : [];
+    for (const e of preSealed as Array<{ path?: unknown; sha256?: string; nonce?: string; data?: string }>) {
+      const rel = cleanPath(e?.path);
+      if (!rel || typeof e?.sha256 !== "string" || typeof e?.nonce !== "string" || typeof e?.data !== "string") {
+        throw new Error("fileEnvelopes: each needs { path, sha256, nonce, data }");
+      }
+      sealed.push({ path: rel, sha256: e.sha256, nonce: e.nonce, data: e.data });
+    }
+    if (sealed.length > 0) {
+      const push = await vmFetch(endpoint, token, "/sync/in", { files: sealed }, sessionToken);
       if (!push.ok) throw new Error(`/sync/in → ${push.status}: ${(await push.text()).slice(0, 200)}`);
     }
     const provisionedAt = new Date().toISOString();
@@ -188,7 +228,7 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
       goalHash: goalHash ?? null,
       model,
       provider: curated.provider,
-      files: envelopes.length,
+      files: sealed.length,
     });
     return json(200, {
       sandboxId: run.microvmId,
