@@ -53,7 +53,7 @@ import { handleExportEvidence, handleImageTrustGet, handleImageTrustPublish } fr
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "1.1.1+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions+conversations+modular-routes+signed-receipts+gated-routes+kind-provision+inner-sandboxes+sealed-intake";
+const BACKEND_REV = "1.1.1+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions+conversations+modular-routes+signed-receipts+gated-routes+kind-provision+inner-sandboxes+sealed-intake+pregate-auth";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -77,6 +77,9 @@ export const handler = async (
       handleRoutinesFire,
       handleSyncUploadUrls,
       handleSyncDownloadUrls,
+      handleSandboxesSpawn,
+      handleSandboxesMessage,
+      handleSandboxesTerminate,
       handleAuthDevice,
       handleAuthDevicePoll,
       handleVerifyKey,
@@ -106,9 +109,6 @@ export const handler = async (
       handleSandboxTerminate,
       handleConversationsCreate,
       handleConversationsList,
-      handleSandboxesSpawn,
-      handleSandboxesMessage,
-      handleSandboxesTerminate,
       handleConversationMessage,
       handleConversationTerminate,
       handleCheckpointUpload,
