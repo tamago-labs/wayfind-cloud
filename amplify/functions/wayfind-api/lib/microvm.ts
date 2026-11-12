@@ -234,10 +234,16 @@ export async function resumeComputer(computerId: string, microvmId: string): Pro
   return endpoint;
 }
 
-/** Full provision chain (boot + identity + smoke test). Throws on any step. */
-export async function provisionComputer(computerId: string, ownerId: string): Promise<void> {
-  const imageArn = env.COMPUTER_IMAGE_ARN;
-  if (!imageArn) throw new Error("COMPUTER_IMAGE_ARN is not configured");
+/** Full provision chain (boot + identity + smoke test). Throws on any step.
+ * kind selects the image: classic → COMPUTER_IMAGE_ARN, one_outer →
+ * ONE_OUTER_IMAGE_ARN (PLAN-P2). */
+export async function provisionComputer(
+  computerId: string,
+  ownerId: string,
+  kind: "classic" | "one_outer" = "classic",
+): Promise<void> {
+  const imageArn = kind === "one_outer" ? env.ONE_OUTER_IMAGE_ARN : env.COMPUTER_IMAGE_ARN;
+  if (!imageArn) throw new Error(`${kind === "one_outer" ? "ONE_OUTER_IMAGE_ARN" : "COMPUTER_IMAGE_ARN"} is not configured`);
   const bucket = env.COMPUTER_WORKSPACE_BUCKET ?? "";
   const prefix = `computers/${computerId}/workspace/`;
 
@@ -285,6 +291,7 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
     const runRes = await vmFetch(endpoint, token, "/hooks/run", {
       ownerId,
       computerId,
+      kind,
       secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey },
       usageToken,
       ...(computerApi ? { apiUrl: computerApi } : {}),
@@ -292,9 +299,13 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
     });
     if (!runRes.ok) throw new Error(`/hooks/run → ${runRes.status}: ${(await runRes.text()).slice(0, 200)}`);
 
-    // Smoke test: one chat turn through the new VM.
+    // Smoke test: one chat turn through the new VM. Classic asserts the
+    // cloud-ok turn; one_outer asserts the same loop on the outer image
+    // (team-chat path is covered by the image ship gate, not here, so no
+    // junk bot files land in fresh teams).
+    const smokeText = kind === "one_outer" ? "Reply with exactly: outer-ok" : "Reply with exactly: cloud-ok";
     const taskRes = await vmFetch(endpoint, token, "/task", {
-      text: "Reply with exactly: cloud-ok",
+      text: smokeText,
       ownerId,
       ...(computerApi ? { apiUrl: computerApi } : {}),
     });
@@ -305,14 +316,16 @@ export async function provisionComputer(computerId: string, ownerId: string): Pr
       headers: { "X-aws-proxy-auth": token, Accept: "text/event-stream" },
     });
     const sse = await stream.text();
-    if (!sse.includes("cloud-ok")) throw new Error("smoke chat did not return cloud-ok");
+    if (!sse.includes(kind === "one_outer" ? "outer-ok" : "cloud-ok")) throw new Error("smoke chat did not return the expected token");
 
     await dataClient.models.Computer.update({
       id: computerId,
+      kind,
+      ...(kind === "one_outer" ? { outerModel: env.ONE_OUTER_MODEL ?? "meta-models/Muse-Spark-Open-816B-A42B" } : {}),
       provisionStatus: "running",
       microvmId: run.microvmId,
       endpoint,
-      imageVersion: "1.0",
+      imageVersion: kind === "one_outer" ? (env.ONE_OUTER_IMAGE_VERSION ?? "1.0") : "1.0",
       decidedAt: new Date().toISOString(),
     });
   } catch (err) {

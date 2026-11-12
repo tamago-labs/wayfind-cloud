@@ -40,14 +40,31 @@ export async function handleComputerRequest(ctx: Ctx): Promise<RouteResult> {
   return json(200, { data: computer });
 }
 
-// POST /computer/provision - boot the caller's VM (idempotent).
-// Returns the Computer row immediately; the footer polls provisionStatus.
-// Awaited inline (boot ~11s + hooks + smoke < 60s, fits the 300s budget).
+// POST /computer/provision[ { kind?: "classic" | "one_outer" }] - boot the
+// caller's VM (idempotent). kind selects the image (PLAN-P2); absent means
+// the row's kind, defaulting to classic. Requesting a different kind than
+// the live VM terminates it first (an image can't change under a running
+// VM) — the response carries switched: true in that case.
 export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
-  const { method, path, ownerId, claims } = ctx;
+  const { event, method, path, ownerId, claims } = ctx;
   if (!path.endsWith("/computer/provision") || method !== "POST") return null;
+  let wantKind: "classic" | "one_outer" | undefined;
+  try {
+    const body = JSON.parse(event.body ?? "{}");
+    if (body.kind !== undefined) {
+      if (body.kind !== "classic" && body.kind !== "one_outer") {
+        return json(400, { error: "kind must be classic or one_outer" });
+      }
+      wantKind = body.kind;
+    }
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
   const profile = await ensureProfile(claims!);
   let computer = await findOrCreateComputer(ownerId, profile.id);
+  const rowKind: "classic" | "one_outer" =
+    (computer as { kind?: unknown }).kind === "one_outer" ? "one_outer" : "classic";
+  const kind = wantKind ?? rowKind;
   // Self-heal any row holding a MicroVM, whatever its status label says
   // (a stale label must never route a live VM to a fresh provision):
   // gone VM → clear and fall through to boot; live VM with a stale
@@ -73,6 +90,26 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
   }
   if (computer.provisionStatus === "running") return json(200, { data: computer });
   if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
+  // Product switch: a live VM of the other kind can't change image.
+  // Best-effort workspace flush, then terminate and reprovision fresh.
+  // Suspended VMs of the other kind terminate too (never resume foreign).
+  let switched = false;
+  if (computer.microvmId && rowKind !== kind) {
+    try {
+      const token = await mintVmToken(computer.microvmId, 5);
+      await vmFetch(computer.endpoint ?? "", token, "/hooks/suspend", {});
+    } catch {
+      // VM may already be unreachable - terminate anyway.
+    }
+    try {
+      await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: computer.microvmId }));
+    } catch {
+      // Already gone - the reset below still converges the row.
+    }
+    await resetStaleRow(computer.id, computer.microvmId);
+    computer = { ...computer, provisionStatus: "not_provisioned", microvmId: "" };
+    switched = true;
+  }
   if (computer.provisionStatus === "suspended") {
     return json(409, { error: "computer is suspended - use POST /computer/action {resume}", data: computer });
   }
@@ -95,9 +132,9 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
     // Listing failed - provision the picked row anyway.
   }
   try {
-    await provisionComputer(computer.id, ownerId);
+    await provisionComputer(computer.id, ownerId, kind);
     const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
-    return json(200, { data: updated ?? computer });
+    return json(200, { data: updated ?? computer, ...(switched ? { switched: true } : {}) });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[wayfind-api] provision failed:", msg);

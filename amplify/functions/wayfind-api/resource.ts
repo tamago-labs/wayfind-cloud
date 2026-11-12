@@ -17,6 +17,12 @@ export const wayfindApiFunction = defineFunction({
     CORS_ORIGIN: process.env.CORS_ORIGIN ?? "https://wayfind.click",
     COMPUTER_IMAGE_ARN: process.env.COMPUTER_IMAGE_ARN ?? "",
     EXEC_IMAGE_ARN: process.env.EXEC_IMAGE_ARN ?? "",
+    // ONE outer sandbox image (PLAN-P2): selected when the Computer row's
+    // kind is one_outer. Plain env (ARNs aren't secret) — set before deploy:
+    //   ONE_OUTER_IMAGE_ARN=arn:aws:lambda:...:microvm-image:wayfind-outer
+    ONE_OUTER_IMAGE_ARN: process.env.ONE_OUTER_IMAGE_ARN ?? "",
+    ONE_OUTER_IMAGE_VERSION: process.env.ONE_OUTER_IMAGE_VERSION ?? "1.0",
+    ONE_OUTER_MODEL: process.env.ONE_OUTER_MODEL ?? "meta-models/Muse-Spark-Open-816B-A42B",
     // Minimal exec-sandbox image (wayfind-sandbox, P1). Disposable sessions:
     // provisioned per run, never resumed, terminated on idle/expiry.
     COMPUTER_WORKSPACE_BUCKET: process.env.COMPUTER_WORKSPACE_BUCKET ?? "",
