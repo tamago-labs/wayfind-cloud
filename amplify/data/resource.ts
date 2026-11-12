@@ -204,7 +204,7 @@ const schema = a.schema({
       ownerId: a.string().required(), // Cognito sub
       at: a.datetime().required(),
       actor: a.string().required(), // user:<sub> | cli:<tokenId> | system
-      action: a.string().required(), // conversation.created|terminated|policy.updated|evidence.exported
+      action: a.string().required(), // conversation.created|terminated|policy.updated|evidence.exported|sandbox.spawned|terminated
       conversationId: a.string(),
       detail: a.string(), // short JSON (ids, hashes, levels — never secrets)
     })

@@ -7,7 +7,7 @@ import { stampOwner } from "./owner.js";
 export async function emitAudit(
   ownerId: string,
   actor: string,
-  action: "conversation.created" | "conversation.terminated" | "policy.updated" | "evidence.exported" | "image.published",
+  action: "conversation.created" | "conversation.terminated" | "policy.updated" | "evidence.exported" | "image.published" | "sandbox.spawned" | "sandbox.terminated",
   conversationId?: string,
   detail?: Record<string, unknown>,
 ): Promise<void> {
