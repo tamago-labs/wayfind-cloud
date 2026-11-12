@@ -12,21 +12,37 @@ import {
   resumeComputer,
   vmAlive,
   vmFetch,
+  type ComputerKind,
 } from "../lib/microvm.js";
 import type { Ctx, RouteResult } from "../lib/ctx.js";
 
-// POST /computer/request - get-or-create the caller's Computer row.
+// POST /computer/request[{ kind? }] - get-or-create the caller's Computer
+// row FOR THAT KIND. Classic and one_outer rows coexist (one computer per
+// kind per user) — a kinded request never satisfies another kind's caller.
 // No approval gate: any signed-in user may provision (gatekeeper removed).
 export async function handleComputerRequest(ctx: Ctx): Promise<RouteResult> {
-  const { method, path, ownerId, claims } = ctx;
+  const { event, method, path, ownerId, claims } = ctx;
   if (!path.endsWith("/computer/request") || method !== "POST") return null;
+  let kind: ComputerKind = "classic";
+  try {
+    const body = JSON.parse(event.body ?? "{}");
+    if (body.kind !== undefined) {
+      if (body.kind !== "classic" && body.kind !== "one_outer") {
+        return json(400, { error: "kind must be classic or one_outer" });
+      }
+      kind = body.kind;
+    }
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
   const profile = await ensureProfile(claims!);
   const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-  let computer = pickComputer(existing);
+  let computer = pickComputer(existing, kind);
   if (!computer) {
     const { data: created, errors } = await dataClient.models.Computer.create({
       ownerId,
       userProfileId: profile.id,
+      kind,
       provisionStatus: "not_provisioned",
       region: "ap-southeast-1",
       requestedAt: new Date().toISOString(),
@@ -36,35 +52,30 @@ export async function handleComputerRequest(ctx: Ctx): Promise<RouteResult> {
     }
     computer = created;
   }
-  if (computer) void dedupeComputers(ownerId, computer.id);
+  if (computer) void dedupeComputers(ownerId, computer.id, kind);
   return json(200, { data: computer });
 }
 
-// POST /computer/provision[ { kind?: "classic" | "one_outer" }] - boot the
-// caller's VM (idempotent). kind selects the image (PLAN-P2); absent means
-// the row's kind, defaulting to classic. Requesting a different kind than
-// the live VM terminates it first (an image can't change under a running
-// VM) — the response carries switched: true in that case.
+// POST /computer/provision[{ kind? }] - boot the caller's VM of that kind
+// (idempotent). kind selects the image (PLAN-P2); kinds coexist, so there
+// is no cross-kind switching — each kind provisions its own row.
 export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path, ownerId, claims } = ctx;
   if (!path.endsWith("/computer/provision") || method !== "POST") return null;
-  let wantKind: "classic" | "one_outer" | undefined;
+  let kind: ComputerKind = "classic";
   try {
     const body = JSON.parse(event.body ?? "{}");
     if (body.kind !== undefined) {
       if (body.kind !== "classic" && body.kind !== "one_outer") {
         return json(400, { error: "kind must be classic or one_outer" });
       }
-      wantKind = body.kind;
+      kind = body.kind;
     }
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
   const profile = await ensureProfile(claims!);
-  let computer = await findOrCreateComputer(ownerId, profile.id);
-  const rowKind: "classic" | "one_outer" =
-    (computer as { kind?: unknown }).kind === "one_outer" ? "one_outer" : "classic";
-  const kind = wantKind ?? rowKind;
+  let computer = await findOrCreateComputer(ownerId, profile.id, kind);
   // Self-heal any row holding a MicroVM, whatever its status label says
   // (a stale label must never route a live VM to a fresh provision):
   // gone VM → clear and fall through to boot; live VM with a stale
@@ -87,28 +98,6 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
       const msg = err instanceof Error ? err.message : String(err);
       return json(502, { error: `computer state check failed: ${msg.slice(0, 200)}` });
     }
-  }
-  // Product switch FIRST — before any early return: a live VM of a
-  // different kind than requested can never satisfy this call, not even
-  // when it reports running. Best-effort workspace flush, terminate,
-  // reprovision fresh. Suspended VMs of the other kind terminate too
-  // (never resume foreign).
-  let switched = false;
-  if (computer.microvmId && rowKind !== kind) {
-    try {
-      const token = await mintVmToken(computer.microvmId, 5);
-      await vmFetch(computer.endpoint ?? "", token, "/hooks/suspend", {});
-    } catch {
-      // VM may already be unreachable - terminate anyway.
-    }
-    try {
-      await microvms.send(new TerminateMicrovmCommand({ microvmIdentifier: computer.microvmId }));
-    } catch {
-      // Already gone - the reset below still converges the row.
-    }
-    await resetStaleRow(computer.id, computer.microvmId);
-    computer = { ...computer, provisionStatus: "not_provisioned", microvmId: "" };
-    switched = true;
   }
   if (computer.provisionStatus === "running") return json(200, { data: computer });
   if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
@@ -136,7 +125,7 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
   try {
     await provisionComputer(computer.id, ownerId, kind);
     const { data: updated } = await dataClient.models.Computer.get({ id: computer.id });
-    return json(200, { data: updated ?? computer, ...(switched ? { switched: true } : {}) });
+    return json(200, { data: updated ?? computer });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[wayfind-api] provision failed:", msg);
@@ -144,19 +133,24 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
   }
 }
 
-// POST /computer/action {suspend|resume|terminate} - caller's own VM only.
+// POST /computer/action {suspend|resume|terminate} [{ kind? }] - the
+// caller's own VM of that kind (default classic, preserving cloud callers).
 export async function handleComputerAction(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path, ownerId } = ctx;
   if (!path.endsWith("/computer/action") || method !== "POST") return null;
-  let body: { action?: string } = {};
+  let body: { action?: string; kind?: ComputerKind } = {};
   try {
     body = JSON.parse(event.body ?? "{}");
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
+  if (body.kind !== undefined && body.kind !== "classic" && body.kind !== "one_outer") {
+    return json(400, { error: "kind must be classic or one_outer" });
+  }
+  const kind: ComputerKind = body.kind ?? "classic";
   const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-  const computer = pickComputer(computers);
-  if (computer && computers && computers.length > 1) void dedupeComputers(ownerId, computer.id);
+  const computer = pickComputer(computers, kind);
+  if (computer) void dedupeComputers(ownerId, computer.id, kind);
   if (!computer?.microvmId) return json(404, { error: "no provisioned MicroVM for this account" });
   const microvmId = computer.microvmId;
   // The VM may be gone (suspend-window expiry, out-of-band delete) while

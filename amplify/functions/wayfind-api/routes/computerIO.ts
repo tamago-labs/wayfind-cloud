@@ -11,19 +11,21 @@ import type { Ctx, RouteResult } from "../lib/ctx.js";
 
 // POST /computer/token - mint a short-lived, port-scoped auth token for
 // the caller's own MicroVM (browser-to-VM direct SSE). Body: { microvmId?,
-// expirationInMinutes? (default 30, max 60), port? (default 8080) }.
+// expirationInMinutes? (default 30, max 60), port? (default 8080),
+// kind? (default classic) }.
 // microvmId must match the caller's Computer row - never another account.
 export async function handleComputerToken(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path, ownerId } = ctx;
   if (!path.endsWith("/computer/token") || method !== "POST") return null;
-  let body: { microvmId?: string; expirationInMinutes?: number; port?: number } = {};
+  let body: { microvmId?: string; expirationInMinutes?: number; port?: number; kind?: string } = {};
   try {
     body = JSON.parse(event.body ?? "{}");
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
+  const kind = body.kind === "one_outer" ? "one_outer" : "classic";
   const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-  const computer = pickComputer(computers);
+  const computer = pickComputer(computers, kind);
   const microvmId = body.microvmId ?? computer?.microvmId;
   if (!microvmId) {
     return json(404, { error: "no provisioned MicroVM for this account" });
@@ -66,7 +68,11 @@ export async function handleComputerProxy(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path, ownerId } = ctx;
   if (!path.includes("/computer/proxy/")) return null;
   const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-  const computer = pickComputer(computers);
+  // kind rides the query string (?kind=one_outer) so GET relays stay
+  // bodiless; absent means classic (all existing cloud callers).
+  const params = new URLSearchParams(event.rawQueryString ?? "");
+  const kind = params.get("kind") === "one_outer" ? "one_outer" : "classic";
+  const computer = pickComputer(computers, kind);
   if (!computer?.microvmId || !computer.endpoint) {
     return json(404, { error: "no provisioned MicroVM for this account" });
   }

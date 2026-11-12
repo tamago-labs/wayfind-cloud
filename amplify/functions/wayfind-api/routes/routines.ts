@@ -200,7 +200,8 @@ async function fireRoutine(routineId: string): Promise<{ status: number; body: R
     return { status: 200, body: { ok: true, skipped: "wrong-owner" } };
   }
   const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId: routine.ownerId });
-  const computer = pickComputer(computers);
+  // Routines run on the classic cloud computer — never the outer sandbox.
+  const computer = pickComputer(computers, "classic");
   if (!computer?.microvmId) {
     await record(routine.id, "skipped-no-computer", routine.runCount ?? 0);
     return { status: 200, body: { ok: true, skipped: "no-computer" } };

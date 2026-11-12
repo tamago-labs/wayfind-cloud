@@ -141,27 +141,42 @@ export type ComputerRow = {
   updatedAt?: string | null;
 };
 
+/** One user may hold one computer PER KIND (classic + one_outer coexist).
+ * Absent kind reads as classic so pre-kind rows keep working. */
+export type ComputerKind = "classic" | "one_outer";
+
+export function rowKind(row: { kind?: unknown }): ComputerKind {
+  return row.kind === "one_outer" ? "one_outer" : "classic";
+}
+
 /** Deterministic pick among an owner's Computer rows. The GSI has no sort
  * key, so [0] is undefined order — and a create race can leave duplicates.
- * Prefer the row holding a MicroVM, newest first. */
-export function pickComputer<T extends ComputerRow>(rows: T[] | null | undefined): T | undefined {
+ * Prefer the row holding a MicroVM, newest first. kind scopes the pool so
+ * classic and one_outer rows never satisfy each other's callers. */
+export function pickComputer<T extends ComputerRow>(
+  rows: T[] | null | undefined,
+  kind?: ComputerKind,
+): T | undefined {
   if (!rows || rows.length === 0) return undefined;
-  const active = rows.filter((r) => r.microvmId);
-  const pool = active.length > 0 ? active : [...rows];
-  return [...pool].sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))[0];
+  const pool = kind ? rows.filter((r) => rowKind(r as { kind?: unknown }) === kind) : [...rows];
+  if (pool.length === 0) return undefined;
+  const active = pool.filter((r) => r.microvmId);
+  const candidates = active.length > 0 ? active : [...pool];
+  return [...candidates].sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))[0];
 }
 
 /** Best-effort duplicate removal after a pick. Deletion is guarded three
  * ways so concurrent invocations converge instead of annihilating:
  * - abort unless the kept row is visible in the fresh list (a keep chosen
  *   from a stale list must never delete what it cannot see),
- * - abort on fewer than 2 rows,
+ * - abort on fewer than 2 same-kind rows,
  * - never delete a row holding a microvmId (would orphan a possibly-live,
- *   still-billing VM — those converge via resetStaleRow instead). */
-export async function dedupeComputers(ownerId: string, keepId: string): Promise<void> {
+ *   still-billing VM — those converge via resetStaleRow instead).
+ * kind scopes the sweep: classic rows never delete one_outer rows. */
+export async function dedupeComputers(ownerId: string, keepId: string, kind?: ComputerKind): Promise<void> {
   try {
     const { data: rows } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-    const pool = rows ?? [];
+    const pool = (rows ?? []).filter((r) => !kind || rowKind(r as { kind?: unknown }) === kind);
     if (pool.length < 2) return;
     if (!pool.some((r) => r.id === keepId)) return;
     for (const r of pool) {
@@ -207,16 +222,17 @@ export async function resetStaleRow(computerId: string, microvmId?: string | nul
   });
 }
 
-export async function findOrCreateComputer(ownerId: string, profileId: string) {
+export async function findOrCreateComputer(ownerId: string, profileId: string, kind: ComputerKind = "classic") {
   const { data: existing } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
-  const picked = pickComputer(existing);
+  const picked = pickComputer(existing, kind);
   if (picked) {
-    if (existing && existing.length > 1) void dedupeComputers(ownerId, picked.id);
+    if (existing && existing.length > 1) void dedupeComputers(ownerId, picked.id, kind);
     return picked;
   }
   const { data: created, errors } = await dataClient.models.Computer.create({
     ownerId,
     userProfileId: profileId,
+    kind,
     provisionStatus: "not_provisioned",
     region: env.COMPUTER_REGION ?? "ap-southeast-1",
     requestedAt: new Date().toISOString(),
