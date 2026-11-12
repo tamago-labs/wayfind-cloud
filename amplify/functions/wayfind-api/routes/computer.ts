@@ -88,11 +88,11 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
       return json(502, { error: `computer state check failed: ${msg.slice(0, 200)}` });
     }
   }
-  if (computer.provisionStatus === "running") return json(200, { data: computer });
-  if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
-  // Product switch: a live VM of the other kind can't change image.
-  // Best-effort workspace flush, then terminate and reprovision fresh.
-  // Suspended VMs of the other kind terminate too (never resume foreign).
+  // Product switch FIRST — before any early return: a live VM of a
+  // different kind than requested can never satisfy this call, not even
+  // when it reports running. Best-effort workspace flush, terminate,
+  // reprovision fresh. Suspended VMs of the other kind terminate too
+  // (never resume foreign).
   let switched = false;
   if (computer.microvmId && rowKind !== kind) {
     try {
@@ -110,6 +110,8 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
     computer = { ...computer, provisionStatus: "not_provisioned", microvmId: "" };
     switched = true;
   }
+  if (computer.provisionStatus === "running") return json(200, { data: computer });
+  if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
   if (computer.provisionStatus === "suspended") {
     return json(409, { error: "computer is suspended - use POST /computer/action {resume}", data: computer });
   }
