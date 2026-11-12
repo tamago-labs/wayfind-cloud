@@ -104,6 +104,22 @@ export async function handleComputerProvision(ctx: Ctx): Promise<RouteResult> {
   if (computer.provisionStatus === "suspended") {
     return json(409, { error: "computer is suspended - use POST /computer/action {resume}", data: computer });
   }
+  // Re-read: a concurrent provision may have moved this row after our
+  // first read (StrictMode double-mount, double-click). Follow the fresh
+  // state instead of booting a second VM for one row.
+  try {
+    const { data: fresh } = await dataClient.models.Computer.get({ id: computer.id });
+    if (fresh?.provisionStatus && fresh.provisionStatus !== computer.provisionStatus) {
+      computer = { ...computer, ...fresh };
+      if (computer.provisionStatus === "running") return json(200, { data: computer });
+      if (computer.provisionStatus === "provisioning") return json(202, { data: computer });
+      if (computer.provisionStatus === "suspended") {
+        return json(409, { error: "computer is suspended - use POST /computer/action {resume}", data: computer });
+      }
+    }
+  } catch {
+    // Re-read failed - proceed with the state we have.
+  }
   // Converge leftover duplicate rows: dead VMs get cleared (later
   // dedupe removes the husk); live ones are left alone, never deleted.
   try {
