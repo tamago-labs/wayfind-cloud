@@ -40,14 +40,6 @@ export default function Hero() {
         transition={{ duration: 0.5 }}
         className="relative mx-auto max-w-4xl px-6 pb-40 pt-10 text-center"
       >
-        <a
-          href="https://web3.wayfind.click/"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mb-5 inline-flex items-center gap-2 rounded-full bg-navy px-4 py-1.5 text-sm font-bold text-white transition-colors hover:bg-cta"
-        >
-          🎉 New: Web3 Gateway — your Bots can now transact onchain <span aria-hidden="true">→</span>
-        </a>
         <div className="mx-auto mb-6 flex justify-center -space-x-3">
           {mascots.map((color, i) => (
             <Mascot
@@ -66,7 +58,7 @@ export default function Hero() {
           Meet your new AI teammates
         </h1>
         <p className="mx-auto mt-6 max-w-lg text-lg text-heroslate">
-          Always-on AI teammates in the cloud for small businesses, doing real work across the tools you already use.
+          Always-on AI teammates doing real work across the tools you already use. They remember your workflows, handle the follow-ups, and keep everything moving.
         </p>
         <div className="mt-9 flex flex-wrap items-center justify-center gap-4">
           <Link href="/app" className="rounded-full bg-cta px-8 py-4 font-semibold text-white hover:bg-ctahover transition-colors">

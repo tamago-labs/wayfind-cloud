@@ -13,6 +13,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.2.0',
+    date: '2026-11-13',
+    tagline: 'Bots can now use crypto wallets, and the API powers verifiable sandbox runs.',
+    added: [
+      'Web3 Gateway connectors — Wallet Essentials, OKX DEX Swaps, and Stablecoin Finance. Open Connectors, pick one, and paste your endpoint from web3.wayfind.click, where email sign-in creates your wallet.',
+      'Wayfind ONE backend — disposable attested sandboxes with sealed file intake, signed execution receipts, and verification endpoints, now running on this API.',
+    ],
+  },
+  {
     version: '1.1.0',
     date: '2026-11-06',
     tagline: 'Member bots can now ask your chief of staff for help.',

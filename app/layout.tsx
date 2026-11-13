@@ -4,9 +4,9 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Wayfind Cloud — AI Teammates for Small Businesses",
+  title: "Wayfind Cloud — AI Teammates that do real work",
   description:
-    "Give your small business an AI team for finance, operations, marketing, and more. Your Bots remember workflows, use your business tools, and get work done in the cloud. Start free.",
+    "Give your business an AI team for finance, operations, marketing, and more. Bots that remember workflows and get work done in the cloud. Start free.",
 };
 
 export default function RootLayout({
