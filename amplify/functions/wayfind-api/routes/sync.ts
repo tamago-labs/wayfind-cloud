@@ -1,5 +1,5 @@
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
 import { dataClient, s3sync, syncBucket } from "../lib/clients.js";
 import { json } from "../lib/respond.js";
 import type { Ctx, RouteResult } from "../lib/ctx.js";
@@ -101,4 +101,48 @@ export async function handleSyncDownloadUrls(ctx: Ctx): Promise<RouteResult> {
     token = res.NextContinuationToken;
   }
   return json(200, { files });
+}
+
+// POST /computer/sync/delete — { computerId, paths: [rel...] } → delete
+// those objects under the caller's workspace prefix. This is what makes
+// deletes durable: the push path only uploads what exists locally, so
+// without a server-side delete, removed files resurrect on the next
+// restore (pull re-downloads anything in S3 that's missing locally).
+export async function handleSyncDelete(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path } = ctx;
+  if (!path.endsWith("/computer/sync/delete") || method !== "POST") return null;
+  let body: { computerId?: string; paths?: unknown } = {};
+  try {
+    body = JSON.parse(event.body ?? "{}");
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+  const auth = await vmSyncAuth(event.headers ?? {}, body);
+  if ("error" in auth) return json(auth.status, { error: auth.error });
+  if (!syncBucket) return json(500, { error: "workspace bucket not configured" });
+  const paths = Array.isArray(body.paths) ? body.paths : [];
+  if (paths.length === 0 || paths.length > 100) {
+    return json(400, { error: "paths: 1..100 required" });
+  }
+  const keys: string[] = [];
+  for (const p of paths) {
+    const clean = cleanSyncPath(p);
+    if (!clean) return json(400, { error: `bad path (jailed, no .wayfind): ${String(p).slice(0, 64)}` });
+    keys.push(`computers/${auth.computer.id}/workspace/${clean}`);
+  }
+  try {
+    const res = await s3sync.send(
+      new DeleteObjectsCommand({
+        Bucket: syncBucket,
+        Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
+      }),
+    );
+    const errors = (res.Errors ?? []).map((e) => `${e.Key}: ${e.Code ?? "failed"}`);
+    if (errors.length > 0) {
+      return json(502, { error: `delete failed: ${errors.slice(0, 5).join("; ")}` });
+    }
+  } catch (err) {
+    return json(502, { error: `delete failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) });
+  }
+  return json(200, { deleted: keys.length });
 }

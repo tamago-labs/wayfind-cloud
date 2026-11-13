@@ -161,10 +161,23 @@ async function consumeStagedFiles(ownerId: string, stagedIds: unknown, wsKey: Bu
   const out: SealedFile[] = [];
   for (const fileId of ids) {
     const Key = stagedKey(ownerId, fileId);
-    const got = await s3sync.send(new GetObjectCommand({ Bucket: syncBucket, Key }));
-    const bytes = Buffer.from(await (got.Body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray());
+    let bytes: Buffer;
+    let name: string;
+    try {
+      const got = await s3sync.send(new GetObjectCommand({ Bucket: syncBucket, Key }));
+      bytes = Buffer.from(await (got.Body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray());
+      name = ((got.Metadata?.name as string | undefined) ?? fileId).slice(0, 256);
+    } catch (err) {
+      const code = (err as { name?: string })?.name ?? '';
+      if (code.includes('NoSuchKey') || code.includes('NotFound')) {
+        // Single-use refs: already consumed (or never staged). The model
+        // must ask the user to re-attach — retrying the same id can never
+        // succeed, so say so explicitly instead of a generic failure.
+        throw new Error(`staged file ${fileId} no longer available (already used or expired) — ask the user to re-attach the file`);
+      }
+      throw err;
+    }
     if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024) throw new Error(`staged file ${fileId}: empty or over 10MB`);
-    const name = (got.Metadata?.name ?? fileId).slice(0, 256);
     const rel = cleanSandboxPath(name) ?? fileId;
     const s = sealWorkspaceFile(wsKey, rel, bytes);
     out.push({ path: rel, ...s });
@@ -408,6 +421,8 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
       provisionedAt,
     });
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[wayfind-api] inner sandbox spawn failed: ${msg.slice(0, 500)}`);
     if (bootedMicrovmId) {
       const gone = await terminateAndVerify(bootedMicrovmId);
       if (gone) {

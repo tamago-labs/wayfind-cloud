@@ -4,7 +4,7 @@ import { verifyToken, type Claims } from "./lib/auth.js";
 import type { Ctx } from "./lib/ctx.js";
 import { handleUsage } from "./routes/usage.js";
 import { handleRoutinesCreate, handleRoutinesFire } from "./routes/routines.js";
-import { handleSyncDownloadUrls, handleSyncUploadUrls } from "./routes/sync.js";
+import { handleSyncDelete, handleSyncDownloadUrls, handleSyncUploadUrls } from "./routes/sync.js";
 import {
   handleAuthDevice,
   handleAuthDeviceApprove,
@@ -55,7 +55,7 @@ import { handleExportEvidence, handleImageTrustGet, handleImageTrustPublish } fr
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "1.1.1+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions+conversations+modular-routes+signed-receipts+gated-routes+kind-provision+inner-sandboxes+sealed-intake+pregate-auth+sandbox-list+staged-upload";
+const BACKEND_REV = "1.1.1+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions+conversations+modular-routes+signed-receipts+gated-routes+kind-provision+inner-sandboxes+sealed-intake+pregate-auth+sandbox-list+staged-upload+sync-delete";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -79,6 +79,7 @@ export const handler = async (
       handleRoutinesFire,
       handleSyncUploadUrls,
       handleSyncDownloadUrls,
+      handleSyncDelete,
       handleSandboxesSpawn,
       handleSandboxesStage,
       handleSandboxesList,
