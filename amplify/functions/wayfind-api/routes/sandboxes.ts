@@ -1,7 +1,8 @@
 import { RunMicrovmCommand } from "@aws-sdk/client-lambda-microvms";
-import { randomBytes } from "crypto";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { createHash, randomBytes } from "crypto";
 import { json } from "../lib/respond.js";
-import { dataClient, env, microvms } from "../lib/clients.js";
+import { dataClient, env, microvms, s3sync, syncBucket } from "../lib/clients.js";
 import { stampOwner } from "../lib/owner.js";
 import { verifyToken } from "../lib/auth.js";
 import {
@@ -141,6 +142,83 @@ async function pushSealedFiles(
   if (!push.ok) throw new Error(`/sync/in → ${push.status}: ${(await push.text()).slice(0, 200)}`);
 }
 
+// Staged uploads: browser puts bytes here (TLS) instead of handing them to
+// the outer VM. Raw bytes wait under staging/{ownerId}/{fileId}; they are
+// sealed with the inner session key at consume time (spawn/message) and the
+// temp objects deleted. The outer never sees the bytes — only ids/names.
+function stagedKey(ownerId: string, fileId: string): string {
+  return `staging/${ownerId}/${fileId}`;
+}
+
+function isFileId(s: unknown): s is string {
+  return typeof s === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(s);
+}
+
+async function consumeStagedFiles(ownerId: string, stagedIds: unknown, wsKey: Buffer): Promise<SealedFile[]> {
+  const ids = Array.isArray(stagedIds) ? stagedIds.filter(isFileId).slice(0, 20) : [];
+  if (ids.length === 0) return [];
+  if (!syncBucket) throw new Error("workspace bucket is not configured");
+  const out: SealedFile[] = [];
+  for (const fileId of ids) {
+    const Key = stagedKey(ownerId, fileId);
+    const got = await s3sync.send(new GetObjectCommand({ Bucket: syncBucket, Key }));
+    const bytes = Buffer.from(await (got.Body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray());
+    if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024) throw new Error(`staged file ${fileId}: empty or over 10MB`);
+    const name = (got.Metadata?.name ?? fileId).slice(0, 256);
+    const rel = cleanSandboxPath(name) ?? fileId;
+    const s = sealWorkspaceFile(wsKey, rel, bytes);
+    out.push({ path: rel, ...s });
+    await s3sync.send(new DeleteObjectCommand({ Bucket: syncBucket, Key })).catch(() => null);
+  }
+  return out;
+}
+
+// POST /sandboxes/stage — park browser-upload bytes control-plane-side so
+// the outer VM never handles them. User bearer or usage token. Body:
+// { computerId?, files: [{ name, contentBase64 }] } (max 5, 10MB each).
+// Returns [{ fileId, name, sha256, size }] refs the outer passes back at
+// spawn/message time. Temp objects are deleted on consume; orphans need
+// the staging/ lifecycle rule (documented, not yet set).
+export async function handleSandboxesStage(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path } = ctx;
+  if (!path.endsWith("/sandboxes/stage") || method !== "POST") return null;
+  let body: { computerId?: unknown; files?: unknown } = {};
+  try {
+    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; files?: unknown };
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+  const auth = await sandboxAuth(ctx, body);
+  if ("error" in auth) return json(auth.status, { error: auth.error });
+  if (!auth.ownerId) return json(401, { error: "unauthorized: no owner" });
+  if (!syncBucket) return json(500, { error: "workspace bucket is not configured" });
+  const files = Array.isArray(body.files) ? body.files : [];
+  if (files.length === 0 || files.length > 5) return json(400, { error: "files: 1..5 required" });
+  const staged: Array<{ fileId: string; name: string; sha256: string; size: number }> = [];
+  for (const f of files as Array<{ name?: unknown; contentBase64?: unknown }>) {
+    const rel = cleanSandboxPath(f?.name);
+    if (!rel) return json(400, { error: "bad file name (jailed, no .wayfind)" });
+    if (typeof f?.contentBase64 !== "string") return json(400, { error: "contentBase64 required" });
+    const bytes = Buffer.from(f.contentBase64, "base64");
+    if (bytes.length === 0 || bytes.length > 10 * 1024 * 1024) {
+      return json(413, { error: `${rel}: empty or over 10MB` });
+    }
+    const fileId = randomBytes(16).toString("hex");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await s3sync.send(
+      new PutObjectCommand({
+        Bucket: syncBucket,
+        Key: stagedKey(auth.ownerId, fileId),
+        Body: bytes,
+        ContentType: "application/octet-stream",
+        Metadata: { name: rel.slice(0, 256), sha256 },
+      }),
+    );
+    staged.push({ fileId, name: rel, sha256, size: bytes.length });
+  }
+  return json(200, { staged });
+}
+
 function sandboxIdFor(path: string, suffix: string): string | null {
   const m = path.match(new RegExp(`/sandboxes/([^/]+)/${suffix}$`));
   return m ? m[1] : null;
@@ -261,9 +339,14 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
     const sessionToken = randomBytes(32).toString("base64url");
     const nearKey = env.NEARAI_CLOUD_API_KEY ?? "";
     if (!nearKey) throw new Error("NEARAI_CLOUD_API_KEY is not configured (Amplify secret)");
+    // Meta parsing utility key (document understanding only — never
+    // inference). Absent key = PDFs/images fail loudly per file, the run
+    // itself still boots.
+    const metaKey = env.PROVIDER_API_KEY ?? "";
     const hookRes = await vmFetch(endpoint, token, "/hooks/run", {
       sessionToken,
       aiCredentials: { provider: "near-ai", key: nearKey, model },
+      ...(metaKey ? { metaKey } : {}),
       policy: runPolicy,
       profile,
     });
@@ -277,8 +360,10 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
     if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
     // Sealed file intake (see sealSandboxFiles): the inner VM receives
     // sealed envelopes via /sync/in; the outer never handles anything
-    // it can't already read.
+    // it can't already read. stagedIds resolve S3-temp uploads (browser
+    // staged, outer-blind) and are deleted on consume.
     const sealed = sealSandboxFiles(deriveWorkspaceKey(sessionToken), body.fileInputs, body.fileEnvelopes);
+    sealed.push(...(await consumeStagedFiles(ownerId, (body as Record<string, unknown>).stagedIds, deriveWorkspaceKey(sessionToken))));
     await pushSealedFiles(endpoint, token, sessionToken, sealed);
     const provisionedAt = new Date().toISOString();
     try {
@@ -330,18 +415,18 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
 }
 
 // POST /sandboxes/:id/message — relay a call to the live inner VM.
-// Body: { sub? (default "exec"), body?, fileInputs? }. fileInputs are
-// sealed with the inner session key and pushed via /sync/in before the
-// relay — mid-run uploads to a live sandbox. A computer caller may only
-// reach sandboxes it spawned (parentComputerId binding); a user bearer
-// may reach any own row.
+// Body: { sub? (default "exec"), body?, fileInputs?, stagedIds? }.
+// fileInputs are sealed with the inner session key and pushed via /sync/in
+// before the relay (mid-run uploads); stagedIds resolve browser-staged temp
+// uploads the same way. A computer caller may only reach sandboxes it
+// spawned (parentComputerId binding); a user bearer may reach any own row.
 export async function handleSandboxesMessage(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path } = ctx;
   const sid = method === "POST" ? sandboxIdFor(path, "message") : null;
   if (!sid) return null;
-  let body: { computerId?: unknown; sub?: unknown; body?: unknown; fileInputs?: unknown } = {};
+  let body: { computerId?: unknown; sub?: unknown; body?: unknown; fileInputs?: unknown; stagedIds?: unknown } = {};
   try {
-    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; sub?: unknown; body?: unknown; fileInputs?: unknown };
+    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; sub?: unknown; body?: unknown; fileInputs?: unknown; stagedIds?: unknown };
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
@@ -354,9 +439,11 @@ export async function handleSandboxesMessage(ctx: Ctx): Promise<RouteResult> {
   if (auth.computerId && row.parentComputerId !== auth.computerId) {
     return json(403, { error: "this computer did not spawn that sandbox" });
   }
-  if (body.fileInputs !== undefined) {
+  if (body.fileInputs !== undefined || body.stagedIds !== undefined) {
     try {
-      const sealed = sealSandboxFiles(deriveWorkspaceKey(row.sessionToken), body.fileInputs, undefined);
+      const wsKey = deriveWorkspaceKey(row.sessionToken);
+      const sealed = sealSandboxFiles(wsKey, body.fileInputs, undefined);
+      sealed.push(...(await consumeStagedFiles(auth.ownerId, body.stagedIds, wsKey)));
       const endpoint = await waitForRunning(sid, 30_000);
       const token = await mintVmToken(sid, 30);
       await pushSealedFiles(endpoint, token, row.sessionToken, sealed);
@@ -548,63 +635,4 @@ export async function handleSandboxesTerminate(ctx: Ctx): Promise<RouteResult> {
   }
   const out = await closeSandbox(ownerId, actor, row, sid, typeof body.goalHash === "string" ? body.goalHash : null);
   return json(out.status, out.body);
-}
-
-// POST /sandboxes/:id/run — one-shot direct run for the composer sandbox
-// bar: bot_init → bot/message → closeout, all server-side in one call.
-// Body: { computerId?, goal, goalHash? }. The sandbox must already be
-// spawned (files ride the spawn call). Returns { result, evidence,
-// receipt, verified } — no polling, no frontend state machine.
-export async function handleSandboxesRun(ctx: Ctx): Promise<RouteResult> {
-  const { event, method, path } = ctx;
-  const sid = method === "POST" ? sandboxIdFor(path, "run") : null;
-  if (!sid) return null;
-  let body: { computerId?: unknown; goal?: unknown; goalHash?: unknown } = {};
-  try {
-    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; goal?: unknown; goalHash?: unknown };
-  } catch {
-    return json(400, { error: "Invalid JSON body" });
-  }
-  if (typeof body.goal !== "string" || !body.goal.trim()) {
-    return json(400, { error: "goal is required" });
-  }
-  const auth = await sandboxAuth(ctx, body);
-  if ("error" in auth) return json(auth.status, { error: auth.error });
-  const { ownerId, actor } = auth;
-  const row = await getOwnedSandbox(ownerId, sid);
-  if (!row || row.status !== "active" || !row.sessionToken) {
-    return json(410, { error: "sandbox is not live" });
-  }
-  if (auth.computerId && row.parentComputerId !== auth.computerId) {
-    return json(403, { error: "this computer did not spawn that sandbox" });
-  }
-  const goalHash = typeof body.goalHash === "string" ? body.goalHash : null;
-  const fail = async (why: string): Promise<RouteResult> => {
-    const out = await closeSandbox(ownerId, actor, row, sid, goalHash);
-    return json(502, { error: why, ...(out.body as Record<string, unknown>) });
-  };
-  try {
-    const init = (await relayToSandbox(sid, row.sessionToken, "bot/init", {
-      system: `Direct sandbox run. Goal sha256: ${goalHash ?? "n/a"}.`,
-      model: "Qwen/Qwen3.8-27B",
-    })) as { ok?: boolean; error?: string };
-    if (!init || init.ok !== true) {
-      return fail(`init failed: ${(init as { error?: string })?.error ?? "no ok from agent"}`);
-    }
-  } catch (err) {
-    return fail(`init failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  let result: unknown;
-  try {
-    const msg = (await relayToSandbox(sid, row.sessionToken, "bot/message", { content: body.goal })) as {
-      error?: string;
-    };
-    if (!msg || typeof msg !== "object") return fail("run returned no result");
-    result = msg;
-  } catch (err) {
-    return fail(`run failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  const out = await closeSandbox(ownerId, actor, row, sid, goalHash);
-  if (out.status !== 200) return json(out.status, { ...out.body, result });
-  return json(200, { ...(out.body as Record<string, unknown>), result });
 }

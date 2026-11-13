@@ -22,8 +22,8 @@ import {
 import {
   handleSandboxesList,
   handleSandboxesMessage,
-  handleSandboxesRun,
   handleSandboxesSpawn,
+  handleSandboxesStage,
   handleSandboxesTerminate,
 } from "./routes/sandboxes.js";
 import {
@@ -55,7 +55,7 @@ import { handleExportEvidence, handleImageTrustGet, handleImageTrustPublish } fr
 // Bump on every backend behavior change so we can verify what's deployed
 // (download the function bundle or hit /health — Amplify keeps stale code
 // live when a build fails, and nothing else surfaces that).
-const BACKEND_REV = "1.1.1+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions+conversations+modular-routes+signed-receipts+gated-routes+kind-provision+inner-sandboxes+sealed-intake+pregate-auth+sandbox-list";
+const BACKEND_REV = "1.1.1+relay+guarded-dedupe+usage-token+presigned-sync+no-store+cli-auth+sandbox+sessions+conversations+modular-routes+signed-receipts+gated-routes+kind-provision+inner-sandboxes+sealed-intake+pregate-auth+sandbox-list+staged-upload";
 
 export const handler = async (
   event: APIGatewayProxyEventV2,
@@ -80,9 +80,9 @@ export const handler = async (
       handleSyncUploadUrls,
       handleSyncDownloadUrls,
       handleSandboxesSpawn,
+      handleSandboxesStage,
       handleSandboxesList,
       handleSandboxesMessage,
-      handleSandboxesRun,
       handleSandboxesTerminate,
       handleAuthDevice,
       handleAuthDevicePoll,
