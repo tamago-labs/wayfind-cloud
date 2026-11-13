@@ -205,15 +205,19 @@ export async function handleSandboxesStage(ctx: Ctx): Promise<RouteResult> {
     }
     const fileId = randomBytes(16).toString("hex");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    await s3sync.send(
-      new PutObjectCommand({
-        Bucket: syncBucket,
-        Key: stagedKey(auth.ownerId, fileId),
-        Body: bytes,
-        ContentType: "application/octet-stream",
-        Metadata: { name: rel.slice(0, 256), sha256 },
-      }),
-    );
+    try {
+      await s3sync.send(
+        new PutObjectCommand({
+          Bucket: syncBucket,
+          Key: stagedKey(auth.ownerId, fileId),
+          Body: bytes,
+          ContentType: "application/octet-stream",
+          Metadata: { name: rel.slice(0, 256), sha256 },
+        }),
+      );
+    } catch (err) {
+      return json(502, { error: `staging upload failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) });
+    }
     staged.push({ fileId, name: rel, sha256, size: bytes.length });
   }
   return json(200, { staged });

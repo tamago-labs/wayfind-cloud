@@ -80,6 +80,17 @@ apiLambda.addToRolePolicy(
   }),
 );
 
+// Staged browser uploads (outer-blind escalation): browser PUTs via the
+// /sandboxes/stage route, the backend seals + pushes on spawn/message and
+// deletes on consume. Scoped to staging/* — never synced, never listed.
+apiLambda.addToRolePolicy(
+  new PolicyStatement({
+    effect: Effect.ALLOW,
+    actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+    resources: [`arn:aws:s3:::${workspaceBucket}/staging/*`],
+  }),
+);
+
 // Owner-stamp writes (see handler stampOwner): prefix-scoped, no data-stack
 // resource references — naming tables here would recreate the
 // data↔function circular dependency (allow.resource already edges
