@@ -122,6 +122,9 @@ const schema = a.schema({
       // "verified_inference"). Nullable — classic sandbox sessions predate it.
       parentComputerId: a.string(),
       policy: a.string(),
+      // Sandbox profile (PLAN-P2): review (read-only tools) or analysis
+      // (+exec). Nullable - rows provisioned before profiles predate it.
+      profile: a.string(),
     })
     .authorization((allow) => [
       allow.owner(),

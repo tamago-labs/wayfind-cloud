@@ -21,6 +21,7 @@ import {
 } from "./routes/sandbox.js";
 import {
   handleSandboxesMessage,
+  handleSandboxesRun,
   handleSandboxesSpawn,
   handleSandboxesTerminate,
 } from "./routes/sandboxes.js";
@@ -79,6 +80,7 @@ export const handler = async (
       handleSyncDownloadUrls,
       handleSandboxesSpawn,
       handleSandboxesMessage,
+      handleSandboxesRun,
       handleSandboxesTerminate,
       handleAuthDevice,
       handleAuthDevicePoll,

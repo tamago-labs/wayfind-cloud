@@ -13,6 +13,7 @@ import {
 } from "../lib/microvm.js";
 import { emitAudit } from "../lib/audit.js";
 import { signReceiptBody } from "../lib/receipts.js";
+import { loadPolicy } from "../lib/policy.js";
 import {
   deriveWorkspaceKey,
   sealWorkspaceFile,
@@ -76,6 +77,7 @@ interface SandboxRow {
   provisionedAt?: string | null;
   parentComputerId?: string | null;
   policy?: string | null;
+  profile?: string | null;
 }
 
 async function getOwnedSandbox(owner: string, sandboxId: string): Promise<SandboxRow | null> {
@@ -126,6 +128,24 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
   }
   const goalHash =
     typeof body.goalHash === "string" && body.goalHash ? body.goalHash : undefined;
+  // Policy is enforced INSIDE the sandbox (see packages/sandbox): the run
+  // policy rides in /hooks/run and the image refuses to violate it —
+  // no attestation, no run; model outside the allowlist, no inference.
+  // Spawn stays dumb on purpose: a creation-time gate here would be
+  // bypassable by anyone who can call RunMicrovm; in-image enforcement
+  // is not. The owner's allowed-models list is passed down (not gated
+  // on) so the image enforces the owner's own rule.
+  const ownerPolicy = await loadPolicy(ownerId);
+  const runPolicy = {
+    securityLevel: "verified_inference",
+    allowedModels: ownerPolicy.allowedModels.length > 0 ? ownerPolicy.allowedModels : [model],
+  };
+  // Sandbox profile: review (read-only tools, cheapest) or analysis (+exec).
+  // Same image today; the image gates tool registration on the boot profile.
+  const profile = typeof body.profile === "string" && body.profile ? body.profile : "analysis";
+  if (profile !== "review" && profile !== "analysis") {
+    return json(400, { error: "profile must be review | analysis" });
+  }
   let idleTtl = 1800;
   if (typeof body.idleTtlSeconds === "number" && Number.isFinite(body.idleTtlSeconds)) {
     idleTtl = Math.min(28_800, Math.max(300, Math.floor(body.idleTtlSeconds)));
@@ -162,6 +182,8 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
     const hookRes = await vmFetch(endpoint, token, "/hooks/run", {
       sessionToken,
       aiCredentials: { provider: "near-ai", key: nearKey, model },
+      policy: runPolicy,
+      profile,
     });
     if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
     const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
@@ -216,6 +238,7 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
         lastUsedAt: provisionedAt,
         parentComputerId: computerId ?? undefined,
         policy: "verified_inference",
+        profile,
       });
       if (errors || !row) throw new Error(JSON.stringify(errors));
       await stampOwner("SandboxSession", (row as unknown as { id: string }).id, ownerId);
@@ -229,12 +252,16 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
       model,
       provider: curated.provider,
       files: sealed.length,
+      runPolicy,
+      profile,
     });
     return json(200, {
       sandboxId: run.microvmId,
       model,
       provider: curated.provider,
       securityLevel: "verified_inference",
+      policy: runPolicy,
+      profile,
       provisionedAt,
     });
   } catch (err) {
@@ -273,69 +300,83 @@ export async function handleSandboxesMessage(ctx: Ctx): Promise<RouteResult> {
   }
   const sub = typeof body.sub === "string" && body.sub ? body.sub.replace(/^\/+/, "") : "exec";
   if (!/^[A-Za-z0-9/_-]+$/.test(sub)) return json(400, { error: "bad relay sub-path" });
+  void touchSession(row.id);
+  try {
+    const data = await relayToSandbox(sid, row.sessionToken, sub, body.body);
+    return json(200, { result: data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const m = msg.match(/^(\d+):\s*(.*)$/);
+    const status = m ? Number(m[1]) : 502;
+    if (status === 410) {
+      try {
+        await dataClient.models.SandboxSession.update({ id: row.id, status: "terminated" });
+      } catch { /* best-effort heal */ }
+      return json(410, { error: "that sandbox no longer exists" });
+    }
+    if (status === 502 && /microvm token mint|agent unreachable|non-JSON/.test(msg)) {
+      return json(502, { error: (m?.[2] ?? msg).slice(0, 300) });
+    }
+    return json(status >= 400 && status < 600 ? status : 502, { error: (m?.[2] ?? msg).slice(0, 300) });
+  }
+}
+
+// Shared relay: POST a sub-call to the live inner VM. Returns the parsed
+// upstream body or throws with a status-coded message.
+async function relayToSandbox(
+  sid: string,
+  sessionToken: string,
+  sub: string,
+  body: unknown,
+): Promise<unknown> {
   let endpoint: string;
   try {
     endpoint = await waitForRunning(sid, 30_000);
   } catch {
-    return json(410, { error: "that sandbox no longer exists" });
+    throw new Error("410: that sandbox no longer exists");
   }
   let token: string;
   try {
     token = await mintVmToken(sid, 30);
   } catch {
-    return json(502, { error: "microvm token mint failed" });
+    throw new Error("502: microvm token mint failed");
   }
-  void touchSession(row.id);
   let upstream: Response;
   try {
     upstream = await fetch(`https://${endpoint}/${sub}`, {
       method: "POST",
       headers: {
         "X-aws-proxy-auth": token,
-        Authorization: `Bearer ${row.sessionToken}`,
+        Authorization: `Bearer ${sessionToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify((body.body as Record<string, unknown> | undefined) ?? {}),
+      body: JSON.stringify((body as Record<string, unknown> | undefined) ?? {}),
     });
   } catch (err) {
-    return json(502, { error: `agent unreachable: ${err instanceof Error ? err.message : String(err)}` });
+    throw new Error(`502: agent unreachable: ${err instanceof Error ? err.message : String(err)}`);
   }
   const text = await upstream.text();
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    return json(502, { error: "agent returned non-JSON" });
+    throw new Error("502: agent returned non-JSON");
   }
-  if (!upstream.ok) return json(upstream.status, { error: (data as { error?: string } | null)?.error ?? `agent → ${upstream.status}` });
-  return json(200, { result: data });
+  if (!upstream.ok) {
+    throw new Error(`${upstream.status}: ${(data as { error?: string } | null)?.error ?? `agent → ${upstream.status}`}`);
+  }
+  return data;
 }
 
-// POST /sandboxes/:id/terminate — close now. Final sealed snapshot +
-// evidence pull first (returned inline so the outer stores the evidence),
-// then verified kill, row marked terminated, signed receipt v0.
-// The receipt binds { parentComputerId, sandboxId, goalHash } — nesting
-// proof. Body: { computerId?, goalHash? } (goalHash echoes the spawn
-// binding into the receipt; spawn-time audit carries it regardless).
-export async function handleSandboxesTerminate(ctx: Ctx): Promise<RouteResult> {
-  const { event, method, path } = ctx;
-  const sid = method === "POST" ? sandboxIdFor(path, "terminate") : null;
-  if (!sid) return null;
-  let body: { computerId?: unknown; goalHash?: unknown } = {};
-  try {
-    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; goalHash?: unknown };
-  } catch {
-    return json(400, { error: "Invalid JSON body" });
-  }
-  const auth = await sandboxAuth(ctx, body);
-  if ("error" in auth) return json(auth.status, { error: auth.error });
-  const { ownerId, actor } = auth;
-  const row = await getOwnedSandbox(ownerId, sid);
-  if (!row) return json(404, { error: "sandbox not found" });
-  if (row.status !== "active") return json(200, { ok: true, alreadyClosed: true });
-  if (auth.computerId && row.parentComputerId !== auth.computerId) {
-    return json(403, { error: "this computer did not spawn that sandbox" });
-  }
+// Shared closeout: final sealed snapshot + evidence pull, verified kill,
+// row marked terminated, signed receipt. Used by terminate and run.
+async function closeSandbox(
+  ownerId: string,
+  actor: string,
+  row: SandboxRow,
+  sid: string,
+  goalHash: string | null,
+): Promise<{ status: number; body: Record<string, unknown> }> {
   let finalEvidence: unknown = null;
   let finalSnapshot: { recorded: boolean; seq?: number; sha256?: string; error?: string } = { recorded: false };
   if (row.sessionToken) {
@@ -385,7 +426,7 @@ export async function handleSandboxesTerminate(ctx: Ctx): Promise<RouteResult> {
     kind: "inner-sandbox",
     sandboxId: sid,
     parentComputerId: row.parentComputerId ?? null,
-    goalHash: typeof body.goalHash === "string" ? body.goalHash : null,
+    goalHash: goalHash,
     model: "Qwen/Qwen3.8-27B",
     provider: "near-ai",
     securityLevel: "verified_inference",
@@ -412,8 +453,92 @@ export async function handleSandboxesTerminate(ctx: Ctx): Promise<RouteResult> {
       throw new Error(`row update rejected: ${JSON.stringify(updateErrors)}`);
     }
   } catch (err) {
-    return json(500, { error: `VM ${verified ? "terminated" : "kill unverified"} but row update failed: ${err instanceof Error ? err.message : String(err)}`, receipt });
+    return { status: 500, body: { error: `VM ${verified ? "terminated" : "kill unverified"} but row update failed: ${err instanceof Error ? err.message : String(err)}`, receipt } };
   }
   void emitAudit(ownerId, actor, "sandbox.terminated", sid, { verified, receiptClass: receipt.class });
-  return json(200, { ok: true, verified, receipt, result: null, evidence: finalEvidence });
+  return { status: 200, body: { ok: true, verified, receipt, result: null, evidence: finalEvidence } };
+}
+
+// POST /sandboxes/:id/terminate — close now (see closeSandbox).
+// Body: { computerId?, goalHash? }.
+export async function handleSandboxesTerminate(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path } = ctx;
+  const sid = method === "POST" ? sandboxIdFor(path, "terminate") : null;
+  if (!sid) return null;
+  let body: { computerId?: unknown; goalHash?: unknown } = {};
+  try {
+    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; goalHash?: unknown };
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+  const auth = await sandboxAuth(ctx, body);
+  if ("error" in auth) return json(auth.status, { error: auth.error });
+  const { ownerId, actor } = auth;
+  const row = await getOwnedSandbox(ownerId, sid);
+  if (!row) return json(404, { error: "sandbox not found" });
+  if (row.status !== "active") return json(200, { ok: true, alreadyClosed: true });
+  if (auth.computerId && row.parentComputerId !== auth.computerId) {
+    return json(403, { error: "this computer did not spawn that sandbox" });
+  }
+  const out = await closeSandbox(ownerId, actor, row, sid, typeof body.goalHash === "string" ? body.goalHash : null);
+  return json(out.status, out.body);
+}
+
+// POST /sandboxes/:id/run — one-shot direct run for the composer sandbox
+// bar: bot_init → bot/message → closeout, all server-side in one call.
+// Body: { computerId?, goal, goalHash? }. The sandbox must already be
+// spawned (files ride the spawn call). Returns { result, evidence,
+// receipt, verified } — no polling, no frontend state machine.
+export async function handleSandboxesRun(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path } = ctx;
+  const sid = method === "POST" ? sandboxIdFor(path, "run") : null;
+  if (!sid) return null;
+  let body: { computerId?: unknown; goal?: unknown; goalHash?: unknown } = {};
+  try {
+    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; goal?: unknown; goalHash?: unknown };
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+  if (typeof body.goal !== "string" || !body.goal.trim()) {
+    return json(400, { error: "goal is required" });
+  }
+  const auth = await sandboxAuth(ctx, body);
+  if ("error" in auth) return json(auth.status, { error: auth.error });
+  const { ownerId, actor } = auth;
+  const row = await getOwnedSandbox(ownerId, sid);
+  if (!row || row.status !== "active" || !row.sessionToken) {
+    return json(410, { error: "sandbox is not live" });
+  }
+  if (auth.computerId && row.parentComputerId !== auth.computerId) {
+    return json(403, { error: "this computer did not spawn that sandbox" });
+  }
+  const goalHash = typeof body.goalHash === "string" ? body.goalHash : null;
+  const fail = async (why: string): Promise<RouteResult> => {
+    const out = await closeSandbox(ownerId, actor, row, sid, goalHash);
+    return json(502, { error: why, ...(out.body as Record<string, unknown>) });
+  };
+  try {
+    const init = (await relayToSandbox(sid, row.sessionToken, "bot/init", {
+      system: `Direct sandbox run. Goal sha256: ${goalHash ?? "n/a"}.`,
+      model: "Qwen/Qwen3.8-27B",
+    })) as { ok?: boolean; error?: string };
+    if (!init || init.ok !== true) {
+      return fail(`init failed: ${(init as { error?: string })?.error ?? "no ok from agent"}`);
+    }
+  } catch (err) {
+    return fail(`init failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let result: unknown;
+  try {
+    const msg = (await relayToSandbox(sid, row.sessionToken, "bot/message", { content: body.goal })) as {
+      error?: string;
+    };
+    if (!msg || typeof msg !== "object") return fail("run returned no result");
+    result = msg;
+  } catch (err) {
+    return fail(`run failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const out = await closeSandbox(ownerId, actor, row, sid, goalHash);
+  if (out.status !== 200) return json(out.status, { ...out.body, result });
+  return json(200, { ...(out.body as Record<string, unknown>), result });
 }
