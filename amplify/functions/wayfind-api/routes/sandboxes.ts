@@ -86,9 +86,91 @@ async function getOwnedSandbox(owner: string, sandboxId: string): Promise<Sandbo
   return row ?? null;
 }
 
+function cleanSandboxPath(p: unknown): string | null {
+  if (typeof p !== "string" || !p || p.length > 256) return null;
+  const parts = p.split("/").filter((s) => s !== "" && s !== ".");
+  if (parts.length === 0 || parts.some((s) => s === ".." || s === ".wayfind")) return null;
+  return parts.join("/");
+}
+
+interface SealedFile {
+  path: string;
+  sha256: string;
+  nonce: string;
+  data: string;
+}
+
+// Seal caller-supplied plaintext inputs + pre-sealed envelopes into the
+// inner-VM /sync/in shape. Plaintext lives only in this Lambda's memory.
+function sealSandboxFiles(
+  wsKey: Buffer,
+  fileInputs: unknown,
+  fileEnvelopes: unknown,
+): SealedFile[] {
+  const sealed: SealedFile[] = [];
+  const inputs = Array.isArray(fileInputs) ? fileInputs : [];
+  if (inputs.length > 20) throw new Error("fileInputs: max 20 files");
+  for (const f of inputs as Array<{ path?: unknown; contentBase64?: unknown }>) {
+    const rel = cleanSandboxPath(f?.path);
+    if (!rel) throw new Error("fileInputs: bad path (jailed, no .wayfind)");
+    if (typeof f?.contentBase64 !== "string") throw new Error("fileInputs: contentBase64 required");
+    const bytes = Buffer.from(f.contentBase64, "base64");
+    if (bytes.length > 10 * 1024 * 1024) throw new Error(`fileInputs: ${rel} exceeds 10MB`);
+    const s = sealWorkspaceFile(wsKey, rel, bytes);
+    sealed.push({ path: rel, ...s });
+  }
+  const preSealed = Array.isArray(fileEnvelopes) ? fileEnvelopes : [];
+  for (const e of preSealed as Array<{ path?: unknown; sha256?: string; nonce?: string; data?: string }>) {
+    const rel = cleanSandboxPath(e?.path);
+    if (!rel || typeof e?.sha256 !== "string" || typeof e?.nonce !== "string" || typeof e?.data !== "string") {
+      throw new Error("fileEnvelopes: each needs { path, sha256, nonce, data }");
+    }
+    sealed.push({ path: rel, sha256: e.sha256, nonce: e.nonce, data: e.data });
+  }
+  return sealed;
+}
+
+async function pushSealedFiles(
+  endpoint: string,
+  token: string,
+  sessionToken: string,
+  sealed: SealedFile[],
+): Promise<void> {
+  if (sealed.length === 0) return;
+  const push = await vmFetch(endpoint, token, "/sync/in", { files: sealed }, sessionToken);
+  if (!push.ok) throw new Error(`/sync/in → ${push.status}: ${(await push.text()).slice(0, 200)}`);
+}
+
 function sandboxIdFor(path: string, suffix: string): string | null {
   const m = path.match(new RegExp(`/sandboxes/([^/]+)/${suffix}$`));
   return m ? m[1] : null;
+}
+
+// GET /sandboxes[?computerId=] — live inner sandboxes for the composer
+// picker and the Sandboxes panel. User bearer → own active rows; usage
+// token (+computerId) → that computer's active runs. Metadata only —
+// no bearer, no endpoint, no session token ever leaves the control plane.
+export async function handleSandboxesList(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path } = ctx;
+  if (!path.endsWith("/sandboxes") || method !== "GET" || path.includes("/sandboxes/")) return null;
+  const qs = new URLSearchParams(event.rawQueryString ?? "");
+  const qComputer = qs.get("computerId") ?? undefined;
+  const auth = await sandboxAuth(ctx, qComputer ? { computerId: qComputer } : {});
+  if ("error" in auth) return json(auth.status, { error: auth.error });
+  if (!auth.ownerId) return json(401, { error: "unauthorized: no owner" });
+  const { data } = await dataClient.models.SandboxSession.sandboxSessionsByOwnerId({ ownerId: auth.ownerId });
+  const items = ((data ?? []) as unknown as SandboxRow[])
+    .filter((r) => r.status === "active")
+    .filter((r) => !auth.computerId || r.parentComputerId === auth.computerId)
+    .map((r) => ({
+      sandboxId: r.sandboxId,
+      profile: r.profile ?? "analysis",
+      policy: r.policy ?? "verified_inference",
+      parentComputerId: r.parentComputerId ?? null,
+      provisionedAt: r.provisionedAt ?? null,
+      lastUsedAt: (r as { lastUsedAt?: string | null }).lastUsedAt ?? null,
+    }));
+  return json(200, { sandboxes: items });
 }
 
 // POST /sandboxes — spawn an inner sandbox.
@@ -186,46 +268,18 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
       profile,
     });
     if (!hookRes.ok) throw new Error(`/hooks/run → ${hookRes.status}: ${(await hookRes.text()).slice(0, 200)}`);
-    const smokeRes = await vmFetch(endpoint, token, "/exec", { cmd: "true" }, sessionToken);
+    // Smoke: prove the fresh session bearer works. Review profile disables
+    // exec by design, so smoke it with a read-path call instead.
+    const smokeRes =
+      profile === 'review'
+        ? await vmFetch(endpoint, token, '/glob', { pattern: '*' }, sessionToken)
+        : await vmFetch(endpoint, token, '/exec', { cmd: 'true' }, sessionToken);
     if (!smokeRes.ok) throw new Error(`/exec smoke → ${smokeRes.status}`);
-    // Sealed file intake. Two shapes, same destination:
-    // - fileInputs (plaintext from the outer, which legitimately holds
-    //   these bytes): sealed HERE with the inner session-derived workspace
-    //   key. Plaintext lives only in this Lambda's memory, never persisted.
-    // - fileEnvelopes (pre-sealed by a caller that holds the key).
-    // Either way the inner VM receives sealed envelopes via /sync/in, and
-    // the outer never handles anything it can't already read.
-    const wsKey = deriveWorkspaceKey(sessionToken);
-    const sealed: Array<{ path: string; sha256: string; nonce: string; data: string }> = [];
-    const cleanPath = (p: unknown): string | null => {
-      if (typeof p !== "string" || !p || p.length > 256) return null;
-      const parts = p.split("/").filter((s) => s !== "" && s !== ".");
-      if (parts.length === 0 || parts.some((s) => s === ".." || s === ".wayfind")) return null;
-      return parts.join("/");
-    };
-    const inputs = Array.isArray(body.fileInputs) ? body.fileInputs : [];
-    if (inputs.length > 20) throw new Error("fileInputs: max 20 files");
-    for (const f of inputs as Array<{ path?: unknown; contentBase64?: unknown }>) {
-      const rel = cleanPath(f?.path);
-      if (!rel) throw new Error("fileInputs: bad path (jailed, no .wayfind)");
-      if (typeof f?.contentBase64 !== "string") throw new Error("fileInputs: contentBase64 required");
-      const bytes = Buffer.from(f.contentBase64, "base64");
-      if (bytes.length > 10 * 1024 * 1024) throw new Error(`fileInputs: ${rel} exceeds 10MB`);
-      const s = sealWorkspaceFile(wsKey, rel, bytes);
-      sealed.push({ path: rel, ...s });
-    }
-    const preSealed = Array.isArray(body.fileEnvelopes) ? body.fileEnvelopes : [];
-    for (const e of preSealed as Array<{ path?: unknown; sha256?: string; nonce?: string; data?: string }>) {
-      const rel = cleanPath(e?.path);
-      if (!rel || typeof e?.sha256 !== "string" || typeof e?.nonce !== "string" || typeof e?.data !== "string") {
-        throw new Error("fileEnvelopes: each needs { path, sha256, nonce, data }");
-      }
-      sealed.push({ path: rel, sha256: e.sha256, nonce: e.nonce, data: e.data });
-    }
-    if (sealed.length > 0) {
-      const push = await vmFetch(endpoint, token, "/sync/in", { files: sealed }, sessionToken);
-      if (!push.ok) throw new Error(`/sync/in → ${push.status}: ${(await push.text()).slice(0, 200)}`);
-    }
+    // Sealed file intake (see sealSandboxFiles): the inner VM receives
+    // sealed envelopes via /sync/in; the outer never handles anything
+    // it can't already read.
+    const sealed = sealSandboxFiles(deriveWorkspaceKey(sessionToken), body.fileInputs, body.fileEnvelopes);
+    await pushSealedFiles(endpoint, token, sessionToken, sealed);
     const provisionedAt = new Date().toISOString();
     try {
       const { data: row, errors } = await dataClient.models.SandboxSession.create({
@@ -276,16 +330,18 @@ export async function handleSandboxesSpawn(ctx: Ctx): Promise<RouteResult> {
 }
 
 // POST /sandboxes/:id/message — relay a call to the live inner VM.
-// Body: { sub? (default "exec"), body? }. A computer caller may only reach
-// sandboxes it spawned (parentComputerId binding); a user bearer may reach
-// any own row.
+// Body: { sub? (default "exec"), body?, fileInputs? }. fileInputs are
+// sealed with the inner session key and pushed via /sync/in before the
+// relay — mid-run uploads to a live sandbox. A computer caller may only
+// reach sandboxes it spawned (parentComputerId binding); a user bearer
+// may reach any own row.
 export async function handleSandboxesMessage(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path } = ctx;
   const sid = method === "POST" ? sandboxIdFor(path, "message") : null;
   if (!sid) return null;
-  let body: { computerId?: unknown; sub?: unknown; body?: unknown } = {};
+  let body: { computerId?: unknown; sub?: unknown; body?: unknown; fileInputs?: unknown } = {};
   try {
-    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; sub?: unknown; body?: unknown };
+    body = JSON.parse(event.body ?? "{}") as { computerId?: unknown; sub?: unknown; body?: unknown; fileInputs?: unknown };
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
@@ -297,6 +353,16 @@ export async function handleSandboxesMessage(ctx: Ctx): Promise<RouteResult> {
   }
   if (auth.computerId && row.parentComputerId !== auth.computerId) {
     return json(403, { error: "this computer did not spawn that sandbox" });
+  }
+  if (body.fileInputs !== undefined) {
+    try {
+      const sealed = sealSandboxFiles(deriveWorkspaceKey(row.sessionToken), body.fileInputs, undefined);
+      const endpoint = await waitForRunning(sid, 30_000);
+      const token = await mintVmToken(sid, 30);
+      await pushSealedFiles(endpoint, token, row.sessionToken, sealed);
+    } catch (err) {
+      return json(400, { error: `file intake failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300) });
+    }
   }
   const sub = typeof body.sub === "string" && body.sub ? body.sub.replace(/^\/+/, "") : "exec";
   if (!/^[A-Za-z0-9/_-]+$/.test(sub)) return json(400, { error: "bad relay sub-path" });
