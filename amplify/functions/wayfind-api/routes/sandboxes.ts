@@ -168,11 +168,13 @@ async function consumeStagedFiles(ownerId: string, stagedIds: unknown, wsKey: Bu
       bytes = Buffer.from(await (got.Body as unknown as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray());
       name = ((got.Metadata?.name as string | undefined) ?? fileId).slice(0, 256);
     } catch (err) {
-      const code = (err as { name?: string })?.name ?? '';
-      if (code.includes('NoSuchKey') || code.includes('NotFound')) {
-        // Single-use refs: already consumed (or never staged). The model
-        // must ask the user to re-attach — retrying the same id can never
-        // succeed, so say so explicitly instead of a generic failure.
+      const code = (err as { name?: string; Code?: string })?.name ?? (err as { Code?: string })?.Code ?? '';
+      // S3 masks a missing key as 403 AccessDenied when the caller lacks
+      // ListBucket (which our role deliberately does not have) — so a
+      // consumed/expired staged id surfaces as AccessDenied, not NoSuchKey.
+      // In all these cases the bytes are gone and retrying is pointless:
+      // tell the caller to re-attach instead of looping.
+      if (/NoSuchKey|NotFound|AccessDenied|NoSuchBucket/i.test(code)) {
         throw new Error(`staged file ${fileId} no longer available (already used or expired) — ask the user to re-attach the file`);
       }
       throw err;
