@@ -25,7 +25,8 @@ export type ConnectorCategory =
   | 'Development'
   | 'Ecommerce'
   | 'Web3'
-  | 'Solana';
+  | 'Solana'
+  | 'Mezo';
 
 export interface Connector {
   name: string;

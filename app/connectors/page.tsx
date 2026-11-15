@@ -25,6 +25,7 @@ const CATEGORY_ICON: Record<ConnectorCategory, typeof Briefcase> = {
   Ecommerce: ShoppingBag,
   Web3: Coins,
   Solana: Coins,
+  Mezo: Coins,
 };
 
 const STATUS_STYLE: Record<ConnectorStatus, string> = {
