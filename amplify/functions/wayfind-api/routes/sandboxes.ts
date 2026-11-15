@@ -594,6 +594,9 @@ async function closeSandbox(
     verified = false;
   }
   const terminatedAt = new Date().toISOString();
+  // Model actually used: the attested preflight model (signature-bound),
+  // not a hardcoded default — the picker can select any curated model.
+  const attestedModel = (finalEvidence as { botEvidence?: { preflight?: { model?: string } } } | null)?.botEvidence?.preflight?.model;
   const receipt: Record<string, unknown> = {
     version: "wayfind-receipt/v0",
     class: "signed",
@@ -601,7 +604,7 @@ async function closeSandbox(
     sandboxId: sid,
     parentComputerId: row.parentComputerId ?? null,
     goalHash: goalHash,
-    model: "Qwen/Qwen3.8-27B",
+    model: typeof attestedModel === "string" && attestedModel ? attestedModel : "Qwen/Qwen3.8-27B",
     provider: "near-ai",
     securityLevel: "verified_inference",
     policy: row.policy ?? "verified_inference",
