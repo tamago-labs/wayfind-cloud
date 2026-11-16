@@ -3,10 +3,15 @@
 # itself carries code + catalog only, never keys.
 FROM node:24-alpine
 
+RUN apk add --no-cache bash python3 make g++
+
 WORKDIR /srv/computer
 
 COPY package.json ./
 COPY node_modules ./node_modules
+# node-pty ships a Windows/macOS prebuild from the local stage install —
+# recompile for this image's arch/libc so the binding always matches.
+RUN npm rebuild node-pty --build-from-source && apk del python3 make g++
 COPY dist ./dist
 COPY workspace ./workspace
 

@@ -19,13 +19,16 @@
     "@openai/agents": "^0.18.0",
     "@openai/agents-openai": "^0.18.0",
     "dotenv": "^17.4.2",
+    "node-pty": "^1.1.0",
     "openai": "^7.10.0",
     "turndown": "^7.2.4",
+    "ws": "^8.23.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.2",
     "tsx": "^4.19.0",
     "typescript": "^5.6.2"
   }

@@ -18,6 +18,7 @@ import { reportUsage } from './runs/usage.js';
 import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview, scanLocalSkills, validateSkillPreview } from './agent/skills.js';
 import { listMcpServers, patchMcpServer, removeMcpServer, restartMcpServer, saveMcpServer } from './agent/mcp.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
+import { attachTerminalServer, killAllTerminals } from './terminal/terminal.js';
 
 /** Browser origin for local dev (Amplify dev server). Loosen only for local. */
 const CORS_ORIGIN = process.env.AGENT_CORS_ORIGIN ?? '*';
@@ -129,6 +130,7 @@ async function doResume(): Promise<{ ok: boolean; pulled?: number; skipped?: num
 }
 
 async function doTerminate(): Promise<{ ok: boolean }> {
+  killAllTerminals();
   const ctx = syncCtx();
   if (ctx) {
     try {
@@ -863,10 +865,11 @@ requireApiKeyOptIn();
 initProvider();
 const server = createServer((req, res) => {
   void handle(req, res).catch((err: unknown) => {
-    console.error('request failed:', err);
+    console.error('request failed:', err instanceof Error ? err.message : String(err));
     if (!res.headersSent) json(res, 500, { error: 'internal error' });
   });
 });
+attachTerminalServer(server);
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`port ${PORT} is already in use — an old server is still running. Kill it first (it keeps serving STALE code).`);
