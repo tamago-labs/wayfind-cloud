@@ -756,6 +756,16 @@ function makeMessageRunner(runState: Run): MessageRunner {
  * either done (finalOutput + usage) or parked (interruptions saved). */
 async function driveStream(runState: Run, stream: unknown, startedAt: number): Promise<string> {
   const seenTypes = process.env.WAYFIND_DEBUG_EVENTS === '1' ? new Set<string>() : null;
+  let result = stream as unknown as {
+    finalOutput?: unknown;
+    rawResponses?: unknown;
+    interruptions?: Array<{
+      rawItem: { callId?: string; name?: string; arguments?: string };
+      agent?: { name?: string };
+    }>;
+    state: { toString(): string };
+  };
+  try {
   for await (const event of stream as unknown as Iterable<{
     type: string;
     name?: string;
@@ -782,15 +792,16 @@ async function driveStream(runState: Run, stream: unknown, startedAt: number): P
       appendTranscript(runState.id, 'tool', event.agent.name, runState.parentId, runState.conversationId);
     }
   }
-  const result = stream as unknown as {
-    finalOutput?: unknown;
-    rawResponses?: unknown;
-    interruptions?: Array<{
-      rawItem: { callId?: string; name?: string; arguments?: string };
-      agent?: { name?: string };
-    }>;
-    state: { toString(): string };
-  };
+  } catch (err) {
+    // Some gateways (e.g. NEAR) return usage shapes the SDK can't parse —
+    // the throw lands here after the text already streamed. Recover the
+    // streamed text instead of failing the run; usage stays unmetered
+    // (sumResponseTokens finds nothing to sum).
+    const recovered = runState.events.filter((e) => e.type === 'chunk').map((e) => e.chunk ?? '').join('');
+    if (!recovered) throw err;
+    console.error(`[runner] stream finalize failed (${err instanceof Error ? err.message.slice(0, 120) : String(err).slice(0, 120)}); recovered ${recovered.length} chars from chunks`);
+    result = { finalOutput: recovered, rawResponses: [], interruptions: [], state: { toString: () => '' } };
+  }
   if (result.interruptions?.length) {
     runState.interruptions = result.interruptions.map((i) => {
       const toolName = i.rawItem.name ?? i.agent?.name ?? 'tool';

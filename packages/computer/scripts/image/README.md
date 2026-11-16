@@ -10,7 +10,7 @@ cp packages/computer/scripts/image/.env.example packages/computer/scripts/image/
 npx tsx packages/computer/scripts/image/01-package-upload.ts   # build dist + stage + zip + S3
 npx tsx packages/computer/scripts/image/02-create-image.ts      # build image, poll to CREATED
 # manual boot (Phase 3):
-$env:MODAL_API_KEY='...'; $env:PROVIDER_API_KEY='...'  # this shell only, never committed
+$env:MODAL_API_KEY='...'; $env:PROVIDER_API_KEY='...'; $env:NEARAI_CLOUD_API_KEY='...'  # this shell only, never committed
 npx tsx packages/computer/scripts/image/03-run-computer.ts      # run VM + /run identity + cloud chat test
 ```
 
@@ -23,7 +23,7 @@ npx tsx packages/computer/scripts/image/03-run-computer.ts      # run VM + /run 
 ## Secrets rule
 
 **The image carries zero keys.** No `.env`, no `keystore`, no baked secrets.
-`MODAL_API_KEY` / `PROVIDER_API_KEY` are injected per-VM at `/run` (Phase 2 hooks),
+`MODAL_API_KEY` / `PROVIDER_API_KEY` / `NEARAI_CLOUD_API_KEY` are injected per-VM at `/run` (Phase 2 hooks),
 sourced from Amplify secrets. If you can read a key out of the zip or the image,
 the pipeline is broken — fix it before Phase 3.
 

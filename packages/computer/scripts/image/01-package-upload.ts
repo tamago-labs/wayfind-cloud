@@ -21,7 +21,7 @@ function sh(cmd: string, cwd: string): void {
 
 async function main(): Promise<void> {
   // 1. Compile the agent server (single source of truth: packages/computer/src).
-  sh('npm run build --workspace=wayfind-computer', '.');
+  sh('npm run build --prefix packages/computer', '.');
 
   // 2. Fresh production-only install into the stage dir.
   rmSync(STAGE, { recursive: true, force: true });

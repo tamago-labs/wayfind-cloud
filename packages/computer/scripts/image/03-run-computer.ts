@@ -33,6 +33,7 @@ async function vmFetch(endpoint: string, token: string, path: string, init?: Req
 async function main(): Promise<void> {
   const modalKey = needEnv('MODAL_API_KEY');
   const metaKey = needEnv('PROVIDER_API_KEY');
+  const nearKey = needEnv('NEARAI_CLOUD_API_KEY');
   const { imageArn } = loadState();
   if (!imageArn) {
     console.error('No imageArn in state — run 02-create-image.ts first.');
@@ -94,7 +95,7 @@ async function main(): Promise<void> {
     body: JSON.stringify({
       ownerId,
       computerId,
-      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey },
+      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey, NEARAI_CLOUD_API_KEY: nearKey },
       ...(bucket && prefix ? { workspace: { bucket, prefix } } : {}),
     }),
   });

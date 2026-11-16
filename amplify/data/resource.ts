@@ -24,6 +24,10 @@ const schema = a.schema({
       displayName: a.string(), // profile name the user sets; Bots address them by this
       region: a.string(),
       plan: a.enum(["free", "starter", "premium", "enterprise"]),
+      // Default inference model for this user's bots (e.g. "Qwen/Qwen3.8-27B").
+      // Bots without their own `model` fall back to this. Nullable — unset
+      // means "backend curated default".
+      defaultModel: a.string(),
       bots: a.hasMany("Bot", "userProfileId"),
       computer: a.hasOne("Computer", "userProfileId"),
     })
@@ -43,6 +47,11 @@ const schema = a.schema({
       skillsEnabled: a.string().array(), // absent = all installed skills enabled; otherwise an allowlist of skill names
       mcpEnabled: a.string().array(), // absent = all active MCP servers enabled; otherwise an allowlist of server names
       description: a.string(), // the durable "your job is…" brief
+      // Per-bot inference model override (e.g. "z-ai/glm-5.3-flash").
+      // Nullable — falls back to the owner's UserProfile.defaultModel,
+      // then the backend curated default. Plain string on purpose: the
+      // computer matches it at runtime, so new models need no enum deploy.
+      model: a.string(),
       color: a.string(),
       shape: a.string(),
       status: a.enum(["active", "paused"]),

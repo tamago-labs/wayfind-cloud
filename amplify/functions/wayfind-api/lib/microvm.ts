@@ -300,7 +300,8 @@ export async function provisionComputer(
     // API (usage + presigned sync) without the backend knowing its own URL.
     const modalKey = env.MODAL_API_KEY;
     const metaKey = env.PROVIDER_API_KEY;
-    if (!modalKey || !metaKey) throw new Error("provider API keys are not configured (Amplify secrets)");
+    const nearKey = env.NEARAI_CLOUD_API_KEY;
+    if (!modalKey || !metaKey || !nearKey) throw new Error("provider API keys are not configured (Amplify secrets)");
     const usageToken = randomUUID();
     await dataClient.models.Computer.update({ id: computerId, usageToken });
     const computerApi = (env.COMPUTER_API_URL ?? "").replace(/\/+$/, "");
@@ -308,7 +309,7 @@ export async function provisionComputer(
       ownerId,
       computerId,
       kind,
-      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey },
+      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey, NEARAI_CLOUD_API_KEY: nearKey },
       usageToken,
       ...(computerApi ? { apiUrl: computerApi } : {}),
       ...(bucket ? { workspace: { bucket, prefix } } : {}),
