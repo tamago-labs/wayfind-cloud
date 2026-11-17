@@ -129,8 +129,10 @@ export const handler = async (
       handleComputerProvision,
       handleComputerAction,
       handleComputerToken,
-      handleComputerProxy,
+      // Specific /computer/proxy/* routes BEFORE the proxy catch-all —
+      // handleComputerProxy relays everything unmatched to the agent.
       handlePreviewToken,
+      handleComputerProxy,
       handleChatMessage,
       handlePolicyGet,
       handlePolicyPut,
