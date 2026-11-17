@@ -273,7 +273,13 @@ export async function handleComputerProxy(ctx: Ctx, previewSig?: string): Promis
   const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
   return {
     statusCode: upstream.status,
-    headers: { ...CORS, "Content-Type": upType },
+    headers: {
+      ...CORS,
+      "Content-Type": upType,
+      // Observable marker for signed preview/dev responses (debugging aid:
+      // visible in DevTools even when cookies are not).
+      ...(previewSig ? { "X-Preview-Auth": "signed" } : {}),
+    },
     body: textish ? buf.toString("utf8") : buf.toString("base64"),
     ...(textish ? {} : { isBase64Encoded: true }),
     // Plant the preview bearer for absolute-path subresources (see
