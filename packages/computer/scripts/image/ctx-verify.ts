@@ -24,7 +24,15 @@ async function vmFetch(path: string, init?: RequestInit): Promise<{ status: numb
 }
 
 const cid = `ctx-verify-${Date.now()}`;
-const fail = (msg: string): never => {
+
+// 0. Catalog default is GLM (no model anywhere → GLM + 1050000 limit).
+{
+  const dd = await vmFetch(`/context/ctx-verify-default`);
+  console.log('GET default:', JSON.stringify(dd.body));
+  const def = dd.body as { model?: string; limit?: number };
+  if (dd.status !== 200 || def.model !== 'zai-org/GLM-5.3-Flash') fail(`default model ${def.model}`);
+  if (def.limit !== 1050000) fail(`default limit ${def.limit}`);
+}
   console.error(`CTX VERIFY: FAIL — ${msg}`);
   process.exit(1);
 };

@@ -1,5 +1,5 @@
 {
-  "defaults": { "provider": "modal", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
+  "defaults": { "provider": "modal-glm", "model": "zai-org/GLM-5.3-Flash" },
   "small": { "provider": "modal", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
   "providers": {
     "modal": {

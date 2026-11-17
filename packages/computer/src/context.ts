@@ -64,8 +64,8 @@ function selectionFor(
     }
   }
   // Else the catalog default.
-  const dp = catalog.defaults?.provider ?? 'modal';
-  const dm = catalog.defaults?.model ?? 'meta-models/Muse-Spark-Open-816B-A42B';
+  const dp = catalog.defaults?.provider ?? 'modal-glm';
+  const dm = catalog.defaults?.model ?? 'zai-org/GLM-5.3-Flash';
   return {
     providerId: dp,
     modelId: dm,
