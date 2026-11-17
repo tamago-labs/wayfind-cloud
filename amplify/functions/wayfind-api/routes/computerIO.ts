@@ -273,14 +273,13 @@ export async function handleComputerProxy(ctx: Ctx, previewSig?: string): Promis
   const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
   return {
     statusCode: upstream.status,
-    headers: {
-      ...CORS,
-      "Content-Type": upType,
-      // Plant the preview bearer for absolute-path subresources (see
-      // handlePreviewRelay). Only on explicitly signed responses.
-      ...(previewSig ? { "Set-Cookie": previewCookie(previewSig) } : {}),
-    },
+    headers: { ...CORS, "Content-Type": upType },
     body: textish ? buf.toString("utf8") : buf.toString("base64"),
     ...(textish ? {} : { isBase64Encoded: true }),
+    // Plant the preview bearer for absolute-path subresources (see
+    // handlePreviewRelay). Payload v2 takes cookies in a dedicated array —
+    // a Set-Cookie entry inside headers is dropped and never reaches the
+    // browser. Only set on explicitly signed responses.
+    ...(previewSig ? { cookies: [previewCookie(previewSig)] } : {}),
   };
 }
