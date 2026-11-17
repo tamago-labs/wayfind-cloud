@@ -176,11 +176,11 @@ export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
     return json(403, { error: "bad preview signature" });
   }
   if (!timingSafeEqual(got, want)) return json(403, { error: "bad preview signature" });
-  // First contact carries ?preview= — plant the cookie so rewritten
-  // subresources (same base path, no query string) authenticate on
-  // follow-up requests. The cookie alone re-verifies via path binding.
+  // Mark every verified response (query or cookie): the marker, rewrite and
+  // cookie refresh must apply to follow-ups too, since subresources carry
+  // no query string and re-verify via the cookie each time.
   const base = scope === "dev" ? "dev" : `preview/${target}`;
-  return handleComputerProxy({ event, method, path, ownerId, claims: null }, fromQuery ? { sig, base } : undefined);
+  return handleComputerProxy({ event, method, path, ownerId, claims: null }, { sig, base });
 }
 
 // Short-lived bearer for preview subresources (absolute asset paths like
@@ -289,10 +289,20 @@ export async function handleComputerProxy(ctx: Ctx, preview?: PreviewAuth): Prom
     // Rewritten subrequests carry the cookie set below, so no query string
     // is needed on them. HMR websocket upgrades are out of scope (v1).
     const basePath = `/computer/proxy/${preview.base}/`;
+    // All patterns are statement-bounded (never span ; or quotes): the
+    // naive [^"']*?…from span backtracks catastrophically on minified
+    // bundles and took the Lambda down (500s on @vite/client).
     body = body
       .replace(/(\s(?:src|href)=["'])\/((?!\/)[^"']*["'])/g, `$1${basePath}$2`)
-      .replace(/((?:import|export)[^"']*?from\s*["'])\/((?!\/)[^"']*["'])/g, `$1${basePath}$2`)
-      .replace(/import\(\s*["']\/((?!\/)[^"']*["']\s*\))/g, `import("${basePath}$1)`);
+      .replace(
+        /(^|[;{}])\s*((?:import|export)\b[^;"']*?\bfrom\s*["'])\/((?!\/)[^"'\s;]+)(["'])/gm,
+        `$1$2${basePath}$3$4`,
+      )
+      .replace(
+        /(^|[;{}])\s*(import\s*["'])\/((?!\/)[^"'\s;]+)(["'])/gm,
+        `$1$2${basePath}$3$4`,
+      )
+      .replace(/import\(\s*["']\/((?!\/)[^"'\s;]+)(["']\s*\))/g, `import("${basePath}$1$2`);
   }
   return {
     statusCode: upstream.status,
