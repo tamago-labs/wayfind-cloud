@@ -1,6 +1,7 @@
+import { createHmac, timingSafeEqual } from "crypto";
 import { CreateMicrovmAuthTokenCommand } from "@aws-sdk/client-lambda-microvms";
 import { CORS, json } from "../lib/respond.js";
-import { dataClient, microvms } from "../lib/clients.js";
+import { dataClient, env, microvms } from "../lib/clients.js";
 import {
   mintVmToken,
   pickComputer,
@@ -54,6 +55,118 @@ export async function handleComputerToken(ctx: Ctx): Promise<RouteResult> {
     console.error("[wayfind-api] token mint failed:", err);
     return json(502, { error: "microvm token mint failed" });
   }
+}
+
+// ---- Signed preview URLs (new-tab/iframe access without a bearer) ----
+// Navigations can't attach the Cognito bearer, so preview/dev links carry
+// a short-lived stateless HMAC token instead:
+//   …/computer/proxy/preview/<folder>/?preview=<exp>.<ownerB64>.<hex>
+//   …/computer/proxy/dev/?port=5173&preview=<exp>.<ownerB64>.<hex>
+// Payload: `${ownerId}.${scope}.${target}.${exp}`. Scope binding: preview
+// tokens only proxy preview/<target>/…, dev tokens only proxy /dev/ with
+// ?port=<target>.
+const PREVIEW_TTL_MS = 15 * 60 * 1000;
+
+function previewSecret(): string {
+  return env.PREVIEW_SECRET ?? "";
+}
+
+function safeFolder(target: unknown): string | null {
+  if (typeof target !== "string" || !target) return null;
+  const t = target.replace(/^\/+|\/+$/g, "");
+  if (!t || t.split("/").some((s) => s === ".." || s.startsWith("."))) return null;
+  return t;
+}
+
+// POST /computer/proxy/preview-token (Cognito) → { sig, exp, scope, target }.
+export async function handlePreviewToken(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path, ownerId } = ctx;
+  if (!path.endsWith("/computer/proxy/preview-token") || method !== "POST") return null;
+  const secret = previewSecret();
+  if (!secret) return json(500, { error: "preview not configured (PREVIEW_SECRET)" });
+  let body: { scope?: string; target?: unknown } = {};
+  try {
+    body = JSON.parse(event.body ?? "{}");
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+  if (body.scope !== "preview" && body.scope !== "dev") {
+    return json(400, { error: "scope must be preview|dev" });
+  }
+  let target: string;
+  if (body.scope === "preview") {
+    const f = safeFolder(body.target);
+    if (!f) return json(400, { error: "target must be a workspace folder" });
+    target = f;
+  } else {
+    const port = typeof body.target === "string" ? Number(body.target) : body.target;
+    if (!Number.isInteger(port) || (port as number) < 1 || (port as number) > 65535) {
+      return json(400, { error: "target must be a port 1-65535" });
+    }
+    target = String(port);
+  }
+  const exp = Date.now() + PREVIEW_TTL_MS;
+  const payload = `${ownerId}.${body.scope}.${target}.${exp}`;
+  const hex = createHmac("sha256", secret).update(payload).digest("hex");
+  const ownerB64 = Buffer.from(ownerId, "utf8").toString("base64url");
+  return json(200, { sig: `${exp}.${ownerB64}.${hex}`, exp, scope: body.scope, target });
+}
+
+// Pre-gate: GET|HEAD /computer/proxy/{preview,dev}/… with ?preview=<sig>.
+// Validates the HMAC, then relays as that owner (no Cognito needed).
+export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
+  const { event, method, path } = ctx;
+  if (method !== "GET" && method !== "HEAD") return null;
+  const m = path.match(/\/computer\/proxy\/(preview|dev)\//);
+  if (!m) return null;
+  const params = new URLSearchParams(event.rawQueryString ?? "");
+  const sig = params.get("preview");
+  if (!sig) return null; // not a signed request — fall through to the Cognito gate
+  const secret = previewSecret();
+  if (!secret) return json(500, { error: "preview not configured (PREVIEW_SECRET)" });
+  const parts = sig.split(".");
+  if (parts.length !== 3) return json(403, { error: "bad preview signature" });
+  const [expStr, ownerB64, hex] = parts;
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp < Date.now()) return json(403, { error: "preview link expired" });
+  let ownerId = "";
+  try {
+    ownerId = Buffer.from(ownerB64, "base64url").toString("utf8");
+  } catch {
+    return json(403, { error: "bad preview signature" });
+  }
+  if (!ownerId) return json(403, { error: "bad preview signature" });
+  const scope = m[1];
+  // Re-derive the bound target from the live request and compare.
+  let target: string | null = null;
+  if (scope === "preview") {
+    const rest = path.slice(path.indexOf("/computer/proxy/preview/") + "/computer/proxy/preview/".length);
+    const folder = rest.split("/")[0] ?? "";
+    let decoded = "";
+    try {
+      decoded = decodeURIComponent(folder);
+    } catch {
+      return json(403, { error: "bad preview signature" });
+    }
+    target = safeFolder(decoded);
+    if (!target) return json(403, { error: "bad preview signature" });
+  } else {
+    target = params.get("port") ?? "5173";
+    if (!/^\d+$/.test(target) || Number(target) < 1 || Number(target) > 65535) {
+      return json(403, { error: "bad preview signature" });
+    }
+  }
+  const payload = `${ownerId}.${scope}.${target}.${exp}`;
+  const want = createHmac("sha256", secret).update(payload).digest();
+  let got: Buffer;
+  try {
+    got = Buffer.from(hex, "hex");
+    if (got.length !== want.length) return json(403, { error: "bad preview signature" });
+  } catch {
+    return json(403, { error: "bad preview signature" });
+  }
+  if (!timingSafeEqual(got, want)) return json(403, { error: "bad preview signature" });
+  return handleComputerProxy({ event, method, path, ownerId, claims: null });
 }
 
 // ANY /computer/proxy/* - relay browser traffic to the caller's MicroVM.

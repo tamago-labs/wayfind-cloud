@@ -2,6 +2,7 @@
 // MicroVM lifecycle hooks. P0 routes only; auth + approvals land in P1.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import { dirname, extname, join, resolve, sep } from 'node:path';
 import OpenAI from 'openai';
 import { PORT, PROVIDER_BASE_URL, PROVIDER_MODEL, WORKSPACE_DIR, keysReady } from './core/config.js';
@@ -664,6 +665,55 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return void json(res, 500, { error: `preview failed: ${msg}` });
+    }
+  }
+
+  // Live dev-server preview (Vite, Next.js, anything on VM localhost).
+  // Pipes to 127.0.0.1:<port> — the host is fixed, only the port is caller
+  // controlled (?port=, default 5173). Same auth as every other route.
+  // v1 is HTTP-only: pages render live, Vite HMR (needs WS upgrade
+  // forwarding) falls back to manual refresh.
+  const devMatch = pathname.match(/^\/dev(\/.*)?$/);
+  if (devMatch && method !== 'TRACE' && method !== 'CONNECT') {
+    const port = Math.min(65535, Math.max(1, Number(url.searchParams.get('port') ?? 5173) || 5173));
+    const sub = devMatch[1] ?? '/';
+    const qs = new URLSearchParams(url.searchParams);
+    qs.delete('port');
+    const q = qs.toString();
+    try {
+      const headers: Record<string, string> = {};
+      const ct = req.headers['content-type'];
+      if (typeof ct === 'string' && ct) headers['Content-Type'] = ct;
+      const accept = req.headers['accept'];
+      if (typeof accept === 'string' && accept) headers['Accept'] = accept;
+      let body: string | undefined;
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        body = await readBody(req);
+      }
+      const upstream = await fetch(`http://127.0.0.1:${port}${sub}${q ? `?${q}` : ''}`, {
+        method,
+        headers,
+        ...(body !== undefined ? { body } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      res.writeHead(upstream.status, {
+        'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+        'Cache-Control': 'private, no-store',
+        ...corsHeaders(),
+      });
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+      return void Readable.fromWeb(upstream.body as never).pipe(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const down = /fetch failed|ECONNREFUSED|ENOTFOUND/i.test(msg);
+      return void json(res, down ? 502 : 500, {
+        error: down
+          ? `dev server not reachable on :${port} — start it first (e.g. npm run dev -- --host --port ${port})`
+          : `dev proxy failed: ${msg.slice(0, 200)}`,
+      });
     }
   }
 

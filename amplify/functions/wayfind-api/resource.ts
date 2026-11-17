@@ -56,5 +56,10 @@ export const wayfindApiFunction = defineFunction({
     // itself is authType NONE). Set once:
     //   npx ampx sandbox secret set TICK_SECRET
     TICK_SECRET: secret("TICK_SECRET"),
+    // Signed preview/dev URLs: HMAC key for iframe/new-tab links that
+    // can't carry the Cognito bearer (?preview=<sig> on relay paths).
+    // Stateless — no storage. Set once (32+ random chars):
+    //   npx ampx sandbox secret set PREVIEW_SECRET
+    PREVIEW_SECRET: secret("PREVIEW_SECRET"),
   },
 });

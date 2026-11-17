@@ -38,6 +38,9 @@ const BASE_INSTRUCTIONS =
   'never global-install, never probe env via shell, never clean caches or delete things unprompted. ' +
   'For JavaScript/TypeScript work, use bun (`bun install`, `bun run`, `bunx`) instead of npm/npx — it is preinstalled on this computer. ' +
   'Only use npm if the user asks for it or the project requires it. ' +
+  'After starting a dev server (default port 5173) or finishing a production build into a folder, ' +
+  'tell the user to open Computer → Preview in the app (Live tab for the dev server, Build tab plus the folder name for built output). ' +
+  'Never invent preview URLs — the app generates them. ' +
   'Read files with read_file/glob, install servers with install_mcp_server, restart them with restart_mcp_server.' +
   SKILL_IMPORT_GUIDANCE;
 
