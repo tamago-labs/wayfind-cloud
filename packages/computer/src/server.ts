@@ -593,6 +593,80 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
   }
 
+  // Static preview for built web apps (dist folders, plain index.html
+  // sites). Served through the agent port so the token-proxy and relay
+  // path — and an iframe — can load it with no extra ports. SPA fallback:
+  // missing files resolve to the app-root index.html.
+  const PREVIEW_TYPES: Record<string, string> = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json',
+    '.map': 'application/json',
+    '.txt': 'text/plain; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.gif': 'image/gif',
+    '.ico': 'image/x-icon',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.pdf': 'application/pdf',
+  };
+  const previewMatch = pathname.match(/^\/preview\/(.+)$/);
+  if (previewMatch && method === 'GET') {
+    let rel = '';
+    try {
+      rel = decodeURIComponent(previewMatch[1]);
+    } catch {
+      return void json(res, 400, { error: 'Bad preview path' });
+    }
+    // Dot-segments stay hidden (keys, state, build metadata) — same rule
+    // as the Library listing. Empty segments (trailing/double slashes)
+    // are harmless: resolve+jail normalizes them.
+    if (rel.split('/').some((s) => s === '..' || (s !== '' && s.startsWith('.')))) {
+      return void json(res, 400, { error: 'Bad preview path' });
+    }
+    try {
+      const abs = jailPath(rel);
+      if (abs === null) return void json(res, 400, { error: 'Path escapes workspace' });
+      const st = statSync(abs, { throwIfNoEntry: false });
+      let file: string | null = null;
+      if (st && st.isDirectory()) {
+        const index = resolve(abs, 'index.html');
+        if (statSync(index, { throwIfNoEntry: false })?.isFile()) file = index;
+      } else if (st?.isFile()) {
+        file = abs;
+      } else {
+        // SPA fallback: app-root index.html (first path segment).
+        const rootIndex = jailPath(`${rel.split('/')[0]}/index.html`);
+        if (rootIndex && statSync(rootIndex, { throwIfNoEntry: false })?.isFile()) file = rootIndex;
+      }
+      if (!file) return void json(res, 404, { error: 'No preview here' });
+      const ext = extname(file).toLowerCase();
+      const contentType = PREVIEW_TYPES[ext];
+      if (!contentType) return void json(res, 415, { error: `Preview cannot serve ${ext || 'extensionless'} files` });
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Disposition': 'inline',
+        'Cache-Control': ext === '.html' ? 'private, no-store' : 'private, max-age=3600',
+        ...corsHeaders(),
+      });
+      return void createReadStream(file).pipe(res);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return void json(res, 500, { error: `preview failed: ${msg}` });
+    }
+  }
+
   if (pathname === '/approvals' && method === 'GET') {
     return void json(res, 200, { approvals: listPendingApprovals() });
   }
