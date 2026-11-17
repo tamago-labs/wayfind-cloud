@@ -67,8 +67,15 @@ export async function handleComputerToken(ctx: Ctx): Promise<RouteResult> {
 // ?port=<target>.
 const PREVIEW_TTL_MS = 15 * 60 * 1000;
 
+// Preview HMAC root, derived from TICK_SECRET with a fixed domain string
+// so signatures never cross contexts (ticker vs preview). No extra secret.
+let previewKey: Buffer | null = null;
 function previewSecret(): string {
-  return env.PREVIEW_SECRET ?? "";
+  if (previewKey) return previewKey.toString("hex");
+  const tick = env.TICK_SECRET ?? "";
+  if (!tick) return "";
+  previewKey = createHmac("sha256", tick).update("wayfind-preview-v1").digest();
+  return previewKey.toString("hex");
 }
 
 function safeFolder(target: unknown): string | null {
@@ -83,7 +90,7 @@ export async function handlePreviewToken(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path, ownerId } = ctx;
   if (!path.endsWith("/computer/proxy/preview-token") || method !== "POST") return null;
   const secret = previewSecret();
-  if (!secret) return json(500, { error: "preview not configured (PREVIEW_SECRET)" });
+  if (!secret) return json(500, { error: "preview not configured (TICK_SECRET)" });
   let body: { scope?: string; target?: unknown } = {};
   try {
     body = JSON.parse(event.body ?? "{}");
@@ -123,7 +130,7 @@ export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
   const sig = params.get("preview");
   if (!sig) return null; // not a signed request — fall through to the Cognito gate
   const secret = previewSecret();
-  if (!secret) return json(500, { error: "preview not configured (PREVIEW_SECRET)" });
+  if (!secret) return json(500, { error: "preview not configured (TICK_SECRET)" });
   const parts = sig.split(".");
   if (parts.length !== 3) return json(403, { error: "bad preview signature" });
   const [expStr, ownerB64, hex] = parts;

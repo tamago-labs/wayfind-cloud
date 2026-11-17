@@ -55,11 +55,8 @@ export const wayfindApiFunction = defineFunction({
     // come from our own ticker, not the open internet (the Function URL
     // itself is authType NONE). Set once:
     //   npx ampx sandbox secret set TICK_SECRET
+    // Doubles as the signed-preview HMAC root (domain-separated, see
+    // computerIO previewSecret) — no extra secret to manage.
     TICK_SECRET: secret("TICK_SECRET"),
-    // Signed preview/dev URLs: HMAC key for iframe/new-tab links that
-    // can't carry the Cognito bearer (?preview=<sig> on relay paths).
-    // Stateless — no storage. Set once (32+ random chars):
-    //   npx ampx sandbox secret set PREVIEW_SECRET
-    PREVIEW_SECRET: secret("PREVIEW_SECRET"),
   },
 });
