@@ -279,9 +279,12 @@ export async function handleComputerProxy(ctx: Ctx, preview?: PreviewAuth): Prom
   }
   const upType = upstream.headers.get("content-type") ?? "application/octet-stream";
   const buf = Buffer.from(await upstream.arrayBuffer());
-  const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
+  // Vite dev serves .jsx/.mjs as application/javascript — the rewrite must
+  // see those too, or transformed imports keep escaping to the relay root.
+  const textish = /^(text\/|application\/(json|javascript)|application\/.*\+json)/.test(upType);
+  const rewritable = upType.startsWith("text/html") || upType.includes("javascript");
   let body = textish ? buf.toString("utf8") : buf.toString("base64");
-  if (preview && textish && (upType.startsWith("text/html") || upType.startsWith("text/javascript"))) {
+  if (preview && textish && rewritable) {
     // Keep root-absolute asset URLs under the proxy base: frameworks emit
     // src="/@vite/client", and Vite dev *rewrites bare imports inside
     // served JS* to absolute /node_modules/.vite/… paths — both would
