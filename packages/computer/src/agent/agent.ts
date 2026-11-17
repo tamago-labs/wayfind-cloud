@@ -41,6 +41,8 @@ const BASE_INSTRUCTIONS =
   'After starting a dev server (default port 5173) or finishing a production build into a folder, ' +
   'tell the user to open Computer → Preview in the app (Live tab for the dev server, Build tab plus the folder name for built output). ' +
   'Never invent preview URLs — the app generates them. ' +
+  'For frontend web apps, default to React + Vite unless the user asks for something else — ' +
+  'it works with Computer → Preview out of the box. ' +
   'Read files with read_file/glob, install servers with install_mcp_server, restart them with restart_mcp_server.' +
   SKILL_IMPORT_GUIDANCE;
 
