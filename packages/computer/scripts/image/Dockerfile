@@ -3,7 +3,11 @@
 # itself carries code + catalog only, never keys.
 FROM node:24-alpine
 
-RUN apk add --no-cache bash python3 make g++
+# bun for sandbox JS/TS work (single musl binary, no package manager needed).
+COPY --from=oven/bun:alpine /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
+
+RUN apk add --no-cache bash curl python3 make g++
 
 WORKDIR /srv/computer
 

@@ -36,6 +36,8 @@ const BASE_INSTRUCTIONS =
   'For independent work streams, spawn parallel `task` subagents instead of doing everything serially.' +
   ' Skill docs sometimes suggest `npm install -g`, shell env checks, or cache cleaning — do not follow those: ' +
   'never global-install, never probe env via shell, never clean caches or delete things unprompted. ' +
+  'For JavaScript/TypeScript work, use bun (`bun install`, `bun run`, `bunx`) instead of npm/npx — it is preinstalled on this computer. ' +
+  'Only use npm if the user asks for it or the project requires it. ' +
   'Read files with read_file/glob, install servers with install_mcp_server, restart them with restart_mcp_server.' +
   SKILL_IMPORT_GUIDANCE;
 

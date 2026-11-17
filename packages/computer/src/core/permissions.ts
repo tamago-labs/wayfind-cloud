@@ -24,6 +24,17 @@ const DEFAULTS: Rule[] = [
   { permission: 'shell', pattern: 'ls *', action: 'allow' },
   { permission: 'shell', pattern: 'cat *', action: 'allow' },
   { permission: 'shell', pattern: 'echo *', action: 'allow' },
+  { permission: 'shell', pattern: 'pwd', action: 'allow' },
+  { permission: 'shell', pattern: 'which *', action: 'allow' },
+  // Version probes: read-only, zero injection value. Explicit binaries only —
+  // a trailing-wildcard probe (e.g. `* --version`) would also match
+  // `rm -rf / --version`.
+  { permission: 'shell', pattern: 'node --version', action: 'allow' },
+  { permission: 'shell', pattern: 'npm --version', action: 'allow' },
+  { permission: 'shell', pattern: 'bun --version', action: 'allow' },
+  { permission: 'shell', pattern: 'bunx --version', action: 'allow' },
+  { permission: 'shell', pattern: 'python3 --version', action: 'allow' },
+  { permission: 'shell', pattern: 'git --version', action: 'allow' },
   { permission: 'shell', pattern: '*', action: 'ask' },
   { permission: 'write', pattern: '*', action: 'ask' },
 ];

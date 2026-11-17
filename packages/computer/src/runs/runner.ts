@@ -512,6 +512,9 @@ export async function resolveApproval(id: string, decision: 'approve' | 'reject'
   // Persistent grant: a plain approval also writes an allow rule for the
   // exact target, so future runs don't ask for it again. The rules file is
   // the memory — clearing it resets everything (undo restores the backup).
+  // (Session grants were considered and dropped: the persistent rule above
+  // already covers repeats across runs, so a session layer would add
+  // mechanism with zero extra coverage.)
   if ((decision === 'approve' || decision === 'approve-all') && decided) {
     grantForRun(runState.id, decided.permission, decision === 'approve-all' ? '*' : decided.target);
     try {
