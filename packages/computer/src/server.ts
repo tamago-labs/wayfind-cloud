@@ -19,6 +19,7 @@ import { listInstalledSkills, removeSkill, resolveSkillSource, saveSkillPreview,
 import { listMcpServers, patchMcpServer, removeMcpServer, restartMcpServer, saveMcpServer } from './agent/mcp.js';
 import { transcribeWav, VoiceError } from './voice/transcribe.js';
 import { attachTerminalServer, killAllTerminals } from './terminal/terminal.js';
+import { clearContext, compactContext, getContextStats } from './context.js';
 
 /** Browser origin for local dev (Amplify dev server). Loosen only for local. */
 const CORS_ORIGIN = process.env.AGENT_CORS_ORIGIN ?? '*';
@@ -418,6 +419,29 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const historyMatch = pathname.match(/^\/history\/([A-Za-z0-9-]+)$/);
   if (historyMatch && method === 'GET') {
     return void json(res, 200, { messages: getHistory(historyMatch[1]) });
+  }
+
+  // Conversation context: usage indicator, manual compact, and reset.
+  // The model override (client knows the bot's pick) selects the limit;
+  // otherwise the conversation's last run selection, else catalog default.
+  const contextMatch = pathname.match(/^\/context\/([A-Za-z0-9-]+)$/);
+  if (contextMatch && (method === 'GET' || method === 'POST' || method === 'DELETE')) {
+    const cid = contextMatch[1];
+    const model = url.searchParams.get('model') ?? undefined;
+    try {
+      if (method === 'GET') {
+        return void json(res, 200, await getContextStats(cid, model));
+      }
+      if (method === 'DELETE') {
+        const { cleared } = await clearContext(cid);
+        return void json(res, 200, { cleared, ...(await getContextStats(cid, model)) });
+      }
+      return void json(res, 200, await compactContext(cid, model));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[context] failed:', msg);
+      return void json(res, 500, { error: msg.slice(0, 300) });
+    }
   }
 
   // Voice: browser posts raw WAV bytes (audio/wav), we proxy Meta ASR.

@@ -236,8 +236,33 @@ const runs = new Map<string, Run>();
 /** One SDK session per conversation — the model's working memory.
  * The JSONL transcript stays as the human-readable display log. */
 const sessions = new Map<string, MemorySession>();
+/** Last {provider, model} selection per conversation (top-level runs) —
+ * drives context-limit lookup without replaying transcripts. */
+const lastSelection = new Map<string, { provider?: string; model?: string }>();
 /** Conversations already seeded into their session from JSONL. */
 const seeded = new Set<string>();
+
+/** Existing SDK session for a conversation, if any (never creates). */
+export function peekSession(conversationId: string): MemorySession | undefined {
+  return sessions.get(conversationId);
+}
+
+/** Get or create the SDK session for a conversation. */
+export function ensureSession(conversationId: string): MemorySession {
+  const s = sessionFor(conversationId);
+  if (!s) throw new Error('unreachable: sessionFor always creates');
+  return s;
+}
+
+/** Drop a conversation's SDK session. The next run starts fresh. */
+export function dropSession(conversationId: string): boolean {
+  return sessions.delete(conversationId);
+}
+
+/** Last model selection used on a conversation (top-level runs only). */
+export function conversationSelection(conversationId: string): { provider?: string; model?: string } | undefined {
+  return lastSelection.get(conversationId);
+}
 
 function sessionFor(conversationId: string | undefined): MemorySession | undefined {
   if (!conversationId) return undefined;
@@ -980,6 +1005,11 @@ function newRunState(opts: StartRunOpts): Run {
 export function startRun(text: string, opts: StartRunOpts): Run {
   const runState = newRunState(opts);
   runs.set(runState.id, runState);
+  // Remember the model selection per conversation (top-level only — child
+  // runs inherit and must not overwrite the conversation's identity).
+  if (!opts.parentId && opts.conversationId && (opts.model !== undefined || opts.provider !== undefined)) {
+    lastSelection.set(opts.conversationId, { provider: opts.provider, model: opts.model });
+  }
   // Persist attachment paths (not bytes) so history shows what was sent
   // without replaying megabytes of base64 on rehydrate.
   const marker = opts.attachments?.length ? ` [attached: ${opts.attachments.slice(0, 5).join(', ')}]` : '';
