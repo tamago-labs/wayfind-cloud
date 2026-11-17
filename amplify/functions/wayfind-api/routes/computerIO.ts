@@ -281,15 +281,18 @@ export async function handleComputerProxy(ctx: Ctx, preview?: PreviewAuth): Prom
   const buf = Buffer.from(await upstream.arrayBuffer());
   const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
   let body = textish ? buf.toString("utf8") : buf.toString("base64");
-  if (preview && textish && upType.startsWith("text/html")) {
+  if (preview && textish && (upType.startsWith("text/html") || upType.startsWith("text/javascript"))) {
     // Keep root-absolute asset URLs under the proxy base: frameworks emit
-    // src="/@vite/client" which would otherwise escape to the relay root
-    // (no sig, no cookie scope → 401). Rewritten subrequests carry the
-    // cookie set below, so no query string is needed on them.
-    body = body.replace(
-      /\s(src|href)="\/((?!\/)[^"]*)"/g,
-      ` $1="/computer/proxy/${preview.base}/$2"`,
-    );
+    // src="/@vite/client", and Vite dev *rewrites bare imports inside
+    // served JS* to absolute /node_modules/.vite/… paths — both would
+    // otherwise escape to the relay root (no sig, no cookie scope → 401).
+    // Rewritten subrequests carry the cookie set below, so no query string
+    // is needed on them. HMR websocket upgrades are out of scope (v1).
+    const basePath = `/computer/proxy/${preview.base}/`;
+    body = body
+      .replace(/(\s(?:src|href)=["'])\/((?!\/)[^"']*["'])/g, `$1${basePath}$2`)
+      .replace(/((?:import|export)[^"']*?from\s*["'])\/((?!\/)[^"']*["'])/g, `$1${basePath}$2`)
+      .replace(/import\(\s*["']\/((?!\/)[^"']*["']\s*\))/g, `import("${basePath}$1)`);
   }
   return {
     statusCode: upstream.status,
