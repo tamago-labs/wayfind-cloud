@@ -176,9 +176,11 @@ export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
     return json(403, { error: "bad preview signature" });
   }
   if (!timingSafeEqual(got, want)) return json(403, { error: "bad preview signature" });
-  // First contact carries ?preview= — plant the cookie so absolute-path
-  // subresources (no query string) authenticate on follow-up requests.
-  return handleComputerProxy({ event, method, path, ownerId, claims: null }, fromQuery ? sig : undefined);
+  // First contact carries ?preview= — plant the cookie so rewritten
+  // subresources (same base path, no query string) authenticate on
+  // follow-up requests. The cookie alone re-verifies via path binding.
+  const base = scope === "dev" ? "dev" : `preview/${target}`;
+  return handleComputerProxy({ event, method, path, ownerId, claims: null }, fromQuery ? { sig, base } : undefined);
 }
 
 // Short-lived bearer for preview subresources (absolute asset paths like
@@ -214,7 +216,14 @@ function previewToken(event: { rawQueryString?: string; headers?: Record<string,
 // server-side per call. Upstream status passes through untouched.
 // Limits: SSE is buffered (no response streaming through this wrapper,
 // so cloud chat renders whole), ~6MB Lambda response cap on downloads.
-export async function handleComputerProxy(ctx: Ctx, previewSig?: string): Promise<RouteResult> {
+export interface PreviewAuth {
+  sig: string;
+  /** Proxy base the HTML was served from (dev|preview/<folder>) — root-
+   * absolute asset URLs are rewritten under it. */
+  base: string;
+}
+
+export async function handleComputerProxy(ctx: Ctx, preview?: PreviewAuth): Promise<RouteResult> {
   const { event, method, path, ownerId } = ctx;
   if (!path.includes("/computer/proxy/")) return null;
   const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
@@ -271,6 +280,17 @@ export async function handleComputerProxy(ctx: Ctx, previewSig?: string): Promis
   const upType = upstream.headers.get("content-type") ?? "application/octet-stream";
   const buf = Buffer.from(await upstream.arrayBuffer());
   const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
+  let body = textish ? buf.toString("utf8") : buf.toString("base64");
+  if (preview && textish && upType.startsWith("text/html")) {
+    // Keep root-absolute asset URLs under the proxy base: frameworks emit
+    // src="/@vite/client" which would otherwise escape to the relay root
+    // (no sig, no cookie scope → 401). Rewritten subrequests carry the
+    // cookie set below, so no query string is needed on them.
+    body = body.replace(
+      /\s(src|href)="\/((?!\/)[^"]*)"/g,
+      ` $1="/computer/proxy/${preview.base}/$2"`,
+    );
+  }
   return {
     statusCode: upstream.status,
     headers: {
@@ -278,14 +298,14 @@ export async function handleComputerProxy(ctx: Ctx, previewSig?: string): Promis
       "Content-Type": upType,
       // Observable marker for signed preview/dev responses (debugging aid:
       // visible in DevTools even when cookies are not).
-      ...(previewSig ? { "X-Preview-Auth": "signed" } : {}),
+      ...(preview ? { "X-Preview-Auth": "signed" } : {}),
     },
-    body: textish ? buf.toString("utf8") : buf.toString("base64"),
+    body,
     ...(textish ? {} : { isBase64Encoded: true }),
-    // Plant the preview bearer for absolute-path subresources (see
+    // Plant the preview bearer for rewritten subresources (see
     // handlePreviewRelay). Payload v2 takes cookies in a dedicated array —
     // a Set-Cookie entry inside headers is dropped and never reaches the
     // browser. Only set on explicitly signed responses.
-    ...(previewSig ? { cookies: [previewCookie(previewSig)] } : {}),
+    ...(preview ? { cookies: [previewCookie(preview.sig)] } : {}),
   };
 }
