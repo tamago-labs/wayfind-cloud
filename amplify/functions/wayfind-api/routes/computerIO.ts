@@ -119,7 +119,9 @@ export async function handlePreviewToken(ctx: Ctx): Promise<RouteResult> {
   return json(200, { sig: `${exp}.${ownerB64}.${hex}`, exp, scope: body.scope, target });
 }
 
-// Pre-gate: GET|HEAD /computer/proxy/{preview,dev}/… with ?preview=<sig>.
+// Pre-gate: GET|HEAD /computer/proxy/{preview,dev}/… with ?preview=<sig>
+// or the wf_preview cookie (set on the first signed response — absolute
+// asset paths like /@vite/client drop the query string).
 // Validates the HMAC, then relays as that owner (no Cognito needed).
 export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
   const { event, method, path } = ctx;
@@ -127,7 +129,8 @@ export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
   const m = path.match(/\/computer\/proxy\/(preview|dev)\//);
   if (!m) return null;
   const params = new URLSearchParams(event.rawQueryString ?? "");
-  const sig = params.get("preview");
+  const fromQuery = params.get("preview");
+  const sig = fromQuery ?? previewToken(event);
   if (!sig) return null; // not a signed request — fall through to the Cognito gate
   const secret = previewSecret();
   if (!secret) return json(500, { error: "preview not configured (TICK_SECRET)" });
@@ -173,7 +176,34 @@ export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
     return json(403, { error: "bad preview signature" });
   }
   if (!timingSafeEqual(got, want)) return json(403, { error: "bad preview signature" });
-  return handleComputerProxy({ event, method, path, ownerId, claims: null });
+  // First contact carries ?preview= — plant the cookie so absolute-path
+  // subresources (no query string) authenticate on follow-up requests.
+  return handleComputerProxy({ event, method, path, ownerId, claims: null }, fromQuery ? sig : undefined);
+}
+
+// Short-lived bearer for preview subresources (absolute asset paths like
+// /@vite/client drop the ?preview= query). Set on the first signed
+// response; the browser resends it on every same-host subrequest.
+// HttpOnly + Secure + scoped path — valid only for preview/dev paths.
+function previewCookie(sig: string): string {
+  return `wf_preview=${sig}; Path=/computer/proxy/; Max-Age=900; HttpOnly; Secure; SameSite=None`;
+}
+
+/** Read the preview token from ?preview= or the wf_preview cookie. */
+function previewToken(event: { rawQueryString?: string; headers?: Record<string, string | undefined> }): string | null {
+  const params = new URLSearchParams(event.rawQueryString ?? "");
+  const q = params.get("preview");
+  if (q) return q;
+  const cookieHeader = event.headers?.cookie ?? event.headers?.Cookie;
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === "wf_preview") {
+      const val = v.join("=");
+      if (val) return val;
+    }
+  }
+  return null;
 }
 
 // ANY /computer/proxy/* - relay browser traffic to the caller's MicroVM.
@@ -184,7 +214,7 @@ export async function handlePreviewRelay(ctx: Ctx): Promise<RouteResult> {
 // server-side per call. Upstream status passes through untouched.
 // Limits: SSE is buffered (no response streaming through this wrapper,
 // so cloud chat renders whole), ~6MB Lambda response cap on downloads.
-export async function handleComputerProxy(ctx: Ctx): Promise<RouteResult> {
+export async function handleComputerProxy(ctx: Ctx, previewSig?: string): Promise<RouteResult> {
   const { event, method, path, ownerId } = ctx;
   if (!path.includes("/computer/proxy/")) return null;
   const { data: computers } = await dataClient.models.Computer.computerByOwnerId({ ownerId });
@@ -243,7 +273,13 @@ export async function handleComputerProxy(ctx: Ctx): Promise<RouteResult> {
   const textish = /^(text\/|application\/json|application\/.*\+json)/.test(upType);
   return {
     statusCode: upstream.status,
-    headers: { ...CORS, "Content-Type": upType },
+    headers: {
+      ...CORS,
+      "Content-Type": upType,
+      // Plant the preview bearer for absolute-path subresources (see
+      // handlePreviewRelay). Only on explicitly signed responses.
+      ...(previewSig ? { "Set-Cookie": previewCookie(previewSig) } : {}),
+    },
     body: textish ? buf.toString("utf8") : buf.toString("base64"),
     ...(textish ? {} : { isBase64Encoded: true }),
   };
