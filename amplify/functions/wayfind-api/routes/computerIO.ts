@@ -298,11 +298,11 @@ export async function handleComputerProxy(ctx: Ctx, preview?: PreviewAuth): Prom
     body = body
       .replace(/(\s(?:src|href)=["'])\/((?!\/)[^"']*["'])/g, `$1${basePath}$2`)
       .replace(
-        /(^|[;{}])\s*((?:import|export)\b[^;"']*?\bfrom\s*["'])\/((?!\/)[^"'\s;]+)(["'])/gm,
+        /(^|[;{}>])\s*((?:import|export)\b[^;"']*?\bfrom\s*["'])\/((?!\/)[^"'\s;]+)(["'])/gm,
         `$1$2${basePath}$3$4`,
       )
       .replace(
-        /(^|[;{}])\s*(import\s*["'])\/((?!\/)[^"'\s;]+)(["'])/gm,
+        /(^|[;{}>])\s*(import\s*["'])\/((?!\/)[^"'\s;]+)(["'])/gm,
         `$1$2${basePath}$3$4`,
       )
       .replace(/import\(\s*["']\/((?!\/)[^"'\s;]+)(["']\s*\))/g, `import("${basePath}$1$2`);
