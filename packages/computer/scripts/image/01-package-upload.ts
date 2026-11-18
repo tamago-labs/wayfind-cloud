@@ -32,6 +32,9 @@ async function main(): Promise<void> {
   cpSync('packages/computer/dist', `${STAGE}/dist`, { recursive: true });
   // Catalog only — keystore/.env are NEVER staged (injected at /run, Phase 2).
   copyFileSync('packages/computer/workspace/providers.json', `${STAGE}/workspace/providers.json`);
+  // Baked-in skills: reviewed SKILL.md bundles, available to every computer.
+  // Per-bot allowlists (Bot.skillsEnabled) decide which bot sees which skill.
+  cpSync('packages/computer/workspace/skills', `${STAGE}/workspace/skills`, { recursive: true });
 
   // 3. Zip: Dockerfile at root + staged bundle.
   const zipPath = `${DIR}/computer.zip`;
