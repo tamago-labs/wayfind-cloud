@@ -30,7 +30,7 @@ const cid = `ctx-verify-${Date.now()}`;
   const dd = await vmFetch(`/context/ctx-verify-default`);
   console.log('GET default:', JSON.stringify(dd.body));
   const def = dd.body as { model?: string; limit?: number };
-  if (dd.status !== 200 || def.model !== 'deepseek-ai/DeepSeek-V4.1-Flash-1017') fail(`default model ${def.model}`);
+  if (dd.status !== 200 || def.model !== 'zai-org/GLM-5.3-Flash') fail(`default model ${def.model}`);
   if (def.limit !== 1050000) fail(`default limit ${def.limit}`);
 }
   console.error(`CTX VERIFY: FAIL — ${msg}`);
