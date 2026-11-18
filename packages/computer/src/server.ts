@@ -10,7 +10,7 @@ import { permissionMode } from './core/guard.js';
 import { hasSearchKey } from './agent/tools/web.js';
 import { initProvider, reinitProvider } from './providers/provider.js';
 import { loadCatalog, resolveApiKey, clearProviderCache } from './providers/providers.js';
-import { writeKey } from './providers/keystore.js';
+import { drawKey, writeKey } from './providers/keystore.js';
 import { pullWorkspace, pushWorkspace, type SyncCtx } from './cloud/sync.js';
 import { loadRules, saveRules, undoRules, canUndoRules } from './core/permissions.js';
 import { getRun, getHistory, listPendingApprovals, listPendingBotRequests,
@@ -88,6 +88,28 @@ async function doRunHook(body: RunHookBody): Promise<{ ok: boolean; initialized:
         console.error('[hooks/run] workspace pull failed:', err instanceof Error ? err.message : err);
       }
     }
+  }
+  // QA browser login: KANE_* arrive via the keystore (never process.env, so
+  // they can't leak through the agent shell). Log kane-cli in once per boot
+  // in the background — Ash's headless runs then just work. Fire-and-forget:
+  // a failed login must never fail the run hook.
+  const kaneUser = drawKey('KANE_USERNAME');
+  const kaneKey = drawKey('KANE_ACCESS_KEY');
+  if (kaneUser && kaneKey) {
+    void (async () => {
+      try {
+        const { execFile } = await import('node:child_process');
+        await new Promise<void>((resolve, reject) => {
+          execFile('kane-cli', ['login', '--username', kaneUser, '--access-key', kaneKey], { timeout: 60_000 }, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        console.log('[hooks/run] kane-cli login ok');
+      } catch (err) {
+        console.error('[hooks/run] kane-cli login failed:', err instanceof Error ? err.message : err);
+      }
+    })();
   }
   // New keys → drop cached model clients so they take effect now.
   clearProviderCache();

@@ -302,6 +302,10 @@ export async function provisionComputer(
     const metaKey = env.PROVIDER_API_KEY;
     const nearKey = env.NEARAI_CLOUD_API_KEY;
     if (!modalKey || !metaKey || !nearKey) throw new Error("provider API keys are not configured (Amplify secrets)");
+    // QA browser keys are optional — Ash's kane-cli briefing degrades to
+    // "no credentials" without them instead of blocking every provision.
+    const kaneUser = env.KANE_USERNAME;
+    const kaneKey = env.KANE_ACCESS_KEY;
     const usageToken = randomUUID();
     await dataClient.models.Computer.update({ id: computerId, usageToken });
     const computerApi = (env.COMPUTER_API_URL ?? "").replace(/\/+$/, "");
@@ -309,7 +313,12 @@ export async function provisionComputer(
       ownerId,
       computerId,
       kind,
-      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey, NEARAI_CLOUD_API_KEY: nearKey },
+      secrets: {
+        MODAL_API_KEY: modalKey,
+        PROVIDER_API_KEY: metaKey,
+        NEARAI_CLOUD_API_KEY: nearKey,
+        ...(kaneUser && kaneKey ? { KANE_USERNAME: kaneUser, KANE_ACCESS_KEY: kaneKey } : {}),
+      },
       usageToken,
       ...(computerApi ? { apiUrl: computerApi } : {}),
       ...(bucket ? { workspace: { bucket, prefix } } : {}),

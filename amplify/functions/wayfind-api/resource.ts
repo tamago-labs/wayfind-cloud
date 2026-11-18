@@ -51,6 +51,12 @@ export const wayfindApiFunction = defineFunction({
     // the conversation VM via /hooks/run (memory-only, dies with the VM).
     //   npx ampx sandbox secret set NEARAI_CLOUD_API_KEY
     NEARAI_CLOUD_API_KEY: secret("NEARAI_CLOUD_API_KEY"),
+    // Kane CLI basic-auth pair (QA browser automation): same per-boot
+    // injection path. Platform account funds Ash's verification runs.
+    //   npx ampx sandbox secret set KANE_USERNAME
+    //   npx ampx sandbox secret set KANE_ACCESS_KEY
+    KANE_USERNAME: secret("KANE_USERNAME"),
+    KANE_ACCESS_KEY: secret("KANE_ACCESS_KEY"),
     // Shared with the routine-tick sweeper: proves /routines/fire calls
     // come from our own ticker, not the open internet (the Function URL
     // itself is authType NONE). Set once:

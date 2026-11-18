@@ -25,7 +25,7 @@ const IDLE_MS = 10 * 60 * 1000;
 const OUTPUT_CAP_BYTES = 5 * 1024 * 1024;
 
 /** Secret env names that must never reach the interactive shell. */
-const SECRET_ENV = ['MODAL_API_KEY', 'PROVIDER_API_KEY', 'NEARAI_CLOUD_API_KEY', 'USAGE_TOKEN'];
+const SECRET_ENV = ['MODAL_API_KEY', 'PROVIDER_API_KEY', 'NEARAI_CLOUD_API_KEY', 'USAGE_TOKEN', 'KANE_USERNAME', 'KANE_ACCESS_KEY'];
 
 interface TermSession {
   id: string;

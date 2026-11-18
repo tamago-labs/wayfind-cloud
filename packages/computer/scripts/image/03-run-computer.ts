@@ -90,12 +90,20 @@ async function main(): Promise<void> {
   console.log(`GET /ready → ${ready.status} ${await ready.text()}`);
 
   // Inject per-VM identity + secrets (this is what computer-manager will do).
+  // KANE_* ride along when present (QA browser automation, optional).
+  const kaneUser = process.env.KANE_USERNAME || process.env.LT_USERNAME;
+  const kaneKey = process.env.KANE_ACCESS_KEY || process.env.LT_ACCESS_KEY;
   const runRes = await vmFetch(info.endpoint, token, '/hooks/run', {
     method: 'POST',
     body: JSON.stringify({
       ownerId,
       computerId,
-      secrets: { MODAL_API_KEY: modalKey, PROVIDER_API_KEY: metaKey, NEARAI_CLOUD_API_KEY: nearKey },
+      secrets: {
+        MODAL_API_KEY: modalKey,
+        PROVIDER_API_KEY: metaKey,
+        NEARAI_CLOUD_API_KEY: nearKey,
+        ...(kaneUser && kaneKey ? { KANE_USERNAME: kaneUser, KANE_ACCESS_KEY: kaneKey } : {}),
+      },
       ...(bucket && prefix ? { workspace: { bucket, prefix } } : {}),
     }),
   });
