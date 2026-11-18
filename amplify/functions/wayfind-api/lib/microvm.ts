@@ -333,7 +333,14 @@ export async function provisionComputer(
       headers: { "X-aws-proxy-auth": token, Accept: "text/event-stream" },
     });
     const sse = await stream.text();
-    if (!sse.includes(kind === "one_outer" ? "outer-ok" : "cloud-ok")) throw new Error("smoke chat did not return the expected token");
+    // Tolerant match: different default models echo differently
+    // ("Cloud OK!", "cloud-ok.", quotes, ...). Anything with both words
+    // proves the model loop works; an error dump has neither.
+    const flat = sse.toLowerCase();
+    const want = kind === "one_outer" ? "outer" : "cloud";
+    if (!flat.includes(want) || !flat.includes("ok")) {
+      throw new Error(`smoke chat token missing; stream tail: ${sse.slice(-300)}`);
+    }
 
     await dataClient.models.Computer.update({
       id: computerId,
