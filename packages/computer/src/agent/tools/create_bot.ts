@@ -9,8 +9,10 @@
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { check, loadRules } from '../../core/permissions.js';
+import type { BotUpdateRequest } from './update_bot.js';
 
 export interface BotRequest {
+  kind?: 'create';
   name: string;
   role?: string;
   description?: string;
@@ -23,7 +25,8 @@ export interface BotRequestResult {
   error?: string;
 }
 
-export type BotRequestHook = (req: BotRequest) => Promise<BotRequestResult>;
+/** Shared hook for create + update proposals (wired for leads only). */
+export type BotRequestHook = (req: BotRequest | BotUpdateRequest) => Promise<BotRequestResult>;
 
 export function createBotRequestTool(hook: BotRequestHook): ReturnType<typeof tool> {
   return tool({

@@ -43,7 +43,8 @@ const schema = a.schema({
       userProfile: a.belongsTo("UserProfile", "userProfileId"),
       name: a.string().required(),
       role: a.string(), // absent = unassigned; AI assigns after first chat, user can edit
-      isChiefOfStaff: a.boolean(), // at most one per user (enforced client-side)
+      isChiefOfStaff: a.boolean(), // team lead: at most one per team (enforced client-side)
+      teamId: a.string(), // team membership; null = default team (led by the user's original chief)
       skillsEnabled: a.string().array(), // absent = all installed skills enabled; otherwise an allowlist of skill names
       mcpEnabled: a.string().array(), // absent = all active MCP servers enabled; otherwise an allowlist of server names
       description: a.string(), // the durable "your job is…" brief

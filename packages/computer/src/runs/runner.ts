@@ -17,6 +17,7 @@ import { inside } from '../agent/tools/paths.js';
 import { createTriageAgent, type AgentSelection, type TeamChannel } from '../agent/agent.js';
 import type { QuestionPrompt } from '../agent/tools/question.js';
 import type { BotRequest, BotRequestResult } from '../agent/tools/create_bot.js';
+import type { BotUpdateRequest } from '../agent/tools/update_bot.js';
 import type { MessageRunner, RosterEntry } from '../agent/tools/message_bot.js';
 import type { ChildRequest, ChildResult } from '../agent/tools/task.js';
 import { clearRunLog, grantForRun, runWithContext, toolCallCount, type GuardOpts } from '../core/guard.js';
@@ -40,6 +41,12 @@ export interface RunEvent {
   botName?: string;
   botRole?: string;
   botDescription?: string;
+  /** bot_request kind: 'create' (default) or 'update' (lead editing a member). */
+  botKind?: 'create' | 'update';
+  /** update target bot name (equals botName for updates). */
+  botTarget?: string;
+  /** proposed new name for an update request. */
+  botNewName?: string;
   output?: string;
   error?: string;
   toolCalls?: number;
@@ -65,7 +72,7 @@ export interface Run {
   allowedMcp?: string[];
   /** Chief-of-staff capability: create_bot tool + bot_request hook. Mirrored so resume rebuilds the same agent. */
   canManageBots?: boolean;
-  /** Team roster for @mentions. Chief thread: all bots. Member thread: the chief only. Mirrored so resume rebuilds the same agent. */
+  /** Team roster for @mentions. Lead thread: every team. Member thread: own team. Mirrored so resume rebuilds the same agent. */
   roster?: RosterEntry[];
   /** Bots already consulted up this delegation chain (incl. self) — bounce guard. */
   delegationPath?: string[];
@@ -103,7 +110,7 @@ export interface PendingQuestion {
 export interface PendingBotRequest {
   id: string;
   runId: string;
-  request: BotRequest;
+  request: BotRequest | BotUpdateRequest;
   requestedAt: string;
 }
 
@@ -155,7 +162,7 @@ export function answerQuestion(id: string, answers: string[][]): boolean {
 
 const pendingBotRequests = new Map<
   string,
-  { runId: string; request: BotRequest; requestedAt: string; resolve: (res: BotRequestResult) => void }
+  { runId: string; request: BotRequest | BotUpdateRequest; requestedAt: string; resolve: (res: BotRequestResult) => void }
 >();
 
 export function listPendingBotRequests(): PendingBotRequest[] {
@@ -209,10 +216,25 @@ function makeQuestionHook(runState: Run): (questions: QuestionPrompt[]) => Promi
  * POST /bot-requests/:id. Times out to cancelled after 120s (same as
  * questions — the provider turn stays open while waiting).
  */
-function makeBotRequestHook(runState: Run): (req: BotRequest) => Promise<BotRequestResult> {
-  return (req: BotRequest) => {
+function makeBotRequestHook(
+  runState: Run,
+): (req: BotRequest | BotUpdateRequest) => Promise<BotRequestResult> {
+  return (req: BotRequest | BotUpdateRequest) => {
     const id = randomUUID();
-    runState.events.push({ type: 'bot_request', bid: id, botName: req.name, botRole: req.role, botDescription: req.description });
+    if (req.kind === 'update') {
+      runState.events.push({
+        type: 'bot_request',
+        bid: id,
+        botKind: 'update',
+        botName: req.target,
+        botTarget: req.target,
+        botRole: req.role,
+        botDescription: req.description,
+        ...(req.name ? { botNewName: req.name } : {}),
+      });
+    } else {
+      runState.events.push({ type: 'bot_request', bid: id, botKind: 'create', botName: req.name, botRole: req.role, botDescription: req.description });
+    }
     return new Promise<BotRequestResult>((resolve) => {
       const timer = setTimeout(() => {
         if (pendingBotRequests.delete(id)) resolve({ decision: 'cancel' });
@@ -601,7 +623,7 @@ export interface StartRunOpts {
   allowedMcp?: string[];
   /** Chief-of-staff run: exposes the create_bot tool (confirm card in frontend). */
   canManageBots?: boolean;
-  /** Team roster (all bots incl. self) for @mentions. Chief thread: every bot. Member thread: the chief only. */
+  /** Team roster for @mentions. Lead thread: every bot. Member thread: own team. */
   roster?: RosterEntry[];
   /** Bots already consulted up this delegation chain (incl. self) — bounce guard. */
   delegationPath?: string[];
@@ -709,8 +731,8 @@ const childSessions = new Map<string, { session: MemorySession; depth: number }>
 
 /**
  * Team channel for the `message_bot` tool. Decoupled from `canManageBots`
- * (which gates create_bot only): any run with a non-empty roster can message
- * — the chief sees every bot, members see the chief only. The frontend
+ * (which gates create_bot/update_bot only): any run with a non-empty roster
+ * can message — leads see every team, members see their own. The frontend
  * decides the roster; the VM trusts it like any other /task field.
  */
 function teamFor(runState: Run): TeamChannel | undefined {

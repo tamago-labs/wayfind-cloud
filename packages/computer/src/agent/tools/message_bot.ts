@@ -1,12 +1,11 @@
-// `message_bot` tool: the chief of staff talks to another bot by name
-// (@mentions). Runs the message as a real turn in the target bot's own
-// conversation — same session, system, and skills as if the user had
-// written there — and returns the reply for the chief to relay.
+// `message_bot` tool: any bot talks to another bot by name (@mentions).
+// Runs the message as a real turn in the target bot's own conversation —
+// same session, system, and skills as if the user had written there — and
+// returns the reply to relay. Leads see every team; members see their own.
 //
 // The transcript lands under the target conversationId (no parentId), so
-// switching to that bot shows the chief's message and the reply. No
-// approval card by design (user decision): the checkpoint is the user
-// typing @Name in the chief thread.
+// switching to that bot shows the message and the reply. No approval
+// card by design (user decision): the checkpoint is the user typing @Name.
 import { tool } from '@openai/agents';
 import { z } from 'zod';
 import { guarded, type GuardOpts } from '../../core/guard.js';
@@ -26,7 +25,7 @@ export type MessageRunner = (botName: string, message: string) => Promise<string
 
 export function rosterDirectory(roster: RosterEntry[], isChief: boolean): string {
   if (roster.length === 0) return 'You have no other bots yet.';
-  const header = isChief ? 'Bots you coordinate:' : 'Your chief of staff:';
+  const header = isChief ? 'Bots you coordinate (every team):' : 'Your team:';
   return (
     header +
     '\n' +

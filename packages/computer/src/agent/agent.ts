@@ -15,6 +15,7 @@ import { triageHandoffs } from './subagents.js';
 import { createBuiltinTools } from './tools/builtin.js';
 import { createQuestionTool, type AskHook } from './tools/question.js';
 import { createBotRequestTool, type BotRequestHook } from './tools/create_bot.js';
+import { createBotUpdateTool, type BotUpdateRequest } from './tools/update_bot.js';
 import { createMessageBotTool, rosterDirectory, type MessageRunner, type RosterEntry } from './tools/message_bot.js';
 import { createTaskTool, type RunChild } from './tools/task.js';
 import { createGroundedSearchTool } from './tools/grounded.js';
@@ -38,8 +39,8 @@ const BASE_INSTRUCTIONS =
   'never global-install, never probe env via shell, never clean caches or delete things unprompted. ' +
   'For JavaScript/TypeScript work, use bun (`bun install`, `bun run`, `bunx`) instead of npm/npx — it is preinstalled on this computer. ' +
   'Only use npm if the user asks for it or the project requires it. ' +
-  'After starting a dev server (default port 5173) or finishing a production build into a folder, ' +
-  'tell the user to open Computer → Preview in the app (Live tab for the dev server, Build tab plus the folder name for built output). ' +
+  'After starting a dev server (default port 5173), ' +
+  'tell the user to open Computer → Preview in the app and enter the port. ' +
   'Never invent preview URLs — the app generates them. ' +
   'For frontend web apps, default to React + Vite unless the user asks for something else — ' +
   'it works with Computer → Preview out of the box. ' +
@@ -54,7 +55,7 @@ export interface AgentSelection {
 }
 
 /** Tools unavailable to read-only research subagents. */
-const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'message_bot', 'generate_image', 'edit_image', 'install_mcp_server', 'restart_mcp_server', 'schedule_task']);
+const RESEARCH_DENY = new Set(['write', 'edit', 'shell', 'task', 'question', 'import_skill', 'create_bot', 'update_bot', 'message_bot', 'generate_image', 'edit_image', 'install_mcp_server', 'restart_mcp_server', 'schedule_task']);
 
 /** Cross-bot messaging: runner + visible roster. isChief selects the guidance voice. */
 export interface TeamChannel {
@@ -128,22 +129,26 @@ export async function createTriageAgent(
     tools = tools.filter((t) => !RESEARCH_DENY.has((t as { name: string }).name));
   }
   const chiefGuidance = botRequest
-    ? 'You can create a new bot with the create_bot tool when the user asks for one — they confirm on a card before it is created. Never claim a bot exists unless create_bot confirmed it. '
+    ? 'You can create a new bot with the create_bot tool when the user asks for one — they confirm on a card before it is created. Never claim a bot exists unless create_bot confirmed it. ' +
+      'You can also rename, re-role, or rewrite the brief of one of YOUR OWN team members with update_bot — they confirm on a card first. Never update bots on other teams. '
     : '';
   const teamGuidance = team
     ? team.isChief
       ? rosterDirectory(team.roster, true) +
-        ' When the user\'s text @mentions a bot by name, or asks you to consult one, call message_bot with that bot\'s name and relay its reply. ' +
+        ' When the user\'s text @mentions a bot by name, or asks you to consult one (any team, including other leads), call message_bot with that bot\'s name and relay its reply. ' +
         'Delegate — do not redo the work yourself while it answers. '
       : rosterDirectory(team.roster, false) +
-        ' When the user asks you to check with them, escalate something, or get their input, call message_bot with their name and relay the reply. ' +
+        ' When the user asks you to consult a teammate, call message_bot with their name and relay the reply. ' +
         'Otherwise answer directly from your own role and skills. '
     : '';
   if (ask) tools.push(createQuestionTool(opts, ask));
   if (runChild) tools.push(createTaskTool(runChild, opts));
-  // Chief-of-staff capability: the confirm card lives in the frontend, so
-  // the model only ever sees the tool when the hook is wired.
-  if (botRequest) tools.push(createBotRequestTool(botRequest));
+  // Lead capability: the confirm card lives in the frontend, so
+  // the model only ever sees these tools when the hook is wired.
+  if (botRequest) {
+    tools.push(createBotRequestTool(botRequest));
+    tools.push(createBotUpdateTool(botRequest));
+  }
   if (team) tools.push(createMessageBotTool(team.send, opts));
   const names = tools.map((t) => (t as { name: string }).name);
   if (!loggedTools) {
