@@ -1,5 +1,5 @@
 {
-  "defaults": { "provider": "modal-deepseek", "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017" },
+  "defaults": { "provider": "near-deepseek", "model": "deepseek-ai/DeepSeek-V4.1-Flash-1017" },
   "small": { "provider": "modal", "model": "meta-models/Muse-Spark-Open-816B-A42B" },
   "providers": {
     "modal": {
@@ -19,6 +19,13 @@
     "modal-deepseek": {
       "baseURL": "https://pisuth-dae--ep-deepseek-v4-1-flash-1017-server.us-west.modal.direct/v1",
       "key": { "env": "MODAL_API_KEY", "keystore": "MODAL_API_KEY" },
+      "models": {
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017": { "context": 1050000, "cost": { "input": 0.25, "output": 1.0 } }
+      }
+    },
+    "near-deepseek": {
+      "baseURL": "https://cloud-api.near.ai/v1",
+      "key": { "env": "NEARAI_CLOUD_API_KEY", "keystore": "NEARAI_CLOUD_API_KEY" },
       "models": {
         "deepseek-ai/DeepSeek-V4.1-Flash-1017": { "context": 1050000, "cost": { "input": 0.25, "output": 1.0 } }
       }

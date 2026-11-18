@@ -64,7 +64,7 @@ function selectionFor(
     }
   }
   // Else the catalog default.
-  const dp = catalog.defaults?.provider ?? 'modal-deepseek';
+  const dp = catalog.defaults?.provider ?? 'near-deepseek';
   const dm = catalog.defaults?.model ?? 'deepseek-ai/DeepSeek-V4.1-Flash-1017';
   return {
     providerId: dp,
