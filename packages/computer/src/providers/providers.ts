@@ -103,7 +103,7 @@ export interface ResolvedModel {
 export function resolveModel(providerId?: string, modelId?: string): ResolvedModel {
   const catalog = loadCatalog();
   const pid = providerId ?? catalog.defaults?.provider ?? 'modal';
-  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'zai-org/GLM-5.3-Flash';
+  const mid = modelId ?? catalog.defaults?.model ?? process.env.PROVIDER_MODEL ?? 'deepseek-ai/DeepSeek-V4.1-Flash-1017';
   const entry = catalog.providers?.[pid];
   const baseURL = entry?.baseURL ?? process.env.PROVIDER_BASE_URL ?? 'https://api.meta.ai/v1';
   const client = providerClient(pid, entry ?? { baseURL });

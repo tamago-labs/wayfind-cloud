@@ -64,8 +64,8 @@ function selectionFor(
     }
   }
   // Else the catalog default.
-  const dp = catalog.defaults?.provider ?? 'modal-glm';
-  const dm = catalog.defaults?.model ?? 'zai-org/GLM-5.3-Flash';
+  const dp = catalog.defaults?.provider ?? 'modal-deepseek';
+  const dm = catalog.defaults?.model ?? 'deepseek-ai/DeepSeek-V4.1-Flash-1017';
   return {
     providerId: dp,
     modelId: dm,
